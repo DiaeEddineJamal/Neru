@@ -152,6 +152,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .setup(|app| {
             tauri::async_runtime::spawn(mcp::start_enabled(app.handle().clone()));
@@ -223,6 +225,10 @@ pub fn run() {
             agent::compact_session,
             agent::refresh_context,
             agent::auto_title_session,
+            skills::list_skills,
+            skills::import_skills,
+            skills::remove_skill,
+            skills::open_skills_folder,
             workspace::session_changes,
             agent::effort_supported,
             documents::document_bytes,

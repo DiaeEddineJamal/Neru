@@ -16,6 +16,8 @@ Installers are on the [Releases](https://github.com/DiaeEddineJamal/Neru/release
 
 The builds are not code-signed yet. Windows SmartScreen shows "More info → Run anyway"; on macOS, right-click the app and choose Open the first time.
 
+Neru updates itself: it checks this repository's releases when it starts and every few hours, and offers *Restart to update*. After updating, *What's new* shows the changes. The full history is in [CHANGELOG.md](CHANGELOG.md).
+
 ## What it does
 
 - **Works on real projects.** Reads, searches and edits files; creates, renames, moves and deletes files and folders. Every change shows a diff first and saves a checkpoint, so you can undo or rewind.
@@ -35,7 +37,11 @@ npm run desktop                      # run in development
 npm run tauri -- build               # installers for this platform, in src-tauri/target/release/bundle
 ```
 
-Pushing a tag such as `v0.1.0` runs `.github/workflows/release.yml`, which builds every platform and attaches the installers to a draft release.
+### Releasing
+
+1. Bump the version in `app/package.json`, `app/src-tauri/tauri.conf.json` and `app/src-tauri/Cargo.toml`.
+2. Add the release to `app/src/changelog.json`. It feeds the in-app *What's new*, the GitHub release notes, and `CHANGELOG.md` (`node app/scripts/release-notes.mjs --changelog`).
+3. Push a tag such as `v0.2.0`. The release workflow builds every platform, signs the update files with the `TAURI_SIGNING_PRIVATE_KEY` secret, and publishes the release, which installed copies then pick up.
 
 The installer artwork is generated from the app's design tokens: `python tools/build_installer_art.py`.
 

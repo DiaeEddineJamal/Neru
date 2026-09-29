@@ -1,17 +1,46 @@
-# Builds Neru for Windows, macOS (Apple silicon and Intel) and Linux, and attaches the
-# installers to a draft GitHub release. Runs on a version tag (v0.1.0) or by hand.
+# Builds Neru for Windows, macOS (Apple silicon and Intel) and Linux, signs the update files, and
+# publishes a GitHub release whose notes come from app/src/changelog.json. Installed copies of Neru
+# check releases/latest/download/latest.json and offer the new version.
+#
+# To release: bump the version in app/package.json, app/src-tauri/tauri.conf.json and
+# app/src-tauri/Cargo.toml, add an entry to app/src/changelog.json, then push a tag: v0.2.0.
 name: Release
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build, such as v0.1.0
+        required: true
 
 permissions:
   contents: write
 
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
+  notes:
+    runs-on: ubuntu-latest
+    outputs:
+      body: ${{ steps.notes.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - id: notes
+        name: Release notes from the changelog
+        run: |
+          {
+            echo 'body<<NERU_NOTES'
+            node app/scripts/release-notes.mjs "$TAG"
+            echo 'NERU_NOTES'
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: notes
     strategy:
       fail-fast: false
       matrix:
@@ -25,11 +54,10 @@ jobs:
           - platform: ubuntu-22.04
             args: '--bundles deb,appimage'
     runs-on: ${{ matrix.platform }}
-    defaults:
-      run:
-        working-directory: app
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
       - name: Linux build dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -52,15 +80,29 @@ jobs:
           workspaces: app/src-tauri -> target
 
       - run: npm ci
+        working-directory: app
 
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseName: 'Neru v__VERSION__'
-          releaseBody: 'Installers for Windows (.exe, .msi), macOS (.dmg, Apple silicon and Intel) and Linux (.deb, .AppImage). The builds are unsigned: Windows SmartScreen and macOS Gatekeeper will ask you to confirm the first launch.'
+          tagName: ${{ env.TAG }}
+          releaseName: 'Neru __VERSION__'
+          releaseBody: ${{ needs.notes.outputs.body }}
+          # Stays a draft until every platform has uploaded, so latest.json is complete when apps see it.
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

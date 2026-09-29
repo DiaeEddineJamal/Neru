@@ -37,5 +37,8 @@ exit /b %errorlevel%
 npm run tauri -- build -b nsis
 exit /b %errorlevel%
 :installers
+rem Update files are signed with the key kept in .local\keys, which is never committed.
+if exist "D:\Neru\.local\keys\neru-updater.key" set /p TAURI_SIGNING_PRIVATE_KEY=<"D:\Neru\.local\keys\neru-updater.key"
+if exist "D:\Neru\.local\keys\neru-updater.password" set /p TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<"D:\Neru\.local\keys\neru-updater.password"
 npm run tauri -- build -b nsis,msi
 exit /b %errorlevel%

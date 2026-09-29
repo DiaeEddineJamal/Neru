@@ -591,3 +591,41 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .editor-tabs { display: flex; gap: 4px; overflow: auto; padding: 6px 8px 0; border-bottom: 1px solid var(--border); }
 .editor-tabs button { border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; background: transparent; color: var(--secondary); padding: 6px 10px; white-space: nowrap; }
 .editor-tabs button.active { background: var(--surface); color: var(--text); border-color: var(--border); }
+
+/* Updates: a quiet toast, and the What's new dialog built from changelog.json. */
+.settings-actions-inline { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.update-toast { position: fixed; z-index: 60; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 12px; width: min(460px, calc(100vw - 36px)); padding: 12px 12px 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); color: var(--text); box-shadow: 0 16px 40px rgb(0 0 0 / .28); }
+.update-toast-icon { flex: 0 0 auto; color: var(--sage); }
+.update-toast-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--fs-sm); }
+.update-toast-text strong { font-weight: 600; }
+.update-toast-text span { color: var(--muted); }
+.update-toast-bar { display: block; height: 3px; margin-top: 6px; border-radius: 99px; background: linear-gradient(90deg, var(--sage) var(--done), var(--border) var(--done)); transition: background .2s linear; }
+.update-toast-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.update-toast-actions .button { display: inline-flex; align-items: center; gap: 6px; }
+.whats-new-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / .45); backdrop-filter: blur(3px); }
+.whats-new { display: flex; flex-direction: column; width: min(620px, 100%); max-height: min(720px, calc(100vh - 32px)); padding: 22px 24px 18px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-2); color: var(--text); box-shadow: 0 24px 60px rgb(0 0 0 / .35); }
+.whats-new header { display: flex; align-items: center; justify-content: space-between; }
+.whats-new-eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--sage); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+.whats-new h2 { margin: 10px 0 0; font: 400 34px/1.05 'Instrument Serif', Georgia, serif; letter-spacing: -.02em; }
+.whats-new-summary { margin: 10px 0 0; color: var(--secondary); line-height: 1.55; }
+.whats-new-body { flex: 1; min-height: 0; margin: 16px -8px 0 0; padding-right: 8px; overflow-y: auto; }
+.whats-new-part { padding: 14px 0; border-top: 1px solid var(--border); }
+.whats-new-part h3 { margin: 0 0 8px; font-size: var(--fs-sm); font-weight: 600; }
+.whats-new-part ul { display: flex; flex-direction: column; gap: 6px; margin: 0; padding-left: 18px; color: var(--secondary); font-size: var(--fs-sm); line-height: 1.5; }
+.whats-new-part li::marker { color: var(--sage); }
+.whats-new-older ul { list-style: none; padding-left: 0; }
+.whats-new footer { display: flex; align-items: center; justify-content: space-between; padding-top: 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+
+/* Settings → Skills */
+.skills-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 10px; }
+.skills-actions .button { display: inline-flex; align-items: center; gap: 7px; }
+.skills-settings code, .skills-settings kbd { padding: 1px 5px; border: 1px solid var(--border); border-radius: 5px; font: 12px 'JetBrains Mono', monospace; }
+.skills-heading { display: flex; align-items: center; gap: 8px; margin: 22px 0 8px; font-size: var(--fs-sm); font-weight: 600; }
+.skills-heading span { color: var(--muted); font-weight: 400; }
+.skill-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.skill-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.skill-icon { display: grid; flex: 0 0 30px; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: color-mix(in oklch, var(--sage) 16%, transparent); color: var(--sage); }
+.skill-text { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.skill-text strong { font: 500 13px 'JetBrains Mono', monospace; }
+.skill-text p { margin: 0; color: var(--secondary); font-size: var(--fs-sm); line-height: 1.5; }
+.skill-text small { color: var(--muted); font-size: 12px; }

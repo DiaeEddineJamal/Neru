@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AgentEvent, AgentMode, AgentResponse, AttachedDocument, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchHit, SessionSnapshot, SessionSummary, VoiceView } from './types'
+import type { AgentEvent, AgentMode, AgentResponse, AttachedDocument, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchHit, SessionSnapshot, SessionSummary, SkillView, VoiceView } from './types'
 import type { ApiFormat } from './providerCatalog'
 
 export const api = {
@@ -24,6 +24,10 @@ export const api = {
   selectSession: (id: string) => invoke<SessionSnapshot>('select_session', { id }),
   renameSession: (id: string, title: string) => invoke<SessionSummary>('rename_session', { id, title }),
   /** Asks the model for a short task title after the first reply; null when already titled. */
+  listSkills: () => invoke<SkillView[]>('list_skills'),
+  importSkills: (paths: string[]) => invoke<SkillView[]>('import_skills', { paths }),
+  removeSkill: (name: string) => invoke<SkillView[]>('remove_skill', { name }),
+  openSkillsFolder: () => invoke<void>('open_skills_folder'),
   autoTitleSession: (sessionId: string) => invoke<SessionSummary | null>('auto_title_session', { sessionId }),
   deleteSession: (id: string) => invoke<SessionSnapshot>('delete_session', { id }),
   openProject: (path: string) => invoke<ProjectInfo>('open_project', { path }),

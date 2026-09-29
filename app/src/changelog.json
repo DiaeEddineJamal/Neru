@@ -1,0 +1,52 @@
+[
+  {
+    "version": "0.1.0",
+    "date": "2026-09-29",
+    "title": "The first release",
+    "summary": "Neru is a local-first coding agent: it explores your project, proposes changes you read line by line, and never acts without asking.",
+    "sections": [
+      {
+        "title": "An agent that works on your project",
+        "items": [
+          "Reads, searches, and edits files, and creates, renames, moves, and deletes files and folders — scaffolding whole features file by file.",
+          "Every change shows a diff first and saves a checkpoint, so Undo and Rewind put files and folders back exactly.",
+          "A project tree beside the conversation marks the files Neru just touched.",
+          "Permission modes: review every step, accept edits, plan read-only, auto for routine work, or bypass."
+        ]
+      },
+      {
+        "title": "Free models that can really code",
+        "items": [
+          "NVIDIA NIM, ModelScope, Google Gemini, Cerebras, Mistral, and OpenRouter free plans, each with a link to get a key and its daily allowance.",
+          "When a model hits its limit, Neru switches to the next best free coding model and keeps going.",
+          "Model lists put the strongest coding models first. Local models through Ollama, and OpenAI, Anthropic, DeepSeek, and other keys work too."
+        ]
+      },
+      {
+        "title": "Context that fits",
+        "items": [
+          "A live context meter shows the model's real window, the per-request limit of your key, and requests or tokens left today.",
+          "Large files are read in ranges, stale file reads are dropped, long tool output is trimmed, and long sessions are summarized.",
+          "Big connector catalogs load on demand instead of filling every request."
+        ]
+      },
+      {
+        "title": "Calmer, clearer thinking",
+        "items": [
+          "Thinking orbs cross-fade between states, and the status text glides with a soft shimmer and a timer.",
+          "Steps appear on a timeline and settle with a check; finished replies recap what was read, created, edited, moved, or run.",
+          "Sessions get a short title that says what you are working on."
+        ]
+      },
+      {
+        "title": "Everything else",
+        "items": [
+          "Skills: add Markdown skill files or folders in Settings → Skills. Neru loads a skill when a task matches its description, and /name runs it directly.",
+          "Parallel sessions with Git worktrees, a review pane, pull requests and CI checks, MCP connectors, slash commands, on-device dictation, a terminal, and a preview pane.",
+          "A redesigned onboarding where every control fits on small windows, with arrow-key navigation.",
+          "Branded installers for Windows, macOS, and Linux, and automatic updates from GitHub Releases."
+        ]
+      }
+    ]
+  }
+]

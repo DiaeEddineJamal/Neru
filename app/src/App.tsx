@@ -18,6 +18,10 @@ import { dictationLanguages, findSpeechModel } from '@/lib/speech/catalog'
 import { downloadModel, transcribeLocally } from '@/lib/speech/local'
 import { ApprovalCard, Conversation, agentPhase, type LiveResponse, type ResolvedApproval } from './components/neru/Conversation'
 import { FileTree } from './components/neru/FileTree'
+import { Skills } from './components/neru/Skills'
+import { UpdateToast, WhatsNew } from './components/neru/WhatsNew'
+import { findUpdate, installUpdate, type Update } from './lib/updates'
+import { getVersion } from '@tauri-apps/api/app'
 import { Mascot } from './components/neru/Mascot'
 import { Onboarding } from './components/neru/Onboarding'
 import { Sidebar } from './components/neru/Sidebar'
@@ -41,8 +45,8 @@ const errorText = (value: unknown) => value instanceof Error ? value.message : S
 
 const sectionTitles: Record<Section, string> = { home: 'Session', explorer: 'Explorer', search: 'Search', git: 'Source control', terminal: 'Terminal', preview: 'Preview', settings: 'Settings' }
 const ATTACH_LIMIT = 20
-type SettingsTab = 'general' | 'appearance' | 'model' | 'voice' | 'connectors'
-const settingsTabs: { id: SettingsTab; label: string }[] = [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }, { id: 'model', label: 'Model provider' }, { id: 'voice', label: 'Voice' }, { id: 'connectors', label: 'Connectors' }]
+type SettingsTab = 'general' | 'appearance' | 'model' | 'voice' | 'connectors' | 'skills'
+const settingsTabs: { id: SettingsTab; label: string }[] = [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }, { id: 'model', label: 'Model provider' }, { id: 'voice', label: 'Voice' }, { id: 'connectors', label: 'Connectors' }, { id: 'skills', label: 'Skills' }]
 const readStored = <T,>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }
 type Surface = 'chat' | 'code'
 const CHAT_PHRASES = ["Let's noodle", "Let's cook", "Let's knead", "Let's sketch", "Let's tinker", "Let's riff", "Let's wander", "Let's mull it over", "Let's poke at it", "Let's make a mess", "Let's chew on it", "Let's daydream"]
@@ -110,6 +114,13 @@ function App() {
   const [treeOpen, setTreeOpen] = useState(() => readStored('neru.tree.open', false))
   const [treeVersion, setTreeVersion] = useState(0)
   const [touched, setTouched] = useState<Set<string>>(() => new Set())
+  // Updates from GitHub Releases, and the notes for the version now running.
+  const [appVersion, setAppVersion] = useState('')
+  const [update, setUpdate] = useState<Update | null>(null)
+  const [updateProgress, setUpdateProgress] = useState<number | null | undefined>(undefined)
+  const [updateDismissed, setUpdateDismissed] = useState('')
+  const [updateCheck, setUpdateCheck] = useState<'idle' | 'checking' | 'current'>('idle')
+  const [whatsNew, setWhatsNew] = useState<string | null>(null)
   const [changes, setChanges] = useState<SessionChange[]>([])
   const [changesLoading, setChangesLoading] = useState(false)
   const [customCommands, setCustomCommands] = useState<SlashCommand[]>([])
@@ -220,6 +231,34 @@ function App() {
   }, [])
   useEffect(() => { document.documentElement.dataset.theme = light ? 'light' : 'dark'; writeStored('neru.theme', light ? 'light' : 'dark') }, [light])
   useEffect(() => { activeRef.current = activeSessionId }, [activeSessionId])
+  // After an update, show what changed once. A first install is covered by onboarding instead.
+  useEffect(() => {
+    if (!isTauri()) return
+    void getVersion().then(version => {
+      setAppVersion(version)
+      const seen = readStored<string>('neru.version.seen', '')
+      if (seen && seen !== version) setWhatsNew(version)
+      writeStored('neru.version.seen', version)
+    }).catch(() => undefined)
+  }, [])
+  // Check GitHub Releases shortly after launch, then every six hours.
+  useEffect(() => {
+    if (!isTauri()) return
+    const look = () => { void findUpdate().then(found => { if (found) setUpdate(found) }) }
+    const first = window.setTimeout(look, 6_000)
+    const every = window.setInterval(look, 6 * 60 * 60 * 1000)
+    return () => { window.clearTimeout(first); window.clearInterval(every) }
+  }, [])
+  const checkNow = async () => {
+    setUpdateCheck('checking')
+    const found = await findUpdate()
+    if (found) { setUpdate(found); setUpdateDismissed(''); setUpdateCheck('idle') } else setUpdateCheck('current')
+  }
+  const applyUpdate = async () => {
+    if (!update) return
+    setUpdateProgress(null)
+    try { await installUpdate(update, setUpdateProgress) } catch (cause) { setUpdateProgress(undefined); setError(`The update could not be installed: ${errorText(cause)}`) }
+  }
   // A different model has a different window and quotas; refresh the meter when it changes.
   useEffect(() => {
     if (!isTauri() || !providerReady || !provider.configured) return
@@ -791,6 +830,10 @@ function App() {
   useEffect(() => { const onKey = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setPalette(value => !value) }; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n' && (surface === 'chat' || project)) { event.preventDefault(); if (surface === 'chat') void newLooseChat(); else void newChat() }; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') { event.preventDefault(); setSidebarOpen(value => { writeStored('neru.sidebar.open', !value); return !value }); setPeek(false) }; if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); setSection('settings') }; if (event.key === 'Escape') { setPalette(false); if (responding) void api.stopChat(activeSessionId).catch(cause => setError(errorText(cause))) } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [project, busy, responding, activeSessionId, newChat, newLooseChat, surface])
 
   if (onboarding === 'checking') return <div className="onboarding-boot"><Mascot size={68} /><span>Neru</span></div>
+  const updateLayer = <>
+    <WhatsNew open={whatsNew !== null} version={whatsNew && whatsNew !== 'latest' ? whatsNew : undefined} onClose={() => setWhatsNew(null)} />
+    {update && updateDismissed !== update.version && onboarding !== 'show' && <UpdateToast version={update.version} progress={updateProgress} onInstall={() => void applyUpdate()} onDetails={() => setWhatsNew('latest')} onDismiss={() => setUpdateDismissed(update.version)} />}
+  </>
   if (onboarding === 'show') return <Onboarding project={project} provider={provider} isDesktop={isTauri()} light={light} language={dictationLanguage} onLanguageChange={value => { setDictationLanguage(value); writeStored('neru.voice.language', value) }} onOpenProject={chooseProject} onProviderSaved={value => { setProvider(value); setProviderId(value.providerId); setProviderFormat(value.apiFormat); setProviderUrl(value.baseUrl); setProviderModel(value.model) }} onToggleTheme={() => setLight(value => !value)} onFinish={finishOnboarding} />
 
   const edit = (command: 'undo' | 'redo' | 'cut' | 'copy' | 'selectAll') => () => { document.execCommand(command) }
@@ -905,6 +948,9 @@ function App() {
               <div className="settings-row"><div><strong>Desktop notifications</strong><p>Tell me when a session in the background finishes or needs approval, or when Neru is not in focus.</p></div><div className="theme-toggle"><button className={notifications ? 'active' : ''} onClick={() => { setNotifications(true); writeStored('neru.notifications', true); void notifyUser('Notifications are on', 'Neru will tell you when a session needs you.') }}>On</button><button className={!notifications ? 'active' : ''} onClick={() => { setNotifications(false); writeStored('neru.notifications', false) }}>Off</button></div></div>
               <div className="settings-row"><div><strong>Web search</strong><p>Let Neru search and read public pages, and show numbered sources with its answers.</p></div><div className="theme-toggle"><button className={web ? 'active' : ''} onClick={() => { setWeb(true); writeStored('neru.web', true) }}><Globe size={15} /> On</button><button className={!web ? 'active' : ''} onClick={() => { setWeb(false); writeStored('neru.web', false) }}>Off</button></div></div>
             </section>
+            <section className="settings-section"><h2>Updates</h2>
+              <div className="settings-row"><div><strong>Neru {appVersion || '0.1.0'}</strong><p>{update ? `Version ${update.version} is ready to install.` : updateCheck === 'current' ? 'You have the latest version.' : 'Neru checks GitHub Releases for new versions when it starts and every few hours.'}</p></div><div className="settings-actions-inline"><button className="button subtle" onClick={() => setWhatsNew(appVersion || 'latest')}>What’s new</button>{update ? <button className="button primary" onClick={() => void applyUpdate()} disabled={updateProgress !== undefined}>Restart to update</button> : <button className="button subtle" onClick={() => void checkNow()} disabled={updateCheck === 'checking' || !isTauri()}>{updateCheck === 'checking' ? 'Checking…' : 'Check for updates'}</button>}</div></div>
+            </section>
             <section className="settings-section"><h2>Credits</h2>
               <div className="settings-row"><div><strong>{author.handle}</strong><p>{author.line}</p></div><a className="button subtle" href={author.url}>{author.handle}</a></div>
             </section>
@@ -933,6 +979,7 @@ function App() {
             </>}
           </section>}
           {settingsTab === 'connectors' && <Connectors onError={setError} />}
+          {settingsTab === 'skills' && <Skills onError={setError} onNotice={setNotice} />}
           {settingsTab === 'model' && <section className="settings-section provider-settings"><h2>Model provider</h2><p className="settings-lede">Free keys for everyday frontend and backend work, a model on this PC, or your own API key.</p>
             <label>Provider<select value={providerId} onChange={event => selectProvider(event.target.value)}>{providerPresets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             {(() => { const preset = providerPresets.find(item => item.id === providerId); return <div className="provider-description"><p>{preset?.description}</p>{(preset?.freeLimit || preset?.keyUrl) && <p className="provider-meta">{preset.freeLimit && <span className="provider-free">Free: {preset.freeLimit}</span>}{preset.keyUrl && <a className="provider-key-link" href={preset.keyUrl} target="_blank" rel="noreferrer"><KeyRound size={13} /> Get a {preset.name} API key <ExternalLink size={12} /></a>}</p>}</div> })()}
@@ -948,7 +995,7 @@ function App() {
       </div>
     </main>}
     {showOutput && <div className="output-drawer"><div className="output-header"><span><SquareTerminal size={15} /> Build output</span><button className="icon-button" onClick={() => setShowOutput(false)}><X size={15} /></button></div><pre>{buildOutput}</pre></div>}
-  </div></div>{cloneOpen && <div className="modal-backdrop" onMouseDown={() => !busy && setCloneOpen(false)}><form className="clone-dialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); void cloneProject() }}><h2>Clone a repository.</h2><p>Paste a Git URL and choose where the new folder goes.</p><label>Repository URL<input autoFocus value={cloneUrl} onChange={event => changeCloneUrl(event.target.value)} placeholder="https://github.com/owner/repository.git" /></label><label>Destination folder<span className="path-field"><input value={cloneDestination} onChange={event => setCloneDestination(event.target.value)} placeholder="D:\\Neru\\projects\\repository" /><button type="button" className="icon-button" onClick={() => void chooseCloneFolder()} disabled={busy} aria-label="Choose destination folder" title="Choose folder"><FolderOpen size={16} /></button></span></label>{error && <p className="clone-error">{error}</p>}<div className="clone-actions"><button type="button" className="button subtle" onClick={() => setCloneOpen(false)} disabled={busy}>Cancel</button><button type="submit" className="button primary" disabled={busy || !cloneUrl.trim() || !cloneDestination.trim()}>{busy ? "Cloning…" : "Clone project"}</button></div></form></div>}{palette && <div className="modal-backdrop" onMouseDown={() => setPalette(false)}><div className="palette" onMouseDown={event => event.stopPropagation()}><div className="palette-search"><Command size={17} /><input autoFocus value={paletteQuery} onChange={event => setPaletteQuery(event.target.value)} placeholder="Search commands…" /><span>Esc</span></div><div className="palette-results">{paletteActions.filter(item => item.label.toLowerCase().includes(paletteQuery.toLowerCase())).map(item => <button key={item.label} onClick={() => { void item.action(); setPalette(false); setPaletteQuery('') }}><ChevronRight size={14} />{item.label}<ArrowRight size={13} /></button>)}</div></div></div>}</div>
+  </div></div>{cloneOpen && <div className="modal-backdrop" onMouseDown={() => !busy && setCloneOpen(false)}><form className="clone-dialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); void cloneProject() }}><h2>Clone a repository.</h2><p>Paste a Git URL and choose where the new folder goes.</p><label>Repository URL<input autoFocus value={cloneUrl} onChange={event => changeCloneUrl(event.target.value)} placeholder="https://github.com/owner/repository.git" /></label><label>Destination folder<span className="path-field"><input value={cloneDestination} onChange={event => setCloneDestination(event.target.value)} placeholder="D:\\Neru\\projects\\repository" /><button type="button" className="icon-button" onClick={() => void chooseCloneFolder()} disabled={busy} aria-label="Choose destination folder" title="Choose folder"><FolderOpen size={16} /></button></span></label>{error && <p className="clone-error">{error}</p>}<div className="clone-actions"><button type="button" className="button subtle" onClick={() => setCloneOpen(false)} disabled={busy}>Cancel</button><button type="submit" className="button primary" disabled={busy || !cloneUrl.trim() || !cloneDestination.trim()}>{busy ? "Cloning…" : "Clone project"}</button></div></form></div>}{palette && <div className="modal-backdrop" onMouseDown={() => setPalette(false)}><div className="palette" onMouseDown={event => event.stopPropagation()}><div className="palette-search"><Command size={17} /><input autoFocus value={paletteQuery} onChange={event => setPaletteQuery(event.target.value)} placeholder="Search commands…" /><span>Esc</span></div><div className="palette-results">{paletteActions.filter(item => item.label.toLowerCase().includes(paletteQuery.toLowerCase())).map(item => <button key={item.label} onClick={() => { void item.action(); setPalette(false); setPaletteQuery('') }}><ChevronRight size={14} />{item.label}<ArrowRight size={13} /></button>)}</div></div></div>}{updateLayer}</div>
 }
 
 export default App
