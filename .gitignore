@@ -1,0 +1,20 @@
+# Local storage: caches, build output, sessions, saved keys and tokens. Never commit.
+.local/
+
+# Editor and agent state on this machine
+.cursor/
+.claude/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Build output
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/schemas/
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db

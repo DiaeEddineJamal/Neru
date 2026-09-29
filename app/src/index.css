@@ -1,0 +1,140 @@
+@import 'tailwindcss';
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/instrument-serif/latin-400.css';
+@import '@fontsource/instrument-serif/latin-400-italic.css';
+@import '@fontsource/jetbrains-mono/latin-400.css';
+
+/* Neru owns light/dark through data-theme, so Tailwind's dark: follows it. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* shadcn-style tokens used by the agent components, mapped onto Neru's palette. */
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface-2);
+  --color-popover-foreground: var(--text);
+  --color-muted: var(--surface-3);
+  --color-muted-foreground: var(--muted);
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--text);
+  --color-accent: var(--surface-3);
+  --color-accent-foreground: var(--text);
+  --color-primary: var(--moss-action);
+  --color-primary-foreground: #f5f4ef;
+  --color-destructive: var(--danger);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--sage);
+  --font-sans: Inter, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+:root {
+  font-family: Inter, 'Segoe UI', sans-serif;
+  color: #f2f0e9;
+  background: #151515;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  /* Neru type scale (--fs-*): 12 meta, 13 secondary, 14 UI, 16 reading, 18/20 headings, 24/28 page titles, 40 hero */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 28px;
+  --fs-display: 40px;
+  --bg: #151515;
+  --surface: #151515;
+  --prompt: #20201F;
+  --surface-2: #1b1d19;
+  --surface-3: #242622;
+  --text: #f2f0e9;
+  --secondary: #b3b3aa;
+  --muted: #8c9088;
+  --border: #30322d;
+  --moss: #64806a;
+  --moss-action: #486b51;
+  --moss-action-hover: #54745b;
+  --sage: #8ea291;
+  --moss-deep: #344a39;
+  --danger: #bd7770;
+  --mascot-eye: #f5f4ef;
+  /* Dark sidebar keeps the original neutral surfaces; light mode gets the matcha panel. */
+  --sidebar-bg: var(--surface);
+  --sidebar-hover: var(--surface-2);
+  --sidebar-active: var(--surface-3);
+  --sidebar-border: var(--border);
+  --plus-fill: oklch(0.29 0.012 140);
+  --plus-ring: rgb(255 255 255 / 0.07);
+}
+
+:root[data-theme='light'] {
+  color: #191a18;
+  background: #f5f4ef;
+  --bg: #f5f4ef;
+  --surface: #faf9f5;
+  --prompt: #fff;
+  --surface-2: #fff;
+  --surface-3: #eeeee9;
+  --text: #191a18;
+  --secondary: #676a64;
+  --muted: #5e665d;
+  --border: #dddcd5;
+  --moss: #54745b;
+  --moss-action: #54745b;
+  --moss-action-hover: #476a4f;
+  --sage: #64806a;
+  --moss-deep: #dfe9df;
+  --danger: #a25750;
+  --mascot-eye: #f5f4ef;
+  /* Matcha side panel: light green so it reads apart from the workspace. */
+  --sidebar-bg: oklch(0.935 0.042 128);
+  --sidebar-hover: oklch(0.9 0.05 128);
+  --sidebar-active: oklch(0.865 0.062 128);
+  --sidebar-border: oklch(0.86 0.04 128);
+  --plus-fill: oklch(0.99 0.006 110);
+  --plus-ring: rgb(0 0 0 / 0.08);
+}
+
+.mascot { display: inline-block; position: relative; flex: 0 0 auto; vertical-align: middle; }
+.mascot-figure { position: relative; display: block; width: 100%; height: 100%; }
+.mascot-art { width: 100%; height: 100%; display: block; object-fit: contain; }
+.mascot-face { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.mascot-eye { fill: var(--mascot-eye); transform-box: fill-box; transform-origin: center; animation: mascot-blink 6.8s infinite; }
+.mascot-sparkle { fill: var(--mascot-eye); opacity: 0; transform-box: fill-box; transform-origin: center; }
+.mascot-control { display: inline-grid; place-items: center; flex: 0 0 auto; padding: 0; border: 0; background: transparent; }
+.mascot-control:focus, .mascot-control:focus-visible { outline: none; }
+.mascot-control .mascot { pointer-events: none; }
+.mascot.is-look-left .mascot-face { animation: mascot-look-left 1.3s ease-in-out both; }
+.mascot.is-look-right .mascot-face { animation: mascot-look-right 1.3s ease-in-out both; }
+.mascot.is-twinkle .mascot-eye:nth-of-type(2) { animation: mascot-wink 1.15s ease-in-out both; }
+.mascot.is-twinkle .mascot-sparkle { animation: mascot-twinkle 1.15s ease-in-out both; }
+.mascot.is-hop .mascot-figure { animation: mascot-hop .95s cubic-bezier(.22,.8,.35,1) both; }
+.mascot.is-sway .mascot-figure { animation: mascot-sway 1.2s ease-in-out both; transform-origin: 55% 83%; }
+@keyframes mascot-blink { 0%, 91%, 94%, 100% { transform: scaleY(1); } 92%, 93% { transform: scaleY(.06); } }
+@keyframes mascot-look-left { 0%, 100% { transform: translateX(0); } 25%, 68% { transform: translateX(-3%); } }
+@keyframes mascot-look-right { 0%, 100% { transform: translateX(0); } 25%, 68% { transform: translateX(3%); } }
+@keyframes mascot-wink { 0%, 30%, 70%, 100% { transform: scaleY(1); } 43%, 58% { transform: scaleY(.07); } }
+@keyframes mascot-twinkle { 0%, 27%, 72%, 100% { opacity: 0; transform: scale(.25) rotate(-25deg); } 44%, 58% { opacity: 1; transform: scale(1) rotate(15deg); } }
+@keyframes mascot-hop { 0%, 100% { transform: translateY(0) scale(1); } 18% { transform: translateY(3%) scale(1.03,.96); } 48% { transform: translateY(-9%) scale(.98,1.03); } 74% { transform: translateY(0) scale(1.02,.98); } }
+@keyframes mascot-sway { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(-5deg); } 65% { transform: rotate(5deg); } }
+@media (prefers-reduced-motion: reduce) { .mascot-eye, .mascot.is-look-left .mascot-face, .mascot.is-look-right .mascot-face, .mascot.is-twinkle .mascot-eye:nth-of-type(2), .mascot.is-twinkle .mascot-sparkle, .mascot.is-hop .mascot-figure, .mascot.is-sway .mascot-figure { animation: none; } }
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body { overflow: hidden; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+::selection { background: var(--moss-deep); }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: var(--border); border: 2px solid var(--surface); border-radius: 10px; }
+::-webkit-scrollbar-track { background: transparent; }

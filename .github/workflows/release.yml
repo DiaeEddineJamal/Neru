@@ -1,0 +1,66 @@
+# Builds Neru for Windows, macOS (Apple silicon and Intel) and Linux, and attaches the
+# installers to a draft GitHub release. Runs on a version tag (v0.1.0) or by hand.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: '--bundles nsis,msi'
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin --bundles app,dmg'
+          - platform: macos-latest
+            args: '--target x86_64-apple-darwin --bundles app,dmg'
+          - platform: ubuntu-22.04
+            args: '--bundles deb,appimage'
+    runs-on: ${{ matrix.platform }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseName: 'Neru v__VERSION__'
+          releaseBody: 'Installers for Windows (.exe, .msi), macOS (.dmg, Apple silicon and Intel) and Linux (.deb, .AppImage). The builds are unsigned: Windows SmartScreen and macOS Gatekeeper will ask you to confirm the first launch.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
