@@ -1,0 +1,2 @@
+From https://github.com/obra/superpowers/tree/main/skills/test-driven-development
+By Jesse Vincent (Superpowers). License: MIT (see LICENSE.txt).

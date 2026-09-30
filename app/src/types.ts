@@ -162,4 +162,4 @@ export interface ProviderView {
 }
 
 /** A skill the agent can load, as Settings lists it. */
-export interface SkillView { name: string; description: string; source: 'personal' | 'project' | 'claude'; path: string; chars: number }
+export interface SkillView { name: string; description: string; source: 'personal' | 'project' | 'claude' | 'built-in'; path: string; chars: number; enabled: boolean }

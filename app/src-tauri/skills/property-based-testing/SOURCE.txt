@@ -1,0 +1,2 @@
+From https://github.com/trailofbits/skills/tree/main/plugins/property-based-testing/skills/property-based-testing
+By Trail of Bits. License: CC-BY-SA-4.0 (see LICENSE.txt).

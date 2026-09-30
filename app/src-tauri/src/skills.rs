@@ -1,6 +1,8 @@
 //! Skills are markdown workflows the model can load by name, and the user can run with `/name`.
-//! A skill is a `SKILL.md` file in `.neru/skills/<name>/`, `.claude/skills/<name>/`, or Neru's
-//! personal skills folder.
+//! A skill is a `SKILL.md` file in `.neru/skills/<name>/`, `.claude/skills/<name>/`, Neru's
+//! personal skills folder, or the skills that ship with Neru (design, engineering method,
+//! security; see skills/NOTICE.md). Like Claude, only names and descriptions go in the prompt;
+//! the model loads a skill's text, and any reference file it names, when a task matches.
 
 use std::{
     fs,
@@ -17,7 +19,8 @@ struct Skill {
     name: String,
     description: String,
     body: String,
-    /// "project" (.neru/skills), "claude" (.claude/skills), or "personal" (added in Settings).
+    /// "project" (.neru/skills), "claude" (.claude/skills), "personal" (added in Settings) or
+    /// "built-in" (ships with Neru).
     source: &'static str,
     folder: PathBuf,
 }
@@ -31,6 +34,29 @@ pub struct SkillView {
     pub source: String,
     pub path: String,
     pub chars: usize,
+    /// Built-in skills can be switched off; the rest are removed instead.
+    pub enabled: bool,
+}
+
+static BUNDLED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Where the skills that ship with Neru live: the app's resources, or the source tree in development.
+pub fn set_bundled_dir(resources: Option<PathBuf>) {
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills");
+    let found = resources.map(|dir| dir.join("skills")).filter(|dir| dir.is_dir()).unwrap_or(dev);
+    let _ = BUNDLED.set(found);
+}
+
+fn bundled_dir() -> Option<&'static PathBuf> {
+    BUNDLED.get().filter(|dir| dir.is_dir())
+}
+
+fn disabled_path() -> Result<PathBuf, String> {
+    Ok(data_dir()?.join("skills-disabled.json"))
+}
+
+fn disabled() -> Vec<String> {
+    disabled_path().ok().and_then(|path| fs::read_to_string(path).ok()).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
 }
 
 fn personal_dir() -> Result<PathBuf, String> {
@@ -40,7 +66,8 @@ fn personal_dir() -> Result<PathBuf, String> {
 }
 
 pub fn catalog(root: &Path) -> String {
-    let skills = list(root);
+    let off = disabled();
+    let skills: Vec<Skill> = list(root).into_iter().filter(|skill| !(skill.source == "built-in" && off.contains(&skill.name))).collect();
     if skills.is_empty() {
         return String::new();
     }
@@ -49,20 +76,49 @@ pub fn catalog(root: &Path) -> String {
         .map(|skill| format!("- {}: {}", skill.name, skill.description))
         .collect::<Vec<_>>()
         .join("\n");
-    format!("\n\nSkills you can load with the read_skill tool when one matches the task:\n{lines}")
+    format!("\n\nSkills: expert workflows you can load with read_skill. Before starting a task, check this list; when a skill matches (building UI, debugging, reviewing, security, planning, writing prose), load it first and follow it. Skills written for other agents may name their tools: TodoWrite means update_todos, Task or a subagent means task, Read means read_file, Edit means propose_edit, Write means propose_write_file, Bash means run_shell_command, Grep means search_text, Glob means find_files. Skip steps that need tools you do not have.\n{lines}")
 }
 
-pub fn read(root: &Path, name: &str) -> Result<String, String> {
-    list(root)
-        .into_iter()
-        .find(|skill| skill.name == name)
-        .map(|skill| skill.body.chars().take(20_000).collect())
-        .ok_or_else(|| format!("No skill named {name}"))
+/// A skill's instructions, or with `file` one of its reference documents. The instructions end
+/// with a list of the reference files the skill folder holds.
+pub fn read(root: &Path, name: &str, file: Option<&str>) -> Result<String, String> {
+    let skill = list(root).into_iter().find(|skill| skill.name == name).ok_or_else(|| format!("No skill named {name}. Check the Skills list in the system prompt."))?;
+    if let Some(file) = file.map(str::trim).filter(|file| !file.is_empty()) {
+        let relative = file.replace('\\', "/");
+        if relative.split('/').any(|part| part == ".." || part.is_empty() && relative.starts_with('/')) || Path::new(&relative).is_absolute() {
+            return Err("file must be a path inside the skill folder".into());
+        }
+        let path = skill.folder.join(&relative);
+        let text = fs::read_to_string(&path).map_err(|_| format!("{name} has no file {relative}. Its files are listed at the end of the skill."))?;
+        return Ok(text.chars().take(40_000).collect());
+    }
+    let mut files = Vec::new();
+    collect_files(&skill.folder, &skill.folder, &mut files);
+    files.retain(|file| file != "SKILL.md" && !file.ends_with("LICENSE.txt") && file != "SOURCE.txt");
+    let mut text: String = skill.body.chars().take(30_000).collect();
+    if !files.is_empty() {
+        files.sort();
+        text.push_str(&format!("\n\n[Reference files in this skill; load one with read_skill name={name} file=<path>]\n{}", files.iter().take(80).map(|file| format!("- {file}")).collect::<Vec<_>>().join("\n")));
+    }
+    Ok(text)
+}
+
+fn collect_files(base: &Path, dir: &Path, into: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(base, &path, into);
+        } else if let Ok(relative) = path.strip_prefix(base) {
+            into.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
 }
 
 /// Name, description, and body for slash-command registration.
 pub fn slash_entries(root: &Path) -> Vec<(String, String, String)> {
-    list(root).into_iter().map(|skill| (skill.name, skill.description, skill.body)).collect()
+    let off = disabled();
+    list(root).into_iter().filter(|skill| !(skill.source == "built-in" && off.contains(&skill.name))).map(|skill| (skill.name, skill.description, skill.body)).collect()
 }
 
 fn list(root: &Path) -> Vec<Skill> {
@@ -73,6 +129,10 @@ fn list(root: &Path) -> Vec<Skill> {
     }
     if let Ok(dir) = data_dir() {
         read_tree(&dir.join("skills"), "personal", &mut skills);
+    }
+    // Last, so a project or personal skill with the same name takes its place.
+    if let Some(dir) = bundled_dir() {
+        read_tree(dir, "built-in", &mut skills);
     }
     skills.sort_by(|a, b| a.name.cmp(&b.name));
     skills
@@ -196,9 +256,11 @@ fn import_one(source: &Path, into: &Path) -> Result<String, String> {
 }
 
 fn views(root: &Path) -> Vec<SkillView> {
+    let off = disabled();
     list(root)
         .into_iter()
         .map(|skill| SkillView {
+            enabled: !(skill.source == "built-in" && off.contains(&skill.name)),
             chars: skill.body.chars().count(),
             name: skill.name,
             description: skill.description,
@@ -247,6 +309,18 @@ pub fn remove_skill(name: String, state: State<'_, AppState>) -> Result<Vec<Skil
     Ok(views(&open_root(&state)))
 }
 
+/// Switches a built-in skill on or off for every project.
+#[tauri::command]
+pub fn set_skill_enabled(name: String, enabled: bool, state: State<'_, AppState>) -> Result<Vec<SkillView>, String> {
+    let mut off = disabled();
+    off.retain(|item| item != &name);
+    if !enabled {
+        off.push(name);
+    }
+    fs::write(disabled_path()?, serde_json::to_string_pretty(&off).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    Ok(views(&open_root(&state)))
+}
+
 /// Opens the personal skills folder in the file manager.
 #[tauri::command]
 pub fn open_skills_folder() -> Result<(), String> {
@@ -264,10 +338,26 @@ pub fn open_skills_folder() -> Result<(), String> {
 fn front_name(text: &str) -> Option<String> {
     let rest = text.trim_start_matches('\u{feff}').strip_prefix("---")?;
     let end = rest.find("\n---")?;
-    rest[..end]
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("name:"))
-        .map(|value| value.trim().trim_matches('"').to_lowercase())
+    front_value(&rest[..end], "name").map(|value| value.to_lowercase())
+}
+
+/// One key of YAML front matter: plain, "double" or 'single' quoted, or a `>`/`|` block whose
+/// indented lines follow. Enough YAML for skill headers.
+fn front_value(front: &str, key: &str) -> Option<String> {
+    let lines: Vec<&str> = front.lines().collect();
+    let prefix = format!("{key}:");
+    let at = lines.iter().position(|line| line.trim_start() == line.trim_start() && line.starts_with(&prefix))?;
+    let first = lines[at][prefix.len()..].trim();
+    let value = if first.is_empty() || matches!(first, ">" | "|" | ">-" | "|-" | ">+" | "|+") {
+        lines[at + 1..].iter().take_while(|line| line.starts_with(' ') || line.starts_with('\t') || line.trim().is_empty()).map(|line| line.trim()).collect::<Vec<_>>().join(" ").trim().to_string()
+    } else if let Some(inner) = first.strip_prefix('"').and_then(|rest| rest.strip_suffix('"')) {
+        inner.replace("\\\"", "\"")
+    } else if let Some(inner) = first.strip_prefix('\'').and_then(|rest| rest.strip_suffix('\'')) {
+        inner.replace("''", "'")
+    } else {
+        first.to_string()
+    };
+    Some(value).filter(|value| !value.is_empty())
 }
 
 fn parse_front(text: &str) -> (String, String) {
@@ -276,12 +366,7 @@ fn parse_front(text: &str) -> (String, String) {
         if let Some(end) = rest.find("\n---") {
             let front = &rest[..end];
             let body = rest[end + 4..].trim_start_matches(['\r', '\n']).to_string();
-            let description = front
-                .lines()
-                .find_map(|line| line.trim().strip_prefix("description:"))
-                .map(|value| value.trim().trim_matches('"').to_string())
-                .unwrap_or_default();
-            return (description, body);
+            return (front_value(front, "description").unwrap_or_default(), body);
         }
     }
     (String::new(), text.to_string())
@@ -298,17 +383,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reads_quoted_and_folded_descriptions() {
+        assert_eq!(front_value("name: a\ndescription: \"Use it, \\\"now\\\"\"", "description").as_deref(), Some("Use it, \"now\""));
+        assert_eq!(front_value("description: >\n  Use when\n  debugging\nlicense: MIT", "description").as_deref(), Some("Use when debugging"));
+        assert_eq!(front_value("description: 'It''s fine'", "description").as_deref(), Some("It's fine"));
+    }
+
+    #[test]
+    fn bundled_skills_all_parse() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills");
+        let mut skills = Vec::new();
+        read_tree(&dir, "built-in", &mut skills);
+        assert!(skills.len() >= 19, "only {} bundled skills parsed", skills.len());
+        for skill in &skills {
+            assert!(!skill.description.is_empty() && skill.description != "Project skill", "{} has no description", skill.name);
+            assert!(skill.body.len() > 200, "{} has no body", skill.name);
+        }
+    }
+
+    #[test]
+    fn reference_files_stay_inside_the_skill() {
+        let _ = BUNDLED.set(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills"));
+        let root = PathBuf::new();
+        let text = read(&root, "impeccable", None).unwrap();
+        assert!(text.contains("reference/"));
+        assert!(read(&root, "impeccable", Some("reference/polish.md")).unwrap().len() > 100);
+        assert!(read(&root, "impeccable", Some("../frontend-design/SKILL.md")).is_err());
+    }
+
+    #[test]
     fn reads_a_skill_folder() {
         let root = std::env::temp_dir().join(format!("neru-skills-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let skill = root.join(".neru").join("skills").join("review-pr");
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), "---\nname: review-pr\ndescription: Review a pull request\n---\nLook for bugs in $ARGUMENTS").unwrap();
-        let found = list(&root);
+        let found: Vec<Skill> = list(&root).into_iter().filter(|skill| skill.source == "project").collect();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "review-pr");
         assert!(catalog(&root).contains("review-pr"));
-        assert!(read(&root, "review-pr").unwrap().contains("Look for bugs"));
+        assert!(read(&root, "review-pr", None).unwrap().contains("Look for bugs"));
         let _ = fs::remove_dir_all(&root);
     }
 

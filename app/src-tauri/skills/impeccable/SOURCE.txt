@@ -1,0 +1,2 @@
+From https://github.com/pbakaus/impeccable/tree/main/.claude/skills/impeccable
+By Paul Bakaus (Impeccable). License: Apache-2.0 (see LICENSE.txt).

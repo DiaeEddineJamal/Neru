@@ -178,6 +178,8 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
         .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .setup(move |app| {
+            use tauri::Manager;
+            skills::set_bundled_dir(app.path().resource_dir().ok());
             ready(app.handle().clone());
             Ok(())
         })
@@ -261,6 +263,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             skills::import_skills,
             skills::remove_skill,
             skills::open_skills_folder,
+            skills::set_skill_enabled,
             workspace::session_changes,
             agent::effort_supported,
             documents::document_bytes,

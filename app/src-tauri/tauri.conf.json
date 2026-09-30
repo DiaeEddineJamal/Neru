@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Neru",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "dev.neru.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -98,7 +98,10 @@
         "bundleMediaFramework": false
       }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "skills/": "skills/"
+    }
   },
   "plugins": {
     "updater": {

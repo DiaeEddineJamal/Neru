@@ -28,6 +28,7 @@ export const api = {
   importSkills: (paths: string[]) => invoke<SkillView[]>('import_skills', { paths }),
   removeSkill: (name: string) => invoke<SkillView[]>('remove_skill', { name }),
   openSkillsFolder: () => invoke<void>('open_skills_folder'),
+  setSkillEnabled: (name: string, enabled: boolean) => invoke<SkillView[]>('set_skill_enabled', { name, enabled }),
   autoTitleSession: (sessionId: string) => invoke<SessionSummary | null>('auto_title_session', { sessionId }),
   deleteSession: (id: string) => invoke<SessionSnapshot>('delete_session', { id }),
   openProject: (path: string) => invoke<ProjectInfo>('open_project', { path }),

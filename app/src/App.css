@@ -771,3 +771,16 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .context-menu-item kbd { color: var(--muted); font-family: var(--font-sans); font-size: 11px; }
 .context-menu-separator { height: 1px; margin: 5px 6px; background: var(--border); }
 .tree-rename { width: calc(100% - 16px); margin: 1px 8px; padding: 3px 7px; border: 1px solid var(--sage); border-radius: 5px; background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-sm); outline: none; }
+
+/* Built-in skills: grouped, each with an on/off switch. */
+.skill-group { margin: 14px 0 0; }
+.skill-group h4 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+.skill-group h4 span { color: var(--muted); font-weight: 400; font-size: var(--fs-xs); }
+.skill-switch { position: relative; flex-shrink: 0; width: 34px; height: 20px; cursor: pointer; }
+.skill-switch input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.skill-switch span { position: absolute; inset: 0; border-radius: 10px; background: var(--surface-3); border: 1px solid var(--border); transition: background .18s; }
+.skill-switch span::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); transition: transform .18s, background .18s; }
+.skill-switch input:checked + span { background: color-mix(in srgb, var(--sage) 45%, var(--surface-3)); border-color: var(--sage); }
+.skill-switch input:checked + span::after { transform: translateX(14px); background: #fff; }
+.skill-switch input:focus-visible + span { outline: 2px solid var(--sage); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .skill-switch span, .skill-switch span::after { transition: none; } }
