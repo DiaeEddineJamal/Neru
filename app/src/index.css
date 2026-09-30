@@ -73,6 +73,14 @@
   --sidebar-border: var(--border);
   --plus-fill: oklch(0.29 0.012 140);
   --plus-ring: rgb(255 255 255 / 0.07);
+  /* Your messages: a quiet warm charcoal, as in the Claude app, lifted just off the page. */
+  --bubble-top: #30302e;
+  --bubble-bottom: #30302e;
+  --bubble-border: transparent;
+  --bubble-text: #f0eee6;
+  --bubble-shadow: none;
+  /* Floating menus sit one step above the page so they never blend into it. */
+  --menu-bg: #1e201c;
 }
 
 :root[data-theme='light'] {
@@ -95,6 +103,12 @@
   --danger: #a25750;
   --mascot-eye: #f5f4ef;
   /* Matcha side panel: light green so it reads apart from the workspace. */
+  --bubble-top: oklch(0.925 0.045 140);
+  --bubble-bottom: oklch(0.9 0.05 142);
+  --bubble-border: oklch(0.82 0.05 142 / 0.8);
+  --bubble-text: #16231a;
+  --bubble-shadow: 0 1px 0 rgb(255 255 255 / .7) inset, 0 8px 20px -14px rgb(40 70 45 / .45);
+  --menu-bg: #ffffff;
   --sidebar-bg: oklch(0.935 0.042 128);
   --sidebar-hover: oklch(0.9 0.05 128);
   --sidebar-active: oklch(0.865 0.062 128);

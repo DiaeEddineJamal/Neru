@@ -8,7 +8,9 @@ import type { SessionChange } from '../../types'
 export interface ReviewComment { id: string; path: string; line: string; text: string }
 
 /** Everything Neru changed in this session in one place, with comments pinned to diff lines. */
-export function ReviewPane({ changes, loading, comments, onComments, onRefresh, onClose, onSend, onOpenFile }: {
+export function ReviewPane({ changes, loading, comments, onComments, onRefresh, onClose, onSend, onOpenFile, embedded = false }: {
+  /** Shown inside the dock, which has its own title and close button. */
+  embedded?: boolean
   changes: SessionChange[]
   loading: boolean
   comments: ReviewComment[]
@@ -36,7 +38,7 @@ export function ReviewPane({ changes, loading, comments, onComments, onRefresh, 
     <header className="review-head">
       <div><strong>Changes in this session</strong><span>{changes.length} file{changes.length === 1 ? '' : 's'} · <b className="add">+{additions}</b> <b className="del">−{deletions}</b></span></div>
       <button className="icon-button small" onClick={onRefresh} aria-label="Refresh changes" title="Refresh">{loading ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}</button>
-      <button className="icon-button small" onClick={onClose} aria-label="Close changes" title="Close"><X size={14} /></button>
+      {!embedded && <button className="icon-button small" onClick={onClose} aria-label="Close changes" title="Close"><X size={14} /></button>}
     </header>
     <div className="review-body">
       {!loading && changes.length === 0 && <div className="empty-pane"><FileDiffIcon size={24} /><p>Neru has not changed any files in this session yet.</p></div>}

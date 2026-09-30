@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { BookOpen, ChevronRight, Command, Copy, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Globe, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, SquareTerminal, Sun, Trash2 } from 'lucide-react'
+import { BookOpen, ChevronRight, Command, Copy, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, Sun, Trash2 } from 'lucide-react'
 import { useContextMenu } from './ContextMenu'
 import { Mascot } from './Mascot'
 import type { ProjectInfo, Section, SessionSummary } from '../../types'
@@ -13,9 +13,7 @@ const isMac = /Mac/i.test(navigator.platform)
 const mod = isMac ? '⌘' : 'Ctrl'
 
 const tools: { id: Section; label: string; icon: typeof Folder }[] = [
-  { id: 'search', label: 'Search', icon: Search }, { id: 'explorer', label: 'Explorer', icon: Folder },
-  { id: 'git', label: 'Source control', icon: GitBranch }, { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
-  { id: 'preview', label: 'Preview', icon: Globe },
+  { id: 'search', label: 'Search', icon: Search },
 ]
 
 const readStorage = <T,>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }
@@ -121,7 +119,7 @@ export function Sidebar(props: SidebarProps) {
 
   return <aside className={`sidebar ${resizing ? 'resizing' : ''} ${props.floating ? 'floating' : ''}`} style={{ width, flexBasis: width }}>
     <div className="sidebar-brand-row">
-      <button className="sidebar-brand" onClick={() => props.onSection('home')} title="Neru home"><Mascot size={24} className="brand-mascot" /><strong>Neru</strong><span lang="ja">練る</span></button>
+      <button className="sidebar-brand" onClick={() => props.onSection('home')} title="Neru home"><Mascot size={36} className="brand-mascot" /><strong>Neru</strong><span lang="ja">練る</span></button>
     </div>
 
     <nav className="sidebar-nav" aria-label="Main navigation">

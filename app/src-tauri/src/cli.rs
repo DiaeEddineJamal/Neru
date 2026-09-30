@@ -304,7 +304,7 @@ fn save_history(history: &[String]) {
 fn switch_model(app: &tauri::AppHandle, wanted: &str) -> Result<String, String> {
     let view = agent::provider_status(app.state())?;
     let config = app.state::<AppState>().provider.lock().map_err(|e| e.to_string())?.clone();
-    let models = tauri::async_runtime::block_on(agent::list_models(view.provider_id.clone(), view.api_format.clone(), view.base_url.clone(), String::new(), app.clone())).unwrap_or_default();
+    let models = tauri::async_runtime::block_on(crate::models::list_model_ids(view.provider_id.clone(), view.api_format.clone(), view.base_url.clone(), app.clone())).unwrap_or_default();
     let terms: Vec<String> = wanted.to_lowercase().split_whitespace().map(str::to_string).collect();
     let chosen = models
         .iter()
@@ -792,7 +792,7 @@ impl<'a> Cli<'a> {
                 }
                 let Ok(view) = agent::provider_status(self.state()) else { return Flow::Continue };
                 self.screen.footer(&[format!("{DIM}Loading models from {}…{RESET}", view.provider_id)], None);
-                let models = tauri::async_runtime::block_on(agent::list_models(view.provider_id.clone(), view.api_format.clone(), view.base_url.clone(), String::new(), self.app.clone()));
+                let models = tauri::async_runtime::block_on(crate::models::list_model_ids(view.provider_id.clone(), view.api_format.clone(), view.base_url.clone(), self.app.clone()));
                 self.screen.clear();
                 match models {
                     Ok(models) if !models.is_empty() => {

@@ -26,6 +26,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/motion/select";
+import { SendMenu, type SendMenuRow } from "@/components/agents/prompt-send-menu";
 import { SPRING_SWAP } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
@@ -62,6 +63,14 @@ export interface PromptInputProps extends Omit<
   onStop?: () => void;
   /** Neru addition: sending while `loading` hands the message to the running reply. */
   onSteer?: (value: string) => void;
+  /** Neru addition: Ctrl+Enter and the send menu's "Queue for later". */
+  onQueue?: (value: string) => void;
+  /** Neru addition: Ctrl+Alt+Enter and the send menu's "Send in a forked session". */
+  onFork?: (value: string) => void;
+  /** Neru addition: previews of attached files, shown inside the box above the text. */
+  header?: ReactNode;
+  /** Neru addition: something is attached that can be sent without any text (an image). */
+  sendWithoutText?: boolean;
   minRows?: number;
   maxRows?: number;
   leadingAction?: ReactNode;
@@ -86,6 +95,10 @@ export function PromptInput({
   loading = false,
   onStop,
   onSteer,
+  onQueue,
+  onFork,
+  header,
+  sendWithoutText = false,
   minRows = 2,
   maxRows = 8,
   leadingAction,
@@ -111,9 +124,11 @@ export function PromptInput({
   const currentModel = models.find(
     (option) => option.value === currentModelValue,
   );
-  const canSubmit = Boolean(currentValue.trim()) && !disabled && !loading;
+  const hasText = Boolean(currentValue.trim());
+  const hasContent = hasText || sendWithoutText;
+  const canSubmit = hasContent && !disabled && !loading;
   // While a reply runs, typed text turns the stop button into "send to the agent".
-  const steering = loading && Boolean(onSteer) && Boolean(currentValue.trim()) && !disabled;
+  const steering = loading && Boolean(onSteer) && hasText && !disabled;
 
   const resizeTextarea = useCallback(() => {
     const textarea = textareaRef.current;
@@ -159,12 +174,42 @@ export function PromptInput({
       if (value === undefined) setInternalValue("");
       return;
     }
-    if (!prompt || disabled || loading) return;
+    if (!(prompt || sendWithoutText) || disabled || loading) return;
 
     onSubmit?.(prompt, currentModelValue);
     if (value === undefined) setInternalValue("");
     textareaRef.current?.focus({ preventScroll: true });
   };
+
+  const queue = () => {
+    if (!onQueue || !hasContent || disabled) return;
+    onQueue(currentValue.trim());
+    if (value === undefined) setInternalValue("");
+    textareaRef.current?.focus({ preventScroll: true });
+  };
+
+  const fork = () => {
+    if (!onFork || !hasContent || disabled) return;
+    onFork(currentValue.trim());
+    textareaRef.current?.focus({ preventScroll: true });
+  };
+
+  const menuRows: SendMenuRow[] = [];
+  if (onQueue || onFork) {
+    menuRows.push({
+      id: "send",
+      label: loading ? "Send now (steer)" : "Send",
+      keys: ["↵"],
+      disabled: loading ? !steering : !canSubmit,
+      onSelect: () => submit(),
+    });
+    if (onQueue) {
+      menuRows.push({ id: "queue", label: "Queue for later", keys: ["Ctrl", "↵"], disabled: !hasContent || Boolean(disabled), onSelect: queue });
+    }
+    if (onFork) {
+      menuRows.push({ id: "fork", label: "Send in a forked session", keys: ["Ctrl", "Alt", "↵"], disabled: !hasContent || Boolean(disabled), onSelect: fork });
+    }
+  }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     onKeyDown?.(event);
@@ -177,6 +222,12 @@ export function PromptInput({
       return;
     }
     event.preventDefault();
+    if (event.ctrlKey || event.metaKey) {
+      if (event.altKey) fork();
+      else if (onQueue) queue();
+      else submit();
+      return;
+    }
     submit();
   };
 
@@ -186,10 +237,12 @@ export function PromptInput({
       className={cn(
         "relative w-full rounded-2xl border border-border/80 bg-background p-2 transition-colors focus-within:border-foreground/25",
         inline && "flex items-end gap-2",
+        inline && header && "flex-wrap",
         disabled && "opacity-60",
         className,
       )}
     >
+      {header ? <div className="prompt-attachments">{header}</div> : null}
       <div className={inline ? "relative min-w-0 flex-1 self-center" : "contents"}>
       <div
         ref={measurementRef}
@@ -325,14 +378,15 @@ export function PromptInput({
         {trailingAction ? (
           <div className="ml-auto flex items-center gap-1">{trailingAction}</div>
         ) : null}
+        <SendMenu rows={menuRows} className={cn(!trailingAction && "ml-auto")}>
         <Button
           type={loading && !steering ? "button" : "submit"}
           size="icon"
           disabled={steering ? false : loading ? !onStop : !canSubmit}
           aria-label={steering ? "Send to the running reply" : loading ? "Stop generating" : "Send prompt"}
-          title={steering ? "Send now; Neru reads it before its next step" : undefined}
+          title={steering && menuRows.length === 0 ? "Send now; Neru reads it before its next step" : undefined}
           onClick={loading && !steering ? onStop : undefined}
-          className={cn("size-8 rounded-full", !trailingAction && "ml-auto")}
+          className="size-8 rounded-full"
         >
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span
@@ -351,6 +405,7 @@ export function PromptInput({
             </motion.span>
           </AnimatePresence>
         </Button>
+        </SendMenu>
       </div>
     </form>
   );

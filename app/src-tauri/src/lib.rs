@@ -7,18 +7,23 @@ mod extras;
 mod fallback;
 mod git;
 mod hooks;
+mod index;
 mod limits;
 mod mcp;
+mod models;
 mod oauth;
 mod policy;
 mod preview;
+mod preview_proxy;
 mod providers;
 mod sessions;
 mod settings;
 mod skills;
 mod stream;
+mod subagent;
 mod tasks;
 mod terminal;
+mod tools;
 mod voice;
 mod web;
 mod workspace;
@@ -180,6 +185,11 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
         .setup(move |app| {
             use tauri::Manager;
             skills::set_bundled_dir(app.path().resource_dir().ok());
+            index::set_app(app.handle().clone());
+            if let Some(root) = app.state::<AppState>().root.lock().ok().and_then(|root| root.clone()) {
+                // Start indexing the last project now, so the first search or chat finds it ready.
+                index::start(&root);
+            }
             ready(app.handle().clone());
             Ok(())
         })
@@ -191,6 +201,9 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             workspace::read_file,
             workspace::search_text,
             workspace::list_project_files,
+            index::index_status,
+            index::index_refresh,
+            index::search_files,
             workspace::propose_file,
             workspace::apply_pending,
             workspace::reject_pending,
@@ -200,6 +213,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             sessions::current_session,
             sessions::create_session,
             sessions::create_chat_session,
+            sessions::fork_session,
             sessions::select_session,
             sessions::rename_session,
             sessions::delete_session,
@@ -228,6 +242,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             preview::preview_hint,
             preview::preview_start,
             preview::preview_current,
+            preview::preview_route,
             preview::preview_stop,
             workspace::save_file,
             workspace::open_in_editor,
@@ -242,7 +257,10 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             agent::configure_provider,
             agent::provider_status,
             agent::new_chat,
-            agent::list_models,
+            models::list_models,
+            models::probe_model,
+            models::check_models,
+            models::cancel_check_models,
             agent::ai_chat,
             documents::inspect_documents,
             agent::stop_chat,

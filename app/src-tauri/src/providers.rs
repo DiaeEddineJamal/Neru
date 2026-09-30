@@ -11,6 +11,23 @@ pub fn valid_format(format: &str) -> bool {
     matches!(format, CHAT | RESPONSES | ANTHROPIC)
 }
 
+/// One client for every model request, so connections (and their TLS handshakes) are reused
+/// across rounds and sessions. TCP keepalive stops routers and proxies from silently dropping
+/// a connection while a model thinks for a long time before its first token.
+pub fn http() -> Client {
+    static CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
+        Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(20))
+            .tcp_keepalive(std::time::Duration::from_secs(15))
+            .tcp_nodelay(true)
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(8)
+            .build()
+            .unwrap_or_default()
+    });
+    CLIENT.clone()
+}
+
 pub fn is_local(url: &reqwest::Url) -> bool {
     matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
 }
@@ -30,6 +47,8 @@ pub fn models_request(client: &Client, config: &ProviderConfig) -> RequestBuilde
     let path = match config.provider_id.as_str() {
         "local" => "/models?available=true",
         "openrouter" => "/models?supported_parameters=tools",
+        // Anthropic pages its list at 20 models.
+        "anthropic" => "/models?limit=1000",
         _ => "/models",
     };
     let mut request = client.get(format!("{}{}", config.base_url, path));
@@ -39,55 +58,56 @@ pub fn models_request(client: &Client, config: &ProviderConfig) -> RequestBuilde
     authorized(request, config)
 }
 
-/// Chat models this key can actually call. Embeddings, speech, images, and inactive ids are left out.
-fn runnable_chat_model(id: &str, item: &Value) -> bool {
-    if item.get("active").and_then(Value::as_bool) == Some(false) {
-        return false;
+/// A one-token request to a model, built like a real chat request (same URL, headers and protocol per
+/// format) but without streaming or tools, to see whether the provider will serve the model.
+pub fn probe_request(client: &Client, config: &ProviderConfig) -> RequestBuilder {
+    let model = if config.provider_id == "gemini" {
+        config.model.trim_start_matches("models/")
+    } else {
+        config.model.as_str()
+    };
+    let (path, payload) = match config.api_format.as_str() {
+        ANTHROPIC => (
+            "/messages",
+            json!({"model":model,"max_tokens":1,"messages":[{"role":"user","content":"Hi"}]}),
+        ),
+        RESPONSES => (
+            "/responses",
+            json!({"model":model,"input":"Hi","max_output_tokens":16,"store":false}),
+        ),
+        _ => (
+            "/chat/completions",
+            json!({"model":model,"messages":[{"role":"user","content":"Hi"}],"max_tokens":8,"stream":false}),
+        ),
+    };
+    let mut request = client
+        .post(format!("{}{}", config.base_url, path))
+        .json(&payload);
+    if config.api_format == ANTHROPIC {
+        request = request.header("anthropic-version", "2023-06-01");
     }
-    let id = id.to_ascii_lowercase();
-    const SKIP: &[&str] = &[
-        "embedding",
-        "whisper",
-        "tts",
-        "dall-e",
-        "moderation",
-        "babbage",
-        "davinci",
-        "text-ada",
-        "text-curie",
-        "-image",
-        "image-",
-        "flux",
-        "stable-diffusion",
-        "sora",
-        "transcribe",
-        "realtime",
-    ];
-    !SKIP.iter().any(|needle| id.contains(needle))
+    authorized(request, config)
 }
 
-pub fn parse_models(body: &Value, provider_id: &str) -> Result<Vec<String>, String> {
-    let data = body["data"]
-        .as_array()
-        .ok_or("Provider model list has an unexpected shape")?;
-    Ok(data
-        .iter()
-        .filter_map(|item| {
-            let id = item["id"].as_str()?;
-            if provider_id == "opencode" && (id.starts_with("gemini-") || id.starts_with("jev-")) {
-                return None;
+/// Replaces image parts with a note when the provider said the model cannot read images, so a
+/// text-only model still answers instead of rejecting the whole request.
+fn without_images_for_text_models(config: &ProviderConfig, messages: Vec<Value>) -> Vec<Value> {
+    if !crate::models::certainly_text_only(&config.provider_id, &config.model) {
+        return messages;
+    }
+    messages
+        .into_iter()
+        .map(|mut message| {
+            if let Some(parts) = message["content"].as_array_mut() {
+                for part in parts.iter_mut() {
+                    if part["type"] == "image_url" {
+                        *part = json!({"type":"text","text":"[An image was attached, but this model cannot read images.]"});
+                    }
+                }
             }
-            if !runnable_chat_model(id, item) {
-                return None;
-            }
-            let id = if provider_id == "gemini" {
-                id.trim_start_matches("models/")
-            } else {
-                id
-            };
-            Some(id.to_string())
+            message
         })
-        .collect())
+        .collect()
 }
 
 pub fn authorize(request: RequestBuilder, config: &ProviderConfig) -> RequestBuilder {
@@ -101,7 +121,7 @@ pub fn chat_request(
     tools: &Value,
     effort: Option<&str>,
 ) -> RequestBuilder {
-    let messages = public_messages(messages);
+    let messages = without_images_for_text_models(config, public_messages(messages));
     let (path, mut payload) = match config.api_format.as_str() {
         ANTHROPIC => (
             "/messages",
@@ -159,6 +179,10 @@ fn openai_chat_payload(config: &ProviderConfig, messages: &[Value], tools: &Valu
     } else {
         config.model.as_str()
     };
+    let mut messages = messages.to_vec();
+    if wants_cache_marks(config) {
+        mark_cache_points(&mut messages);
+    }
     let mut payload = json!({
         "model": model,
         "messages": messages,
@@ -386,13 +410,57 @@ fn anthropic_payload(model: &str, messages: &[Value], tools: &Value) -> Value {
             _ => {}
         }
     }
-    let anthropic_tools: Vec<Value> = tools.as_array().into_iter().flatten().map(|tool| {
+    let mut anthropic_tools: Vec<Value> = tools.as_array().into_iter().flatten().map(|tool| {
         json!({"name":tool["function"]["name"],"description":tool["function"]["description"],"input_schema":tool["function"]["parameters"]})
     }).collect();
     // Whole files arrive as tool input, so leave room for them; older Claude 3 models cap lower.
     let max_tokens = if model.contains("claude-3-5") { 8_192 } else if model.contains("claude-3-") { 4_096 } else { 16_000 };
     let max_tokens = output_cap(model).filter(|cap| *cap > 0).map_or(max_tokens, |cap| cap.min(max_tokens));
-    json!({"model":model,"max_tokens":max_tokens,"system":system_text(messages),"messages":converted,"tools":anthropic_tools,"tool_choice":{"type":"auto"},"stream":true})
+    // Prompt caching, as Claude Code does it: the tools, the system prompt and the conversation
+    // so far are cached, so each agent round only pays (in time and tokens) for what is new.
+    if let Some(last) = anthropic_tools.last_mut() {
+        last["cache_control"] = ephemeral();
+    }
+    if let Some(block) = converted.last_mut().and_then(|message| message["content"].as_array_mut()).and_then(|blocks| blocks.last_mut()) {
+        block["cache_control"] = ephemeral();
+    }
+    let system = system_text(messages);
+    let mut payload = json!({"model":model,"max_tokens":max_tokens,"messages":converted,"tools":anthropic_tools,"tool_choice":{"type":"auto"},"stream":true});
+    if !system.is_empty() {
+        payload["system"] = json!([{"type":"text","text":system,"cache_control":ephemeral()}]);
+    }
+    payload
+}
+
+fn ephemeral() -> Value {
+    json!({"type":"ephemeral"})
+}
+
+/// Claude models reached through OpenRouter cache only what is marked, like the native API.
+/// Other OpenRouter models (OpenAI, DeepSeek, Gemini, Kimi, Qwen) cache a repeated prefix on
+/// their own, which works because Neru only ever appends to the conversation.
+fn wants_cache_marks(config: &ProviderConfig) -> bool {
+    config.provider_id == "openrouter" && config.model.starts_with("anthropic/")
+}
+
+/// Marks the system prompt and the newest user or tool message as cache points.
+fn mark_cache_points(messages: &mut [Value]) {
+    let as_parts = |message: &mut Value| {
+        if let Some(text) = message["content"].as_str().map(str::to_string) {
+            message["content"] = json!([{"type":"text","text":text}]);
+        }
+        if let Some(last) = message["content"].as_array_mut().and_then(|parts| parts.last_mut()) {
+            if last["type"] == "text" {
+                last["cache_control"] = ephemeral();
+            }
+        }
+    };
+    if let Some(system) = messages.iter_mut().find(|message| message["role"] == "system") {
+        as_parts(system);
+    }
+    if let Some(latest) = messages.iter_mut().rev().find(|message| message["role"] == "user" || message["role"] == "tool") {
+        as_parts(latest);
+    }
 }
 
 pub fn normalize_message(format: &str, body: &Value) -> Result<Value, String> {
@@ -498,7 +566,9 @@ mod tests {
     #[test]
     fn anthropic_keeps_tool_use_and_result_together() {
         let body = anthropic_payload("claude-test", &exchange(), &json!([]));
-        assert_eq!(body["system"], "Be careful");
+        assert_eq!(body["system"][0]["text"], "Be careful");
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(body["messages"][2]["content"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(body["messages"][1]["content"][0]["type"], "tool_use");
         assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "call_1");
     }
@@ -589,31 +659,6 @@ mod tests {
     }
 
     #[test]
-    fn gemini_model_ids_drop_the_models_prefix() {
-        let body = json!({"data":[{"id":"models/gemini-2.5-flash"},{"id":"gemini-2.0-flash"}]});
-        assert_eq!(
-            parse_models(&body, "gemini").unwrap(),
-            ["gemini-2.5-flash", "gemini-2.0-flash"]
-        );
-    }
-
-    #[test]
-    fn model_list_keeps_only_chat_models_the_key_returned() {
-        let body = json!({"data":[
-            {"id":"grok-4","active":true},
-            {"id":"grok-2-image","active":true},
-            {"id":"gpt-4o"},
-            {"id":"whisper-large-v3","active":true},
-            {"id":"text-embedding-3-small"},
-            {"id":"llama-3.1-8b","active":false}
-        ]});
-        assert_eq!(
-            parse_models(&body, "xai").unwrap(),
-            ["grok-4", "gpt-4o"]
-        );
-    }
-
-    #[test]
     fn free_hosts_omit_fields_they_reject() {
         let config = ProviderConfig {
             provider_id: "gemini".into(),
@@ -627,5 +672,74 @@ mod tests {
         assert!(payload.get("stream_options").is_none());
         assert!(payload.get("parallel_tool_calls").is_none());
         assert_eq!(payload["tools"], json!([]));
+    }
+
+    #[test]
+    fn probe_requests_use_the_same_endpoints_as_chat_without_streaming() {
+        let client = Client::new();
+        let mut config = ProviderConfig {
+            provider_id: "nvidia".into(),
+            api_format: CHAT.into(),
+            base_url: "https://integrate.api.nvidia.com/v1".into(),
+            model: "meta/llama-3.1-70b-instruct".into(),
+            api_key: "k".into(),
+        };
+        let request = probe_request(&client, &config).build().unwrap();
+        assert_eq!(request.url().path(), "/v1/chat/completions");
+        assert_eq!(request.headers()["authorization"], "Bearer k");
+        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["max_tokens"], 8);
+        assert!(body.get("tools").is_none());
+        config.provider_id = "gemini".into();
+        config.model = "models/gemini-2.5-flash".into();
+        let request = probe_request(&client, &config).build().unwrap();
+        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["model"], "gemini-2.5-flash");
+        config.provider_id = "anthropic".into();
+        config.api_format = ANTHROPIC.into();
+        config.base_url = "https://api.anthropic.com/v1".into();
+        let request = probe_request(&client, &config).build().unwrap();
+        assert_eq!(request.url().path(), "/v1/messages");
+        assert_eq!(request.headers()["x-api-key"], "k");
+        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["max_tokens"], 1);
+        config.provider_id = "openai".into();
+        config.api_format = RESPONSES.into();
+        config.base_url = "https://api.openai.com/v1".into();
+        let request = probe_request(&client, &config).build().unwrap();
+        assert_eq!(request.url().path(), "/v1/responses");
+    }
+
+    #[test]
+    fn anthropic_model_list_asks_for_every_page() {
+        let config = ProviderConfig {
+            provider_id: "anthropic".into(),
+            api_format: ANTHROPIC.into(),
+            base_url: "https://api.anthropic.com/v1".into(),
+            model: String::new(),
+            api_key: "k".into(),
+        };
+        let request = models_request(&Client::new(), &config).build().unwrap();
+        assert_eq!(request.url().query(), Some("limit=1000"));
+    }
+
+    #[test]
+    fn images_are_replaced_only_when_the_provider_says_the_model_is_text_only() {
+        let config = ProviderConfig {
+            provider_id: "test-text-only".into(),
+            api_format: CHAT.into(),
+            base_url: "https://x.example/v1".into(),
+            model: "plain-model".into(),
+            api_key: "k".into(),
+        };
+        let messages = vec![json!({"role":"user","content":[{"type":"text","text":"What is this?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]})];
+        let unchanged = without_images_for_text_models(&config, messages.clone());
+        assert_eq!(unchanged[0]["content"][1]["type"], "image_url");
+        let list = crate::models::parse_models(&json!({"data":[{"id":"plain-model","architecture":{"input_modalities":["text"],"output_modalities":["text"]}}]}), "test-text-only").unwrap();
+        crate::models::remember("test-text-only", &list);
+        let stripped = without_images_for_text_models(&config, messages);
+        assert_eq!(stripped[0]["content"][1]["type"], "text");
+        assert_eq!(stripped[0]["content"][0]["text"], "What is this?");
     }
 }

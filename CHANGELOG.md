@@ -2,6 +2,50 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.4.0 · Replies that don't drop, draw on your app, and a faster agent
+*2026-09-30*
+
+Neru now retries a dropped connection instead of failing the reply, reads small projects in one step, and lets you draw on your running app and point at elements the way Claude does.
+
+### Reliable replies
+
+- When a provider drops the connection mid-answer (OpenRouter's “Network connection lost”), Neru retries the same request after 1, 2, 4, 8 and 15 seconds and says so, instead of failing the whole reply. Text from the failed attempt is taken back, so nothing shows twice.
+- If the connection keeps dropping, Neru moves to the next best model, as it already does for rate limits.
+- Sub-agents and conversation summaries retry the same way.
+- Requests reuse one kept-alive connection, so there is no new handshake for every message and long thinking pauses are less likely to be cut off.
+
+### A faster agent
+
+- Prompt caching for Claude models, directly and through OpenRouter: each step pays only for what is new, like Claude Code. Other models reuse the unchanged start of the conversation on their own.
+- Small projects (up to 24 files) go with your first message, like the open files Cursor sends, so the model starts working instead of spending steps reading.
+- A fast project index: a background, .gitignore-aware index with trigram search and a map of files and symbols, so the agent finds code in large repositories without opening folder after folder.
+- Sub-agents research several areas at once, share the index and report back with file:line references.
+- Say “use the skills you need” and the model picks the best-fitting skills from Neru's set, loads them first, and names the ones it used.
+
+### Your app, in Neru's browser
+
+- Draw on the page: pen, line, arrow, rectangle, ellipse and text in five colors, with undo, redo and clear, then add the marked-up picture to the chat.
+- Pick an element and it joins your message as a small chip with its tag and text, as in the Claude app, with its details sent to the model instead of pasted into the box.
+- Browser tabs, element picking, annotations, and console and network capture work on dev servers and plain HTML sites alike, hot reload included.
+- Terminal, files and changes stack in one column beside the conversation, and the browser gets its own, like Claude Code's workspace.
+
+### Models and messages
+
+- A new model picker: search, filter by images, reasoning, code and tools, and check which models your key can really use.
+- Queue messages while Neru works, or send one in a forked session, from a menu on the send button.
+- The session title in the title bar opens the session and project menus, and renames in place.
+
+### Design
+
+- The to-do list uses Beautiful UI's Task Rows: numbered steps, a spinner on the task in progress, and check badges as tasks finish.
+- Your messages sit in a calm charcoal bubble in dark mode, and rise into place with a softer send animation.
+- The floating sidebar keeps its green light-mode colors instead of turning dark.
+
+### Fixes
+
+- The rewind menu is no longer see-through over the messages below it.
+- Opening a local file such as index.html is no longer counted as a web lookup.
+
 ## 0.3.0 · Built-in skills, right-click menus and a working preview
 *2026-09-30*
 

@@ -60,6 +60,38 @@ pub fn is_unavailable(error: &str) -> bool {
     .any(|marker| lower.contains(marker))
 }
 
+/// A dropped connection or a brief server hiccup: the same request to the same model will
+/// likely work a moment later, so Neru retries it before giving up or switching models.
+/// A model that never started answering is left to the model switch; retrying it would only
+/// repeat the wait.
+pub fn is_transient(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    if is_rate_limited(error)
+        || lower.contains("http 401")
+        || lower.contains("http 403")
+        || lower.contains("did not start answering")
+        || lower.contains("context length")
+        || lower.contains("context window")
+        || lower.contains("maximum context")
+        || lower.contains("prompt is too long")
+        || lower.contains("max_tokens")
+        || lower.contains("moderation")
+        || lower.contains("flagged")
+    {
+        return false;
+    }
+    [
+        "network connection lost", "connection lost", "connection reset", "connection closed", "connection aborted",
+        "connection refused", "broken pipe", "unexpected eof", "incomplete", "error decoding response body",
+        "error sending request", "stream failed", "timed out", "socket hang up", "econnreset",
+        "http 500", "http 502", "http 503", "http 504", "http 520", "http 521", "http 522", "http 523", "http 524", "http 529",
+        "internal server error", "bad gateway", "gateway timeout", "service unavailable", "overloaded",
+        "upstream", "provider returned error", "provider stream error",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
 /// Why the switch happened, in words for the notice.
 pub fn reason(error: &str) -> &'static str {
     let lower = error.to_lowercase();
@@ -130,13 +162,9 @@ pub fn coding_score(id: &str) -> i64 {
     score + (window / 64_000).min(8) as i64
 }
 
+/// Chat models this key can call, minus the ones a check or a failed request found unavailable.
 async fn listed_models(config: &ProviderConfig) -> Vec<String> {
-    let client = reqwest::Client::new();
-    let request = providers::models_request(&client, config).timeout(Duration::from_secs(10));
-    let Ok(response) = request.send().await else { return Vec::new() };
-    let Ok(body) = providers::read_response(response).await else { return Vec::new() };
-    crate::limits::record_windows(&body, &config.provider_id);
-    providers::parse_models(&body, &config.provider_id).unwrap_or_default()
+    crate::models::usable_ids(config).await
 }
 
 /// Best free coding model this key can call, other than the resting ones.
@@ -153,6 +181,8 @@ async fn best_model(config: &ProviderConfig, free_only: bool) -> Option<String> 
 
 /// The next model to use after `current` failed with `error`, or None when nothing else is available.
 pub async fn next_model(state: &AppState, current: &ProviderConfig, error: &str) -> Option<ProviderConfig> {
+    // A model the provider says it does not serve must not come back through the rotation.
+    crate::models::note_failure(current, error);
     let daily = is_daily(error);
     let down = !is_rate_limited(error);
     // A broken or unlisted model stays out longer than a busy one.
@@ -226,6 +256,19 @@ mod tests {
         assert!(is_unavailable("Provider HTTP 404: model_not_found"));
         assert!(!is_unavailable("Provider HTTP 401 Unauthorized: bad key"));
         assert_eq!(reason("The model did not start answering within 75 seconds"), "is not responding");
+    }
+
+    #[test]
+    fn retries_dropped_connections_but_not_limits_or_bad_requests() {
+        assert!(is_transient("Provider stream error: Network connection lost."));
+        assert!(is_transient("Provider stream failed: error decoding response body"));
+        assert!(is_transient("Provider request failed: error sending request for url (https://openrouter.ai/api/v1/chat/completions)"));
+        assert!(is_transient("Provider HTTP 502 Bad Gateway: upstream connect error"));
+        assert!(is_transient("Provider stream error: context deadline exceeded"));
+        assert!(!is_transient("Provider HTTP 429 Too Many Requests: rate limit"));
+        assert!(!is_transient("Provider HTTP 401 Unauthorized: bad key"));
+        assert!(!is_transient("The model did not start answering within 75 seconds"));
+        assert!(!is_transient("Provider stream error: This model's maximum context length is 131072 tokens"));
     }
 
     #[test]

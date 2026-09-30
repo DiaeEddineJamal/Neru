@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { LISTING_IS_AUTHORITATIVE } from './ModelPicker'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { ArrowLeft, ArrowRight, ArrowUp, AudioLines, Bell, Brain, Check, ChevronDown, CircleAlert, FileText, Folder, FolderOpen, GitPullRequest, Globe, History, KeyRound, Layers, ListChecks, LoaderCircle, Moon, MonitorPlay, Network, Paperclip, Pause, PenLine, Plug, Rocket, Search, Shuffle, ShieldCheck, Slash, Sparkles, SquareTerminal, Sun, Webhook, X, CornerDownRight, type LucideIcon } from 'lucide-react'
 import { VoiceBeam } from 'voice-glow'
@@ -188,6 +189,11 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
     if (!local && !hasKeyInput && !(saved || provider.hasKey)) { setProblem({ title: 'Paste an API key first.', help: `Get a free key from ${preset?.name ?? 'your provider'} with the link below, paste it here, then connect.` }); return false }
     setSaving(true); setProblem(null)
     try {
+      if (model && !LISTING_IS_AUTHORITATIVE.has(providerId)) {
+        // The suggested model may have been retired or not be served to this key; find out now, not on the first message.
+        const check = await api.probeModel(providerId, apiFormat, baseUrl, apiKey, model).catch(() => null)
+        if (check?.status === 'unavailable') { setProblem({ title: `${model} is not available with this key.`, help: `${check.reason}. Open the details and pick another model.` }); setDetailsOpen(true); return false }
+      }
       onProviderSaved(await api.configureProvider(providerId, apiFormat, baseUrl, apiKey, model))
       setApiKey(''); setSaved(true)
       return true

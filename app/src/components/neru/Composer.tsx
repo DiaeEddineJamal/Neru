@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, Check, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Search, Upload, X } from 'lucide-react'
+import { ArrowUp, Check, Eye, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
 import { Liquid } from 'liquid-gooey'
 import { useReducedMotion } from 'motion/react'
 import { useMicrophone, VoiceBeam } from 'voice-glow'
-import { PromptInput, type PromptModel } from '@/components/agents/prompt-input'
+import { PromptInput } from '@/components/agents/prompt-input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/motion/select'
 import { neruVoiceGlow } from '@/lib/voiceTheme'
 import { cn } from '@/lib/utils'
-import type { AgentMode, ContextUsage, Effort, SlashCommand } from '../../types'
+import type { AgentMode, ContextUsage, Effort, ModelInfo, SlashCommand } from '../../types'
+import { ModelBadges, ModelFilters, ModelRowText, ModelSearch, filterModels, groupModels, shortModelName, uniqueShortNames, type ModelFilter } from './ModelPicker'
 
 export type VoiceEngine = 'local' | 'transcription' | 'system'
 type VoiceState = 'idle' | 'listening' | 'paused' | 'transcribing'
@@ -137,6 +138,14 @@ export interface ComposerProps {
   onStop: () => void
   /** Sends a message into the running reply. */
   onSteer?: (value: string) => void
+  /** Ctrl+Enter or "Queue for later": send once the running reply finishes. */
+  onQueue?: (value: string) => void
+  /** Ctrl+Alt+Enter or "Send in a forked session". */
+  onFork?: (value: string) => void
+  /** Attachment previews, rendered inside the box above the text. */
+  attachments?: ReactNode
+  /** An attachment (an image) is enough to send without typing anything. */
+  sendWithoutText?: boolean
   loading: boolean
   disabled: boolean
   placeholder: string
@@ -150,8 +159,10 @@ export interface ComposerProps {
   web: boolean
   onWebChange: (web: boolean) => void
   model: string
-  models: string[]
+  models: ModelInfo[]
   onModelChange: (model: string) => void
+  /** Result of checking a model the user picked: shown under the prompt until the next pick. */
+  modelNotice?: { tone: 'checking' | 'error' | 'note'; text: string } | null
   attachItems: PlusMenuItem[]
   voiceEngine: VoiceEngine
   /** False when the chosen engine cannot run yet (no local model downloaded). */
@@ -288,24 +299,21 @@ export function Composer(props: ComposerProps) {
 
   useEffect(() => () => { recognition.current?.abort(); if (recorder.current && recorder.current.state !== 'inactive') { recorder.current.onstop = null; recorder.current.stop() } }, [])
 
-  const shortName = (model: string) => model.split('/').pop() || model
-  const shortCounts = new Map<string, number>()
-  for (const model of props.models) shortCounts.set(shortName(model), (shortCounts.get(shortName(model)) ?? 0) + 1)
-  const models: PromptModel[] = props.models.map(model => {
-    const short = shortName(model)
-    return { value: model, label: <span className="model-label" title={model}>{shortCounts.get(short) === 1 ? short : model}</span> }
-  })
-  // Providers like OpenRouter and NVIDIA list hundreds of models; search them instead of scrolling.
+  // Providers like OpenRouter and NVIDIA list hundreds of models; search and filter them instead of scrolling.
   const [modelOpen, setModelOpen] = useState(false)
   const [modelQuery, setModelQuery] = useState('')
+  const [modelFilter, setModelFilter] = useState<ModelFilter>('all')
+  const [showUnavailable, setShowUnavailable] = useState(false)
   const modelSearch = useRef<HTMLInputElement>(null)
-  const searchable = models.length > 10
-  const modelTerms = modelQuery.toLowerCase().split(/\s+/).filter(Boolean)
-  const shownModels = modelTerms.length ? models.filter(option => modelTerms.every(term => option.value.toLowerCase().includes(term))) : models
+  const searchable = props.models.length > 10
+  const shownModels = filterModels(props.models, { query: modelQuery, filter: modelFilter, showUnavailable, keep: props.model })
+  const modelGroups = groupModels(shownModels)
+  const hiddenModels = props.models.filter(info => info.verified === 'unavailable').length
+  const uniqueName = uniqueShortNames(props.models)
   const openModels = (open: boolean) => {
     setModelOpen(open)
     if (open && searchable) window.setTimeout(() => modelSearch.current?.focus({ preventScroll: true }), 60)
-    if (!open) setModelQuery('')
+    if (!open) { setModelQuery(''); setModelFilter('all') }
   }
   const active = voice !== 'idle'
   const recording = voice === 'listening' || voice === 'paused'
@@ -338,7 +346,20 @@ export function Composer(props: ComposerProps) {
     props.onSubmit(text)
   }
 
-  const currentModel = models.find(option => option.value === props.model)
+  const runsAsCommand = (text: string) => {
+    const match = /^\/([\w-]+)(?:\s+([\s\S]*))?$/.exec(text.trim())
+    return Boolean(match && props.commands.find(item => item.name === match[1].toLowerCase()))
+  }
+  const queue = (text: string) => {
+    if (runsAsCommand(text)) { props.onError('Commands run right away and cannot be queued. Wait for the reply to finish, then run it.'); return }
+    props.onQueue?.(text)
+  }
+  const fork = (text: string) => {
+    if (runsAsCommand(text)) { props.onError('Commands cannot be sent in a forked session.'); return }
+    props.onFork?.(text)
+  }
+
+  const currentModel = props.models.find(option => option.id === props.model)
   const micBusy = disabled || loading || !mic.supported || transcribing
 
   return <div className={cn('composer', active && 'voice-active', props.roomy && 'roomy')}>
@@ -360,6 +381,10 @@ export function Composer(props: ComposerProps) {
         loading={loading}
         onStop={props.onStop}
         onSteer={props.onSteer}
+        onQueue={props.onQueue ? queue : undefined}
+        onFork={props.onFork ? fork : undefined}
+        header={props.attachments}
+        sendWithoutText={props.sendWithoutText}
         disabled={disabled || transcribing}
         placeholder={voice === 'listening' ? 'Listening…' : voice === 'paused' ? 'Paused' : transcribing ? 'Transcribing…' : props.placeholder}
         aria-label="Message Neru"
@@ -402,17 +427,22 @@ export function Composer(props: ComposerProps) {
         </Select>}
       </div>
       <div className="composer-settings">
-      {models.length > 0 && <Select value={props.model} onValueChange={props.onModelChange} open={modelOpen} onOpenChange={openModels} disabled={disabled || loading} className="composer-model">
+      {props.models.length > 0 && <Select value={props.model} onValueChange={props.onModelChange} open={modelOpen} onOpenChange={openModels} disabled={disabled || loading} className="composer-model">
         <SelectTrigger className="h-8 w-auto max-w-56 rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2">
-          <span className="truncate text-muted-foreground">{currentModel?.label ?? 'Choose model'}</span>
+          <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground" title={currentModel ? `${currentModel.id}${currentModel.vision ? ' · reads images' : ' · text only'}` : props.model}>
+            <span className="model-label">{currentModel ? (uniqueName(currentModel) ? shortModelName(currentModel.id) : currentModel.id) : props.model ? shortModelName(props.model) : 'Choose model'}</span>
+            {currentModel?.vision && <Eye size={12} className="shrink-0 opacity-70" aria-label="Reads images" />}
+          </span>
         </SelectTrigger>
-        <SelectContent className="left-auto right-0 w-72 shadow-none" maxHeight={340} header={searchable && <label className="model-search">
-          <Search size={13} aria-hidden />
-          <input ref={modelSearch} value={modelQuery} onChange={event => setModelQuery(event.target.value)} placeholder={`Search ${models.length} models`} aria-label="Search models" spellCheck={false}
-            onKeyDown={event => { if (event.key === 'Enter' && shownModels[0]) { event.preventDefault(); props.onModelChange(shownModels[0].value); openModels(false) } }} />
-        </label>}>
-          {shownModels.map(option => <SelectItem key={option.value} value={option.value} className="py-2"><span className="min-w-0 truncate text-sm text-foreground">{option.label}</span></SelectItem>)}
-          {shownModels.length === 0 && <p className="model-search-empty">No models match “{modelQuery}”.</p>}
+        <SelectContent className="left-auto right-0 w-80 shadow-none" maxHeight={380} header={<div className="model-menu-head">
+          {searchable && <ModelSearch inputRef={modelSearch} value={modelQuery} onChange={setModelQuery} count={props.models.length} onEnter={() => { const first = shownModels.find(info => info.verified !== 'unavailable'); if (first) { props.onModelChange(first.id); openModels(false) } }} />}
+          <ModelFilters models={props.models} filter={modelFilter} onFilter={setModelFilter} hidden={hiddenModels} showUnavailable={showUnavailable} onShowUnavailable={setShowUnavailable} />
+        </div>}>
+          {modelGroups.map(group => <div key={group.key} className="model-group">
+            <p className="model-group-title">{group.title}<span>{group.items.length}</span></p>
+            {group.items.map(info => <SelectItem key={info.id} value={info.id} className="py-1.5"><span className="model-menu-row"><ModelRowText info={info} unique={uniqueName(info)} /><ModelBadges info={info} /></span></SelectItem>)}
+          </div>)}
+          {shownModels.length === 0 && <p className="model-search-empty">{modelQuery ? `No models match “${modelQuery}”.` : 'No models match this filter.'}</p>}
         </SelectContent>
       </Select>}
       {props.effortSupported && <Select value={props.effort} onValueChange={value => props.onEffortChange(value as Effort)} disabled={disabled || loading} className="composer-effort">
@@ -426,6 +456,7 @@ export function Composer(props: ComposerProps) {
       {props.context && <ContextMeter usage={props.context} />}
       </div>
     </div>
+    {props.modelNotice && <p className={cn('model-notice', props.modelNotice.tone)} role={props.modelNotice.tone === 'error' ? 'alert' : 'status'}>{props.modelNotice.tone === 'checking' && <LoaderCircle size={12} className="animate-spin" />}{props.modelNotice.text}</p>}
   </div>
 }
 

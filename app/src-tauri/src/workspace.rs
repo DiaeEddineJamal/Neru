@@ -29,7 +29,7 @@ pub struct FileEntry {
     pub size: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchHit {
     pub path: String,
@@ -38,6 +38,18 @@ pub struct SearchHit {
     pub column: usize,
     pub length: usize,
     pub preview: String,
+}
+
+/// Answer to the Search view: the hits plus how the index did.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResults {
+    pub hits: Vec<SearchHit>,
+    /// Files actually read, out of `total_files` in the project.
+    pub files_scanned: usize,
+    pub total_files: usize,
+    pub truncated: bool,
+    pub ms: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -184,6 +196,7 @@ pub fn open_project(path: String, state: State<'_, AppState>) -> Result<ProjectI
     }
     *state.root.lock().map_err(|e| e.to_string())? = Some(root.clone());
     *state.active_session.lock().map_err(|e| e.to_string())? = None;
+    crate::index::start(&root);
     sessions::restore_for_root(&state, &root)?;
     let recent_path = data_dir()?.join("recent-projects.json");
     let mut recent: Vec<String> = fs::read_to_string(&recent_path)
@@ -234,10 +247,7 @@ pub fn list_directory(
     for item in fs::read_dir(dir).map_err(|e| e.to_string())? {
         let item = item.map_err(|e| e.to_string())?;
         let name = item.file_name().to_string_lossy().to_string();
-        if matches!(
-            name.as_str(),
-            ".git" | "node_modules" | "target" | "dist" | ".next" | ".local"
-        ) {
+        if crate::index::is_skipped_dir(&name) {
             continue;
         }
         let meta = item.metadata().map_err(|e| e.to_string())?;
@@ -266,60 +276,75 @@ pub fn read_file(path: String, state: State<'_, AppState>) -> Result<String, Str
 }
 
 /// Project search for the Search view: plain text by default, or a regex; case and whole-word
-/// options; ignores what Git ignores. Runs off the main thread so the window stays responsive.
+/// options; ignores what Git ignores. Runs off the main thread on the project index.
 #[tauri::command]
 pub async fn search_text(
     query: String,
     case_sensitive: Option<bool>,
     whole_word: Option<bool>,
     regex: Option<bool>,
+    glob: Option<String>,
     state: State<'_, AppState>,
-) -> Result<Vec<SearchHit>, String> {
+) -> Result<SearchResults, String> {
     let root = project_root(&state)?;
     let query = query.trim().to_string();
     if query.chars().count() < 2 {
         return Err("Type at least two characters to search".into());
     }
-    let pattern = if regex.unwrap_or(false) { query.clone() } else { regex::escape(&query) };
-    let pattern = if whole_word.unwrap_or(false) { format!(r"(?:{pattern})") } else { pattern };
-    let matcher = regex::RegexBuilder::new(&pattern)
-        .case_insensitive(!case_sensitive.unwrap_or(false))
-        .size_limit(1 << 20)
-        .build()
-        .map_err(|e| format!("That is not a valid regular expression: {}", e.to_string().lines().last().unwrap_or("")))?;
-    tauri::async_runtime::spawn_blocking(move || search_project(&root, &matcher, 500))
+    let mut request = crate::index::Query::literal(&query, 500);
+    request.regex = regex.unwrap_or(false);
+    request.case_sensitive = case_sensitive.unwrap_or(false);
+    request.whole_word = whole_word.unwrap_or(false);
+    request.glob = glob.map(|g| g.trim().to_string()).filter(|g| !g.is_empty());
+    // Validate here so a bad pattern is reported before any thread starts.
+    request.matcher()?;
+    let output = tauri::async_runtime::spawn_blocking(move || crate::index::search(&root, &request))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())??;
+    Ok(SearchResults { hits: output.hits, files_scanned: output.files_scanned, total_files: output.total_files, truncated: output.truncated, ms: output.ms })
 }
 
+/// Matches of `matcher` in one file's text, one hit per line, appended to `hits` up to `limit`.
+pub fn line_hits(path: &str, text: &str, matcher: &regex::Regex, hits: &mut Vec<SearchHit>, limit: usize) {
+    for (i, line) in text.lines().enumerate() {
+        let Some(found) = matcher.find(line) else { continue };
+        // Show the match with some context before it, even on long minified lines.
+        let start = line[..found.start()].char_indices().rev().nth(60).map_or(0, |(at, _)| at);
+        let preview: String = line[start..].trim_end().chars().take(200).collect();
+        let offset = line[start..found.start()].chars().count();
+        let trimmed = preview.len() - preview.trim_start().len();
+        hits.push(SearchHit {
+            path: path.to_string(),
+            line: i + 1,
+            column: offset.saturating_sub(trimmed),
+            length: line[found.start()..found.end()].chars().count(),
+            preview: preview.trim_start().to_string(),
+        });
+        if hits.len() >= limit {
+            return;
+        }
+    }
+}
+
+/// The unindexed search: walks the project and reads every text file. Used when the index is not
+/// available, and by tests to check the index against.
 pub fn search_project(root: &Path, matcher: &regex::Regex, limit: usize) -> Vec<SearchHit> {
     let mut hits = Vec::new();
     let mut builder = WalkBuilder::new(root);
-    builder.max_filesize(Some(MAX_READ)).follow_links(false).hidden(false);
-    builder.filter_entry(|entry| entry.file_name() != ".git" && entry.file_name() != "node_modules");
+    builder.max_filesize(Some(MAX_READ)).follow_links(false).hidden(false).require_git(false);
+    builder.filter_entry(|entry| !(entry.file_type().is_some_and(|t| t.is_dir()) && entry.depth() > 0 && crate::index::is_skipped_dir(&entry.file_name().to_string_lossy())));
     for result in builder.build() {
         let Ok(entry) = result else { continue };
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        let Ok(text) = read_limited(entry.path()) else { continue };
-        for (i, line) in text.lines().enumerate() {
-            let Some(found) = matcher.find(line) else { continue };
-            // Show the match with some context before it, even on long minified lines.
-            let start = line[..found.start()].char_indices().rev().nth(60).map_or(0, |(at, _)| at);
-            let preview: String = line[start..].trim_end().chars().take(200).collect();
-            let offset = line[start..found.start()].chars().count();
-            let trimmed = preview.len() - preview.trim_start().len();
-            hits.push(SearchHit {
-                path: relative_path(root, entry.path()),
-                line: i + 1,
-                column: offset.saturating_sub(trimmed),
-                length: line[found.start()..found.end()].chars().count(),
-                preview: preview.trim_start().to_string(),
-            });
-            if hits.len() >= limit {
-                return hits;
-            }
+        let Ok(bytes) = fs::read(entry.path()) else { continue };
+        if bytes[..bytes.len().min(8192)].contains(&0) {
+            continue;
+        }
+        line_hits(&relative_path(root, entry.path()), &String::from_utf8_lossy(&bytes), matcher, &mut hits, limit);
+        if hits.len() >= limit {
+            return hits;
         }
     }
     hits
@@ -328,6 +353,9 @@ pub fn search_project(root: &Path, matcher: &regex::Regex, limit: usize) -> Vec<
 #[tauri::command]
 pub fn list_project_files(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let root = project_root(&state)?;
+    if let Some(handle) = crate::index::ready(&root, std::time::Duration::from_secs(15)) {
+        return Ok(handle.all_paths(20_000));
+    }
     let mut files = Vec::new();
     for entry in WalkBuilder::new(&root).follow_links(false).build() {
         let Ok(entry) = entry else { continue };
@@ -340,6 +368,44 @@ pub fn list_project_files(state: State<'_, AppState>) -> Result<Vec<String>, Str
     }
     files.sort();
     Ok(files)
+}
+
+/// A rewritten file keeps the style of the one it replaces: CRLF line endings when the original
+/// used them throughout, and its byte order mark.
+pub fn keep_file_style(original: &str, mut content: String) -> String {
+    if original.is_empty() {
+        return content;
+    }
+    let crlf = original.matches("\r\n").count();
+    let lf = original.matches('\n').count() - crlf;
+    if crlf > 0 && crlf >= lf && !content.contains('\r') {
+        content = content.replace('\n', "\r\n");
+    }
+    if original.starts_with('\u{feff}') && !content.starts_with('\u{feff}') {
+        content.insert(0, '\u{feff}');
+    }
+    content
+}
+
+/// Writes through a temp file in the same folder and renames it over the target, so a crash or a
+/// reader never sees a half-written file. Falls back to a direct write if the rename is refused.
+pub fn write_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let dir = path.parent().ok_or("Invalid file path")?;
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let temp = dir.join(format!(".{name}.neru-{}-{}.tmp", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed)));
+    let attempt = fs::write(&temp, content).and_then(|_| {
+        if let Ok(meta) = fs::metadata(path) {
+            let _ = fs::set_permissions(&temp, meta.permissions());
+        }
+        fs::rename(&temp, path)
+    });
+    if attempt.is_err() {
+        let _ = fs::remove_file(&temp);
+        return fs::write(path, content).map_err(|e| e.to_string());
+    }
+    Ok(())
 }
 
 pub fn make_proposal(root: &Path, path: &str, content: String) -> Result<EditProposal, String> {
@@ -356,6 +422,7 @@ pub fn make_proposal(root: &Path, path: &str, content: String) -> Result<EditPro
         String::new()
     };
     let relative = relative_path(root, &target);
+    let content = keep_file_style(&original, content);
     let diff = TextDiff::from_lines(&original, &content)
         .unified_diff()
         .header(&format!("a/{relative}"), &format!("b/{relative}"))
@@ -642,6 +709,7 @@ pub fn restore_checkpoint_file(root: &Path, id: &str) -> Result<String, String> 
             if let Ok(target) = resolve_existing(root, path) {
                 let _ = fs::remove_dir(target);
             }
+            crate::index::note_changed(root, &[path.to_string()]);
             return Ok(path.to_string());
         }
         "move" => {
@@ -656,11 +724,13 @@ pub fn restore_checkpoint_file(root: &Path, id: &str) -> Result<String, String> 
             }
             fs::rename(&moved, &back).map_err(|e| e.to_string())?;
             remove_empty_parents(root, &moved);
+            crate::index::note_changed(root, &[path.to_string(), to.to_string()]);
             return Ok(path.to_string());
         }
         "delete_dir" => {
             let back = resolve_new(root, path)?;
             copy_tree(&data_dir()?.join("checkpoints").join(format!("{id}.tree")), &back)?;
+            crate::index::note_changed(root, &[path.to_string()]);
             return Ok(path.to_string());
         }
         _ => {}
@@ -672,14 +742,11 @@ pub fn restore_checkpoint_file(root: &Path, id: &str) -> Result<String, String> 
     if data["binary"].as_bool() == Some(true) {
         fs::copy(data_dir()?.join("checkpoints").join(format!("{id}.bin")), &target).map_err(|e| e.to_string())?;
     } else if data["existed"].as_bool() == Some(true) {
-        fs::write(
-            target,
-            data["original"].as_str().ok_or("Invalid checkpoint")?,
-        )
-        .map_err(|e| e.to_string())?;
+        write_atomic(&target, data["original"].as_str().ok_or("Invalid checkpoint")?.as_bytes())?;
     } else if target.exists() {
         fs::remove_file(target).map_err(|e| e.to_string())?;
     }
+    crate::index::note_changed(root, &[path.to_string()]);
     Ok(path.to_string())
 }
 
@@ -687,7 +754,9 @@ pub fn restore_checkpoint_file(root: &Path, id: &str) -> Result<String, String> 
 /// Returns the checkpoint id that can put the file back.
 pub fn apply_edit(root: &Path, proposal: &EditProposal) -> Result<(String, String), String> {
     if !proposal.op.is_empty() {
-        return apply_op(root, proposal);
+        let applied = apply_op(root, proposal)?;
+        crate::index::note_changed(root, &[proposal.path.clone(), proposal.to.clone()]);
+        return Ok(applied);
     }
     let target = resolve_new(root, &proposal.path)?;
     if proposal.delete {
@@ -704,6 +773,7 @@ pub fn apply_edit(root: &Path, proposal: &EditProposal) -> Result<(String, Strin
         };
         fs::remove_file(&target).map_err(|e| e.to_string())?;
         remove_empty_parents(root, &target);
+        crate::index::note_changed(root, &[proposal.path.clone()]);
         return Ok((checkpoint, String::new()));
     }
     let current = if target.exists() {
@@ -718,7 +788,8 @@ pub fn apply_edit(root: &Path, proposal: &EditProposal) -> Result<(String, Strin
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let checkpoint = write_checkpoint(root, &proposal.path, &proposal.original, target.exists())?;
-    fs::write(&target, &proposal.content).map_err(|e| e.to_string())?;
+    write_atomic(&target, proposal.content.as_bytes())?;
+    crate::index::note_changed(root, &[proposal.path.clone()]);
     let hooks = crate::hooks::after_edit(root, &proposal.path);
     Ok((checkpoint, hooks))
 }
@@ -812,7 +883,7 @@ pub fn apply_pending(state: State<'_, AppState>) -> Result<String, String> {
                 transcript_len,
             });
             if let Some(id) = tool_call_id {
-                runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":format!("Applied {}{}. Checkpoint {}", if proposal.delete { "deletion of " } else { "" }, proposal.path, checkpoint_id)}));
+                runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":format!("Applied {}{}.", if proposal.delete { "deletion of " } else { "" }, proposal.path)}));
             }
             runtime.save()?;
             Ok(checkpoint_id)
@@ -887,6 +958,35 @@ pub fn open_in_editor(path: String, state: State<'_, AppState>) -> Result<(), St
     }
 }
 
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    #[test]
+    fn atomic_writes_replace_files_and_leave_no_temp_behind() {
+        let dir = std::env::temp_dir().join(format!("neru-atomic-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("page.html");
+        write_atomic(&file, b"one").unwrap();
+        write_atomic(&file, b"two, longer").unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "two, longer");
+        let names: Vec<String> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        assert_eq!(names, ["page.html"], "no temp file is left in the project");
+        assert!(write_atomic(&dir.join("missing").join("x.txt"), b"x").is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rewritten_files_keep_their_line_endings_and_bom() {
+        assert_eq!(keep_file_style("a\r\nb\r\n", "x\ny\n".into()), "x\r\ny\r\n");
+        assert_eq!(keep_file_style("a\nb\n", "x\ny\n".into()), "x\ny\n");
+        assert_eq!(keep_file_style("a\r\nb\nc\n", "x\ny\n".into()), "x\ny\n", "mostly-LF files stay LF");
+        assert_eq!(keep_file_style("\u{feff}a\n", "b\n".into()), "\u{feff}b\n");
+        assert_eq!(keep_file_style("", "new\n".into()), "new\n");
+        assert_eq!(keep_file_style("a\r\n", "already\r\nset\r\n".into()), "already\r\nset\r\n");
+    }
+}
 
 #[cfg(test)]
 mod file_op_tests {

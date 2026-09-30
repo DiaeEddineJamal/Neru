@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CaseSensitive, ChevronDown, FileText, LoaderCircle, Regex, Search, WholeWord } from 'lucide-react'
 import { api } from '../../api'
 import type { SearchHit } from '../../types'
+import { formatCount } from '../../lib/useIndex'
 import { cn } from '@/lib/utils'
 
 /** Project-wide search, like VS Code's: results as you type, grouped by file, match highlighted. */
@@ -11,6 +12,8 @@ export function SearchPanel({ projectKey, onOpen }: { projectKey: string; onOpen
   const [wholeWord, setWholeWord] = useState(false)
   const [regex, setRegex] = useState(false)
   const [hits, setHits] = useState<SearchHit[]>([])
+  const [glob, setGlob] = useState('')
+  const [stats, setStats] = useState<{ ms: number; scanned: number; total: number; truncated: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -25,13 +28,13 @@ export function SearchPanel({ projectKey, onOpen }: { projectKey: string; onOpen
     const id = ++run.current
     setBusy(true)
     const timer = window.setTimeout(() => {
-      api.searchText(text, { caseSensitive, wholeWord, regex })
-        .then(found => { if (id === run.current) { setHits(found); setError('') } })
+      api.searchText(text, { caseSensitive, wholeWord, regex, glob: glob.trim() || undefined })
+        .then(found => { if (id === run.current) { setHits(found.hits); setStats({ ms: found.ms, scanned: found.filesScanned, total: found.totalFiles, truncated: found.truncated }); setError('') } })
         .catch(cause => { if (id === run.current) { setHits([]); setError(String(cause)) } })
         .finally(() => { if (id === run.current) setBusy(false) })
     }, 220)
     return () => window.clearTimeout(timer)
-  }, [query, caseSensitive, wholeWord, regex, projectKey])
+  }, [query, caseSensitive, wholeWord, regex, glob, projectKey])
 
   const groups = useMemo(() => {
     const byFile = new Map<string, SearchHit[]>()
@@ -49,12 +52,13 @@ export function SearchPanel({ projectKey, onOpen }: { projectKey: string; onOpen
       <button type="button" className={cn('search-option', wholeWord && 'on')} aria-pressed={wholeWord} title="Whole word" onClick={toggle(wholeWord, setWholeWord)}><WholeWord size={16} /></button>
       <button type="button" className={cn('search-option', regex && 'on')} aria-pressed={regex} title="Regular expression" onClick={toggle(regex, setRegex)}><Regex size={16} /></button>
     </div>
+    <div className="search-scope"><input value={glob} onChange={event => setGlob(event.target.value)} placeholder="Files to include, e.g. src/**/*.tsx" aria-label="Files to include" spellCheck={false} /></div>
     <p className="search-summary" aria-live="polite">
       {error ? <span className="search-error">{error.replace(/^Error:\s*/, '')}</span>
         : query.trim().length < 2 ? 'Type at least two characters. Files Git ignores are skipped.'
         : busy && hits.length === 0 ? 'Searching…'
         : hits.length === 0 ? `No results for “${query.trim()}”.`
-        : `${hits.length >= 500 ? '500+' : hits.length} ${hits.length === 1 ? 'result' : 'results'} in ${groups.length} ${groups.length === 1 ? 'file' : 'files'}`}
+        : `${stats?.truncated ? `${hits.length}+` : hits.length} ${hits.length === 1 ? 'result' : 'results'} in ${groups.length} ${groups.length === 1 ? 'file' : 'files'}${stats ? ` · ${stats.ms} ms${stats.total > 0 ? `, read ${formatCount(stats.scanned)} of ${formatCount(stats.total)} files` : ''}` : ''}`}
     </p>
     <div className="search-groups">
       {groups.map(([path, fileHits]) => {

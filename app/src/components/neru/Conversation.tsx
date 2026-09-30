@@ -13,15 +13,17 @@ import { FileDiff } from '@/components/agents/file-diff'
 import { MessageScroller } from '@/components/agents/message-scroller'
 import { StreamingResponse, type StreamingResponseFeedback } from '@/components/agents/streaming-response'
 import { ToolApproval, ToolApprovalCode, type ToolApprovalStatus } from '@/components/agents/tool-approval'
-import { EASE_OUT, SPRING_SWAP } from '@/lib/ease'
+import { EASE_OUT, SPRING_PANEL, SPRING_SWAP } from '@/lib/ease'
+import TaskRows, { SpinnerRing, TaskBadge, type TaskRow } from '@/components/primitives/TaskRows'
 import { diffCounts, parseUnifiedDiff } from '@/lib/diff'
 import { cn } from '@/lib/utils'
 import { Mascot } from './Mascot'
 import { ErrorNotice } from './ErrorNotice'
 import type { ErrorAction } from '@/lib/friendlyError'
-import type { ChatEntry, PendingView, Source, ToolEventStatus } from '../../types'
+import type { ChatEntry, PendingView, Source, SubagentProgress, ToolEventStatus } from '../../types'
 
-export interface LiveTool { id: string; label: string; status: ToolEventStatus }
+/** A step of the reply. `agent` carries a sub-agent's live progress; `since` is when it started, for a ticking clock. */
+export interface LiveTool { id: string; label: string; status: ToolEventStatus; agent?: SubagentProgress & { since: number } }
 /** A file the model is writing, streamed from its unfinished tool call. */
 export interface LiveDraft { id: string; path: string; content: string; edit?: boolean; state?: FileWriteState }
 export interface LiveResponse { text: string; tools: LiveTool[]; sources: Source[]; drafts: LiveDraft[]; reasoning: number; thinking?: string }
@@ -43,10 +45,12 @@ export function agentPhase(live: LiveResponse | null, mode: string): AgentPhase 
   if (draft) return { state: 'shaping', label: `Writing ${draft.path.split(/[\\/]/).pop() || 'a file'}…` }
   const running = live?.tools.findLast(tool => tool.status === 'running')
   if (running) {
+    const agents = live?.tools.filter(tool => tool.status === 'running' && tool.agent).length ?? 0
+    if (agents > 0) return { state: 'connecting', label: agents === 1 ? 'A sub-agent is exploring…' : `${agents} sub-agents are exploring…` }
     if (running.label.startsWith('Searched the web')) return { state: 'searching', label: 'Searching the web…' }
     if (WEB_TOOL.test(running.label)) return { state: 'connecting', label: 'Reading sources…' }
     if (running.label.startsWith('Proposed change')) return { state: 'shaping', label: 'Shaping a change…' }
-    if (/^(Listed|Read|Searched project|Checked Git|Read Git)/.test(running.label)) return { state: 'connecting', label: 'Exploring the project…' }
+    if (/^(Listed|Read|Searched project|Checked Git|Read Git|Mapped|Looked up|Found)/.test(running.label)) return { state: 'connecting', label: 'Exploring the project…' }
     return { state: 'weaving', label: 'Running command…' }
   }
   if (live?.text) return { state: 'composing', label: 'Composing…' }
@@ -159,10 +163,12 @@ function summarize(tools: LiveTool[]) {
   const add = (key: string) => counts.set(key, (counts.get(key) ?? 0) + 1)
   for (const tool of tools) {
     const label = tool.label
-    if (/^Read Git|^Checked Git/.test(label)) add('git')
-    else if (/^Read [a-z0-9.-]+\.[a-z]{2,}$/i.test(label) || /^Searched the web/.test(label)) add('web')
+    if (/^Agent/.test(label)) add('agent')
+    else if (/^Read Git|^Checked Git/.test(label)) add('git')
+    // Web pages show as "Opened example.com"; older sessions said "Read example.com", which must not catch "Read index.html".
+    else if (/^Opened |^Searched the web/.test(label) || /^Read (?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|ai|app|co|edu|gov|me|info)$/i.test(label)) add('web')
     else if (/^Read /.test(label)) add('read')
-    else if (/^(Searched project|Found files|Listed)/.test(label)) add('search')
+    else if (/^(Searched project|Found files|Listed|Mapped|Looked up)/.test(label)) add('search')
     else if (/^(Deleted|Proposed deleting)/.test(label)) add('delete')
     else if (/^(Moved|Proposed moving)/.test(label)) add('move')
     else if (/^(Created folder|Proposed folder)/.test(label)) add('folder')
@@ -182,10 +188,46 @@ function summarize(tools: LiveTool[]) {
   take('move', count => `Moved ${plural(count, 'item', 'items')}`)
   take('delete', count => `Deleted ${plural(count, 'item', 'items')}`)
   take('run', count => `Ran ${plural(count, 'command', 'commands')}`)
+  take('agent', count => `${plural(count, 'sub-agent', 'sub-agents')}`)
   take('web', count => `${plural(count, 'web lookup', 'web lookups')}`)
   take('git', count => `${plural(count, 'Git check', 'Git checks')}`)
   take('other', count => `${plural(count, 'other step', 'other steps')}`)
   return parts.join(' · ')
+}
+
+/** Counts up while a sub-agent works; settles on the server's final time. */
+function useAgentClock(agent: NonNullable<LiveTool['agent']>, running: boolean) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [running])
+  return running ? Math.max(0, Math.floor((now - agent.since) / 1000)) : Math.floor(agent.elapsedMs / 1000)
+}
+
+/** A sub-agent's activity, nested under its task: role, what it is doing now, tool count, time, and its steps. */
+function SubagentRow({ tool }: { tool: LiveTool & { agent: NonNullable<LiveTool['agent']> } }) {
+  const reduce = useReducedMotion() ?? false
+  const { agent } = tool
+  const running = tool.status === 'running' && agent.status !== 'done'
+  const [open, setOpen] = useState(true)
+  const seconds = useAgentClock(agent, running)
+  const shown = open && agent.steps.length > 0
+  return <div className="subagent" data-status={running ? 'running' : tool.status}>
+    <button type="button" className="subagent-head" aria-expanded={shown} onClick={() => setOpen(value => !value)} disabled={agent.steps.length === 0}>
+      <span className="subagent-role">{agent.role}</span>
+      <span className={cn('subagent-title truncate', running && 'agent-shimmer')} title={agent.description}>{agent.description}</span>
+      <span className="subagent-meta">{agent.tools} {agent.tools === 1 ? 'tool' : 'tools'} · {elapsedText(seconds)}</span>
+      {agent.steps.length > 0 && <motion.span aria-hidden animate={{ rotate: shown ? 180 : 0 }} transition={reduce ? { duration: 0 } : SPRING_SWAP}><ChevronDown size={12} /></motion.span>}
+    </button>
+    {running && agent.current && <div className="subagent-current truncate" title={agent.current}>{agent.current}</div>}
+    <AgentDisclosure open={shown}>
+      <ol className="subagent-steps">
+        {agent.steps.map((label, index) => <li key={`${index}-${label}`}><span className="truncate" title={label}>{label}</span></li>)}
+      </ol>
+    </AgentDisclosure>
+  </div>
 }
 
 function ToolSteps({ tools, live }: { tools: LiveTool[]; live: boolean }) {
@@ -202,11 +244,12 @@ function ToolSteps({ tools, live }: { tools: LiveTool[]; live: boolean }) {
     <AgentDisclosure open={expanded}>
       <ol className="tool-steps-list">
         <AnimatePresence initial={false}>
-          {tools.map(tool => <motion.li key={tool.id} data-status={tool.status} layout={reduce ? false : 'position'}
+          {tools.map(tool => <motion.li key={tool.id} data-status={tool.status} className={tool.agent ? 'has-agent' : undefined} layout={reduce ? false : 'position'}
             initial={reduce ? { opacity: 0 } : { opacity: 0, x: -6, filter: 'blur(2px)' }}
             animate={{ opacity: 1, x: 0, filter: 'blur(0px)' }}
             transition={{ duration: reduce ? 0 : 0.32, ease: EASE_OUT }}>
-            <ToolIcon status={tool.status} /><span className={cn('truncate', tool.status === 'running' && 'agent-shimmer')} title={tool.label}>{tool.label}</span>
+            <ToolIcon status={tool.status} />
+            {tool.agent ? <SubagentRow tool={tool as LiveTool & { agent: NonNullable<LiveTool['agent']> }} /> : <span className={cn('truncate', tool.status === 'running' && 'agent-shimmer')} title={tool.label}>{tool.label}</span>}
           </motion.li>)}
         </AnimatePresence>
       </ol>
@@ -222,12 +265,14 @@ function Message({ from, id, children }: { from: 'user' | 'assistant'; id?: stri
   const fresh = useContext(FreshContext)
   const animate = !reduce && id !== undefined && fresh.has(id)
   // A sent message rises out of the composer and settles, like Claude's.
+  // The filter ends at 'none' rather than blur(0px): a leftover filter makes every message its own
+  // stacking layer, and later messages would then paint over an open menu (the rewind menu).
   const enter = from === 'user'
-    ? { initial: { opacity: 0, y: 28, scale: 0.94, filter: 'blur(4px)' }, transition: { type: 'spring' as const, duration: 0.55, bounce: 0.28 } }
-    : { initial: { opacity: 0, y: 10, filter: 'blur(2px)' }, transition: { duration: 0.4, ease: EASE_OUT } }
-  return <motion.article data-slot="message" data-from={from} className={`message ${from}`}
+    ? { initial: { opacity: 0, y: 36, scale: 0.9, filter: 'blur(6px)' }, transition: { type: 'spring' as const, duration: 0.6, bounce: 0.32, opacity: { duration: 0.2, ease: EASE_OUT }, filter: { duration: 0.3, ease: EASE_OUT } } }
+    : { initial: { opacity: 0, y: 12, filter: 'blur(3px)' }, transition: { duration: 0.42, ease: EASE_OUT } }
+  return <motion.article data-slot="message" data-from={from} className={cn('message', from, animate && 'just-sent')}
     style={{ transformOrigin: from === 'user' ? '100% 100%' : '0% 0%' }}
-    initial={animate ? enter.initial : false} animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }} transition={enter.transition}>{children}</motion.article>
+    initial={animate ? enter.initial : false} animate={{ opacity: 1, y: 0, scale: 1, filter: 'none', transitionEnd: { transform: 'none' } }} transition={enter.transition}>{children}</motion.article>
 }
 
 /** Remembers which messages arrived after the conversation was shown (not a whole session loading at once). */
@@ -273,25 +318,38 @@ function Thinking({ text, live }: { text: string; live: boolean }) {
   </div>
 }
 
-/** The agent's to-do list, pinned above the composer while there is unfinished work. */
+/** The agent's to-do list, pinned above the composer while there is unfinished work, drawn with Beautiful UI's Task Rows. */
 export function TodoPanel({ todos }: { todos: { content: string; status: string }[] }) {
   const [open, setOpen] = useState(true)
+  const reduce = useReducedMotion() ?? false
   if (todos.length === 0) return null
   const done = todos.filter(todo => todo.status === 'completed').length
-  if (done === todos.length && !open) return null
+  const finished = done === todos.length
+  if (finished && !open) return null
   const current = todos.find(todo => todo.status === 'in_progress')
-  return <div className="todo-panel">
+  const rows: TaskRow[] = todos.map((todo, index) => ({
+    key: `${index}`,
+    label: todo.content,
+    step: index + 1,
+    status: todo.status === 'completed' ? 'done' : todo.status === 'in_progress' ? 'running' : 'pending',
+  }))
+  return <motion.div className={cn('todo-panel', finished && 'finished')} initial={reduce ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={reduce ? { duration: 0 } : SPRING_PANEL}>
     <button type="button" className="todo-head" aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <span className="todo-progress" style={{ ['--done' as string]: `${(done / todos.length) * 100}%` }} aria-hidden />
-      <span className="todo-title">{current ? current.content : done === todos.length ? 'All tasks done' : 'To-do'}</span>
-      <span className="todo-count">{done}/{todos.length}</span>
-      <ChevronDown size={13} className={cn('todo-chevron', open && 'open')} aria-hidden />
+      <span className="task-row-mark" key={finished ? 'done' : 'ring'}>
+        {finished ? <TaskBadge tone="green" /> : <SpinnerRing progress={done / todos.length}>{done}</SpinnerRing>}
+      </span>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span key={current?.content ?? (finished ? 'finished' : 'plan')} className={cn('todo-title', current && 'running')}
+          initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, y: -5 }} transition={{ duration: 0.2, ease: EASE_OUT }}>
+          {current ? current.content : finished ? 'All tasks done' : 'Plan'}
+        </motion.span>
+      </AnimatePresence>
+      <span className="todo-count">{done} of {todos.length}</span>
+      <span className="todo-chevron" aria-hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(180deg)' : 'none' }}><path d="M6 9l6 6 6-6" /></svg></span>
     </button>
-    {open && <ol className="todo-list">{todos.map((todo, index) => <li key={index} data-status={todo.status}>
-      <span className="todo-mark" aria-hidden>{todo.status === 'completed' ? <Check size={12} /> : todo.status === 'in_progress' ? <LoaderCircle size={12} className="animate-spin" /> : null}</span>
-      <span>{todo.content}</span>
-    </li>)}</ol>}
-  </div>
+    {/* Same expanding grammar as the primitive's detail drop-down: a grid row that grows from 0fr. */}
+    <div className={cn('todo-drawer', open && 'open')}><div><TaskRows rows={rows} /></div></div>
+  </motion.div>
 }
 
 function AssistantMessage({ id, content, sources, tools, drafts = [], thinking = '', status, live, feedback, onFeedback, onRetry, footer }: {

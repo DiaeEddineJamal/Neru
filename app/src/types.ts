@@ -22,6 +22,15 @@ export interface SearchHit {
   preview: string
 }
 
+/** The Search view's answer: the hits, and how much of the project the index had to read. */
+export interface SearchResults { hits: SearchHit[]; filesScanned: number; totalFiles: number; truncated: boolean; ms: number }
+
+/** Where the project index stands (the Explorer status line). */
+export interface IndexStatus { root: string; state: 'indexing' | 'ready' | 'error'; files: number; total: number; symbols: number; bytes: number; ms: number; scans: number; updatedAt: number }
+
+/** What a `workspace://changed` event carries: every path that changed, and the subset found by a rescan (edits made outside Neru). */
+export interface WorkspaceChange { paths: string[]; external?: string[] }
+
 export interface GitFile {
   status: string
   path: string
@@ -64,7 +73,7 @@ export interface AgentResponse {
   context: ContextUsage
 }
 
-export type DocumentKind = 'text' | 'image' | 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'odt' | 'odp' | 'ods' | 'rtf'
+export type DocumentKind = 'text' | 'image' | 'element' | 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'odt' | 'odp' | 'ods' | 'rtf'
 
 /** A document the user attached from outside the project. PDF and Word files carry extracted text; images carry a data URL. */
 export interface AttachedDocument { name: string; path: string; size: number; kind: DocumentKind; text?: string; dataUrl?: string }
@@ -119,10 +128,15 @@ export type AgentEvent = { sessionId: string } & (
   | { type: 'notice'; text: string }
   | { type: 'context'; usage: ContextUsage }
   | { type: 'provider'; providerId: string; model: string }
-  | { type: 'draft'; id: string; path: string; content: string; tool: string }
+  | { type: 'draft'; id: string; path: string; content: string; tool: string; append?: boolean }
   | { type: 'reasoning'; chars: number; text: string }
+  | { type: 'rewind'; text: string; drafts: string[]; thinking: number }
   | { type: 'todos'; todos: Todo[] }
-  | { type: 'steered'; text: string })
+  | { type: 'steered'; text: string }
+  | ({ type: 'subagent' } & SubagentProgress))
+
+/** Live state of one sub-agent, sent while it works and shown nested under its `task` tool call. */
+export interface SubagentProgress { id: string; role: string; description: string; status: 'running' | 'done'; tools: number; rounds: number; elapsedMs: number; current: string; steps: string[] }
 
 export interface Todo { content: string; status: 'pending' | 'in_progress' | 'completed' }
 
@@ -163,3 +177,30 @@ export interface ProviderView {
 
 /** A skill the agent can load, as Settings lists it. */
 export interface SkillView { name: string; description: string; source: 'personal' | 'project' | 'claude' | 'built-in'; path: string; chars: number; enabled: boolean }
+
+/** One model a provider offers, classified from the provider's own metadata or, failing that, its name. */
+export interface ModelInfo {
+  id: string
+  name?: string
+  /** What the model is mostly for. */
+  kind: 'chat' | 'reasoning' | 'code'
+  modalities: { input: string[]; output: string[] }
+  /** Reads images. */
+  vision: boolean
+  /** Takes tool definitions, which Neru needs to edit files and run commands. */
+  tools: boolean
+  reasoning: boolean
+  contextWindow?: number
+  free: boolean
+  /** ok: a test request worked. unavailable: the provider refused the model. unknown: not checked, or the check was inconclusive. */
+  verified: 'ok' | 'unavailable' | 'unknown'
+  verifiedReason?: string
+  /** metadata: the provider said what the model can do. name: guessed from the id. */
+  source: 'metadata' | 'name'
+}
+
+export interface ProbeResult { model: string; status: 'ok' | 'unavailable' | 'unknown' | 'badKey'; reason: string; rateLimited: boolean; cached: boolean }
+
+export interface CheckProgress { runId: string; done: number; total: number; result: ProbeResult | null; finished: boolean; note: string | null }
+
+export interface CheckSummary { checked: number; total: number; ok: number; unavailable: number; unknown: number; cancelled: boolean; note: string | null }

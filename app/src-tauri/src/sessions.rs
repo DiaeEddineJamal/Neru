@@ -529,6 +529,43 @@ pub fn create_chat_session(state: State<'_, AppState>) -> Result<SessionSnapshot
     create_for_root(&state, Path::new(""), false)
 }
 
+/// A copy of a session's conversation in a new session, so a different approach can be tried without
+/// losing the first. The copy works in the project folder itself: a worktree stays with its own session.
+#[tauri::command]
+pub fn fork_session(id: String, state: State<'_, AppState>) -> Result<SessionSnapshot, String> {
+    let source = owned(&state, &id)?;
+    let (summary, conversation, transcript, todos) = {
+        let runtime = lock(&source)?;
+        if runtime.running {
+            return Err("Stop the reply, or wait for it to finish, before forking this session".into());
+        }
+        (runtime.summary.clone(), runtime.conversation.clone(), runtime.transcript.clone(), runtime.todos.clone())
+    };
+    let new_id = Uuid::new_v4().to_string();
+    let title: String = format!("{} (fork)", summary.title.trim_end_matches(" (fork)")).chars().take(100).collect();
+    let mut runtime = Runtime::from_file(SessionFile {
+        summary: SessionSummary {
+            id: new_id.clone(),
+            title,
+            project_path: summary.project_path,
+            updated_at: now(),
+            worktree: None,
+            running: false,
+            titled: true,
+        },
+        conversation,
+        transcript,
+        pending: None,
+        queued: vec![],
+        todos,
+        edits: vec![],
+    });
+    runtime.save()?;
+    let shared = Arc::new(Mutex::new(runtime));
+    state.sessions.lock().map_err(|e| e.to_string())?.insert(new_id, shared.clone());
+    activate(&state, &shared)
+}
+
 #[tauri::command]
 pub fn select_session(id: String, state: State<'_, AppState>) -> Result<SessionSnapshot, String> {
     let shared = owned(&state, &id)?;

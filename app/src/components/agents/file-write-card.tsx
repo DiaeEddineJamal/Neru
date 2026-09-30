@@ -43,7 +43,7 @@ function FileWriteCardImpl({ path, content, state, edit = false }: FileWriteCard
       {edit ? <FilePen size={13} className="file-write-kind" aria-hidden /> : <FilePlus2 size={13} className="file-write-kind" aria-hidden />}
       <span className="file-write-verb">{verb}</span>
       <span className="file-write-path truncate">{path || name}</span>
-      <span className="file-write-count">{count} {count === 1 ? 'line' : 'lines'}</span>
+      <span className="file-write-count">{count} {count === 1 ? 'line' : 'lines'}{writing && content.length > 2048 ? ` · ${(content.length / 1024).toFixed(1)} KB` : ''}</span>
       <ChevronDown size={13} className={cn('file-write-chevron', open && 'open')} aria-hidden />
     </button>
     {writing && !open && content && <CodeBlock bare streaming code={lines.slice(tailStart).join('\n')} startLine={tailStart + 1} language={languageForPath(path)} maxHeight={TAIL * 19 + 20} className="file-write-tail" />}

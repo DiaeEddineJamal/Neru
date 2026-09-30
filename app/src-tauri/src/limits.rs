@@ -35,7 +35,12 @@ struct Store {
 static STORE: LazyLock<Mutex<Store>> = LazyLock::new(|| Mutex::new(load()));
 static QUOTAS: LazyLock<Mutex<HashMap<String, Vec<Quota>>>> = LazyLock::new(Default::default);
 
+/// Unit tests keep the store in memory: they must neither read what this machine's providers
+/// reported nor overwrite it.
 fn path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
     data_dir().ok().map(|dir| dir.join("model-limits.json"))
 }
 

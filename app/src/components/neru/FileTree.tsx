@@ -1,10 +1,14 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Copy, CopyPlus, ExternalLink, FileCode2, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, FolderSearch, MessageSquarePlus, Paperclip, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState } from 'react'
+import { ChevronDown, ChevronRight, Copy, CopyPlus, ExternalLink, FileCode2, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, FolderSearch, LoaderCircle, MessageSquarePlus, Paperclip, Pencil, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { api } from '../../api'
 import type { FileEntry } from '../../types'
+import { formatCount, useIndexStatus } from '../../lib/useIndex'
 import { useContextMenu, type MenuItem } from './ContextMenu'
 
-interface TreeProps { onSelect: (path: string) => void; selected: string | null; version: number; changed: ReadonlySet<string> }
+/** The most recent batch of changed paths (project-relative), from the agent, the tree's own menu or a rescan. */
+export interface TreeChange { seq: number; paths: string[] }
+
+interface TreeProps { onSelect: (path: string) => void; selected: string | null; changed: ReadonlySet<string> }
 
 /** What the tree can ask the app to do from its right-click menu. */
 export interface TreeActions {
@@ -17,11 +21,35 @@ export interface TreeActions {
 
 type Editing = { mode: 'rename' | 'new_file' | 'new_folder'; path: string; value: string } | null
 
-const TreeContext = createContext<{ editing: Editing; setEditing: (value: Editing) => void; menu: (event: React.MouseEvent, entry: FileEntry | null) => void; commit: () => void; remove: (entry: FileEntry) => void }>({ editing: null, setEditing: () => undefined, menu: () => undefined, commit: () => undefined, remove: () => undefined })
+interface TreeState {
+  editing: Editing
+  setEditing: (value: Editing) => void
+  menu: (event: React.MouseEvent, entry: FileEntry | null) => void
+  commit: () => void
+  remove: (entry: FileEntry) => void
+  expanded: ReadonlySet<string>
+  toggleDir: (path: string, force?: boolean) => void
+  listings: Map<string, FileEntry[]>
+  errors: Map<string, string>
+  fresh: ReadonlySet<string>
+}
+
+const noop = () => undefined
+const TreeContext = createContext<TreeState>({ editing: null, setEditing: noop, menu: noop, commit: noop, remove: noop, expanded: new Set(), toggleDir: noop, listings: new Map(), errors: new Map(), fresh: new Set() })
 
 const norm = (path: string) => path.replace(/\\/g, '/')
 const parentOf = (path: string) => norm(path).includes('/') ? norm(path).slice(0, norm(path).lastIndexOf('/')) : ''
 const nameOf = (path: string) => norm(path).split('/').pop() ?? path
+const CODE_FILE = /\.(tsx?|jsx?|rs|json|css|html|py|go|java|md|toml|ya?ml)$/i
+/** Entries drawn at once per folder; the rest wait behind a "Show more" row so a huge folder cannot stall the UI. */
+const CHUNK = 300
+
+const sameListing = (a: FileEntry[], b: FileEntry[]) => a.length === b.length && a.every((item, index) => item.path === b[index].path && item.isDir === b[index].isDir && item.size === b[index].size)
+
+const storageKey = (project: string) => `neru.tree.expanded.${project}`
+const readExpanded = (project: string): Set<string> => {
+  try { const raw = localStorage.getItem(storageKey(project)); const list = raw ? JSON.parse(raw) as unknown : []; return new Set(Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string').slice(0, 200) : []) } catch { return new Set() }
+}
 
 function NameInput() {
   const { editing, setEditing, commit } = useContext(TreeContext)
@@ -44,65 +72,139 @@ function NameInput() {
     onBlur={() => commit()} />
 }
 
-function TreeNode({ entry, depth, ...props }: TreeProps & { entry: FileEntry; depth: number }) {
-  const { onSelect, selected, version, changed } = props
-  const { editing, menu, setEditing, remove } = useContext(TreeContext)
-  const [open, setOpen] = useState(false)
-  const [children, setChildren] = useState<FileEntry[] | null>(null)
-  const [error, setError] = useState('')
-  const creatingHere = editing && editing.mode !== 'rename' && norm(editing.path) === norm(entry.path)
+function TreeNode({ entry, depth, onSelect, selected, changed }: TreeProps & { entry: FileEntry; depth: number }) {
+  const { editing, menu, setEditing, remove, expanded, toggleDir, listings, errors, fresh } = useContext(TreeContext)
+  const path = norm(entry.path)
+  const open = entry.isDir && expanded.has(path)
+  const children = open ? listings.get(path) : undefined
+  const error = open ? errors.get(path) : undefined
+  const [shown, setShown] = useState(CHUNK)
+  const creatingHere = editing && editing.mode !== 'rename' && norm(editing.path) === path
 
   // Creating something inside a folder opens it.
-  useEffect(() => { if (creatingHere && !open) setOpen(true) }, [creatingHere, open])
-  // When files change on disk, an open folder reloads its entries and stays open.
-  useEffect(() => {
-    if (!open || !entry.isDir) return
-    let active = true
-    api.listDirectory(entry.path).then(items => { if (active) { setChildren(items); setError('') } }).catch(cause => { if (active) setError(String(cause)) })
-    return () => { active = false }
-  }, [version, open, entry.isDir, entry.path])
+  useEffect(() => { if (creatingHere && !open) toggleDir(path, true) }, [creatingHere, open, path, toggleDir])
 
   const toggle = () => {
     if (!entry.isDir) { onSelect(entry.path); return }
-    setOpen(!open)
+    toggleDir(path)
   }
 
-  const path = norm(entry.path)
   const touched = entry.isDir ? [...changed].some(item => item.startsWith(`${path}/`)) : changed.has(path)
-  const Icon = entry.isDir ? (open ? FolderOpen : Folder) : /\.(tsx?|jsx?|rs|json|css|html)$/.test(entry.name) ? FileCode2 : FileText
+  const flashing = fresh.has(path) || (entry.isDir && !open && [...fresh].some(item => item.startsWith(`${path}/`)))
+  const Icon = entry.isDir ? (open ? FolderOpen : Folder) : CODE_FILE.test(entry.name) ? FileCode2 : FileText
   const renaming = editing?.mode === 'rename' && norm(editing.path) === path
   return (
     <>
       {renaming ? <div style={{ paddingLeft: 4 + depth * 14 }}><NameInput /></div>
-        : <button className={`tree-row ${selected === entry.path ? 'selected' : ''} ${touched ? 'changed' : ''}`} style={{ paddingLeft: 12 + depth * 14 }} onClick={toggle} onContextMenu={event => menu(event, entry)} onKeyDown={event => { if (event.key === 'F2') { event.preventDefault(); setEditing({ mode: 'rename', path: entry.path, value: entry.name }) } if (event.key === 'Delete') { event.preventDefault(); remove(entry) } }} title={touched ? `${entry.path} · changed by Neru` : entry.path}>
+        : <button className={`tree-row ${selected === entry.path ? 'selected' : ''} ${touched ? 'changed' : ''} ${flashing ? 'fresh' : ''}`} style={{ paddingLeft: 12 + depth * 14 }} onClick={toggle} onContextMenu={event => menu(event, entry)} onKeyDown={event => { if (event.key === 'F2') { event.preventDefault(); setEditing({ mode: 'rename', path: entry.path, value: entry.name }) } if (event.key === 'Delete') { event.preventDefault(); remove(entry) } }} title={touched ? `${entry.path} · changed by Neru` : entry.path}>
           {entry.isDir ? (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="tree-spacer" />}
           <Icon size={14} strokeWidth={1.7} />
           <span className="truncate">{entry.name}</span>
           {touched && <i className="tree-dot" aria-label="Changed" />}
         </button>}
       {open && creatingHere && <div style={{ paddingLeft: 4 + (depth + 1) * 14 }}><NameInput /></div>}
-      {open && children?.map(child => <TreeNode key={child.path} entry={child} depth={depth + 1} {...props} />)}
+      {children?.slice(0, shown).map(child => <TreeNode key={child.path} entry={child} depth={depth + 1} onSelect={onSelect} selected={selected} changed={changed} />)}
+      {children && children.length > shown && <button type="button" className="tree-more" style={{ paddingLeft: 12 + (depth + 1) * 14 }} onClick={() => setShown(value => value + 500)}>Show {Math.min(500, children.length - shown)} more of {children.length - shown}</button>}
+      {open && !children && !error && <div className="tree-loading" style={{ paddingLeft: 12 + (depth + 1) * 14 }} aria-hidden><i /><i /></div>}
       {open && error && <div className="tree-error">{error}</div>}
     </>
   )
 }
 
-export function FileTree({ projectKey, onSelect, selected, version = 0, changed = new Set<string>(), onAttach, onAsk, onChanged, onError }: { projectKey: string; onSelect: (path: string) => void; selected: string | null; version?: number; changed?: ReadonlySet<string> } & TreeActions) {
-  const [entries, setEntries] = useState<FileEntry[]>([])
-  const [error, setError] = useState('')
+export function FileTree({ projectKey, onSelect, selected, version = 0, changed = new Set<string>(), lastChange, onAttach, onAsk, onChanged, onError }: { projectKey: string; onSelect: (path: string) => void; selected: string | null; version?: number; changed?: ReadonlySet<string>; lastChange?: TreeChange } & TreeActions) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => readExpanded(projectKey))
   const [editing, setEditing] = useState<Editing>(null)
-  const [refresh, setRefresh] = useState(0)
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set())
+  const [filter, setFilter] = useState('')
+  const [matches, setMatches] = useState<string[] | null>(null)
+  const [rootShown, setRootShown] = useState(CHUNK)
+  const listings = useRef(new Map<string, FileEntry[]>())
+  const errors = useRef(new Map<string, string>())
+  const [, bump] = useReducer((count: number) => count + 1, 0)
+  const queued = useRef(new Set<string>())
+  const timer = useRef(0)
+  const alive = useRef(true)
+  const expandedRef = useRef(expanded)
+  expandedRef.current = expanded
   const openMenu = useContextMenu()
   const committing = useRef(false)
+  const status = useIndexStatus(projectKey)
+
+  // Reloads the listed folders together, drawing only if some listing actually differs, so a burst
+  // of file writes redraws the tree once and an unchanged folder does not redraw at all.
+  const flush = useCallback(async () => {
+    const dirs = [...queued.current]
+    queued.current.clear()
+    let dirty = false
+    await Promise.all(dirs.map(async dir => {
+      try {
+        const items = await api.listDirectory(dir || undefined)
+        const before = listings.current.get(dir)
+        if (!before || !sameListing(before, items)) { listings.current.set(dir, items); dirty = true }
+        if (errors.current.delete(dir)) dirty = true
+      } catch (cause) {
+        const message = String(cause).replace(/^Error:\s*/, '')
+        if (errors.current.get(dir) !== message) { errors.current.set(dir, message); dirty = true }
+        // A folder that was deleted or renamed away folds itself.
+        if (dir && /os error (2|3)|cannot find|not found|no such file/i.test(message)) {
+          listings.current.delete(dir); errors.current.delete(dir)
+          setExpanded(current => { if (!current.has(dir)) return current; const next = new Set(current); next.delete(dir); return next })
+        }
+      }
+    }))
+    if (dirty && alive.current) bump()
+  }, [])
+  const reload = useCallback((dirs: Iterable<string>) => {
+    for (const dir of dirs) queued.current.add(dir)
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => void flush(), 45)
+  }, [flush])
+  useEffect(() => { alive.current = true; return () => { alive.current = false; window.clearTimeout(timer.current) } }, [])
+
+  // First load, and a manual refresh: the root and every folder that is open.
+  useEffect(() => { reload(['', ...expandedRef.current]) }, [projectKey, version, reload])
+
+  // Files changed (by the agent, a menu action, or something outside Neru): reload only the open
+  // folders they sit in, and pulse the changed rows for a few seconds.
+  const seq = lastChange?.seq ?? 0
+  const lastPaths = useRef<string[]>([])
+  lastPaths.current = lastChange?.paths ?? []
   useEffect(() => {
+    if (seq === 0) return
+    const paths = lastPaths.current.map(norm).filter(Boolean)
+    if (paths.length === 0) return
+    reload(['', ...expandedRef.current].filter(dir => dir === '' || paths.some(path => path === dir || path.startsWith(`${dir}/`))))
+    const batch = paths.slice(0, 400)
+    setFresh(current => new Set([...current, ...batch]))
+    const clear = window.setTimeout(() => setFresh(current => { const next = new Set(current); batch.forEach(path => next.delete(path)); return next }), 4500)
+    return () => window.clearTimeout(clear)
+  }, [seq, reload])
+
+  useEffect(() => { try { localStorage.setItem(storageKey(projectKey), JSON.stringify([...expanded].slice(0, 200))) } catch { /* storage unavailable */ } }, [expanded, projectKey])
+
+  const toggleDir = useCallback((path: string, force?: boolean) => {
+    const opening = force ?? !expandedRef.current.has(path)
+    setExpanded(current => {
+      if (current.has(path) === opening) return current
+      const next = new Set(current)
+      if (opening) next.add(path); else next.delete(path)
+      return next
+    })
+    if (opening) reload([path])
+  }, [reload])
+
+  // Filter box: a fuzzy lookup over the project index, answered without touching the tree.
+  useEffect(() => {
+    const text = filter.trim()
+    if (!text) { setMatches(null); return }
     let active = true
-    api.listDirectory().then(items => { if (active) { setEntries(items); setError('') } }).catch(cause => { if (active) setError(String(cause)) })
-    return () => { active = false }
-  }, [projectKey, version, refresh])
+    const timer = window.setTimeout(() => { api.searchFiles(text, 80).then(found => { if (active) setMatches(found) }).catch(() => { if (active) setMatches([]) }) }, 70)
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [filter])
 
   const absolute = (path: string) => `${projectKey.replace(/^\\\\\?\\/, '').replace(/[\\/]$/, '')}${path ? `\\${path.replace(/\//g, '\\')}` : ''}`
   const fail = (cause: unknown) => onError?.(String(cause).replace(/^Error:\s*/, ''))
-  const done = (gone?: string) => { setRefresh(value => value + 1); onChanged?.(gone) }
+  const done = (gone?: string) => { reload(['', ...expandedRef.current]); onChanged?.(gone) }
   const copy = (text: string) => { void navigator.clipboard.writeText(text).catch(fail) }
 
   const commit = () => {
@@ -133,7 +235,7 @@ export function FileTree({ projectKey, onSelect, selected, version = 0, changed 
       { label: 'New folder…', icon: <FolderPlus size={14} />, onSelect: () => setEditing({ mode: 'new_folder', path: folder, value: '' }) },
     ]
     if (!entry) {
-      openMenu(event, [...create, 'separator', { label: 'Open File Location', icon: <FolderSearch size={14} />, onSelect: () => api.revealPath(absolute('')).catch(fail) }, { label: 'Refresh', icon: <RefreshCw size={14} />, onSelect: () => setRefresh(value => value + 1) }])
+      openMenu(event, [...create, 'separator', { label: 'Open File Location', icon: <FolderSearch size={14} />, onSelect: () => api.revealPath(absolute('')).catch(fail) }, { label: 'Refresh', icon: <RefreshCw size={14} />, onSelect: () => { void api.indexRefresh().catch(() => undefined); done() } }])
       return
     }
     openMenu(event, [
@@ -154,13 +256,37 @@ export function FileTree({ projectKey, onSelect, selected, version = 0, changed 
     ])
   }
 
+  const rootEntries = listings.current.get('')
+  const rootError = errors.current.get('')
   const creatingAtRoot = editing && editing.mode !== 'rename' && editing.path === ''
-  return <TreeContext.Provider value={{ editing, setEditing, menu, commit, remove: entry => void remove(entry) }}>
+  const filtering = filter.trim().length > 0
+  return <TreeContext.Provider value={{ editing, setEditing, menu, commit, remove: entry => void remove(entry), expanded, toggleDir, listings: listings.current, errors: errors.current, fresh }}>
     <div className="file-tree" onContextMenu={event => { if (event.target === event.currentTarget) menu(event, null) }}>
-      {error && <div className="inline-error">{error}</div>}
-      {creatingAtRoot && <div style={{ paddingLeft: 4 }}><NameInput /></div>}
-      {entries.map(entry => <TreeNode key={entry.path} entry={entry} depth={0} onSelect={onSelect} selected={selected} version={version + refresh} changed={changed} />)}
-      {entries.length === 0 && !error && !creatingAtRoot && <div className="empty-small" onContextMenu={event => menu(event, null)}>This folder is empty. Ask Neru to create the first files, or right-click to add one.</div>}
+      <div className="tree-filter">
+        <Search size={13} aria-hidden />
+        <input value={filter} onChange={event => setFilter(event.target.value)} placeholder="Filter files…" aria-label="Filter files" spellCheck={false}
+          onKeyDown={event => { if (event.key === 'Escape') setFilter(''); if (event.key === 'Enter' && matches?.[0]) onSelect(matches[0]) }} />
+        {filtering && <button type="button" className="tree-filter-clear" aria-label="Clear filter" onClick={() => setFilter('')}><X size={12} /></button>}
+      </div>
+      {rootError && <div className="inline-error">{rootError}</div>}
+      {filtering ? <>
+        {matches?.map(path => <button type="button" key={path} className={`tree-row tree-hit ${selected === path ? 'selected' : ''}`} style={{ paddingLeft: 12 }} onClick={() => onSelect(path)} title={path}>
+          {CODE_FILE.test(path) ? <FileCode2 size={14} strokeWidth={1.7} /> : <FileText size={14} strokeWidth={1.7} />}
+          <span className="truncate">{nameOf(path)}</span>
+          <span className="tree-hit-dir truncate">{parentOf(path)}</span>
+        </button>)}
+        {matches && matches.length === 0 && <div className="empty-small">No files match “{filter.trim()}”.</div>}
+      </> : <>
+        {creatingAtRoot && <div style={{ paddingLeft: 4 }}><NameInput /></div>}
+        {rootEntries?.slice(0, rootShown).map(entry => <TreeNode key={entry.path} entry={entry} depth={0} onSelect={onSelect} selected={selected} changed={changed} />)}
+        {rootEntries && rootEntries.length > rootShown && <button type="button" className="tree-more" onClick={() => setRootShown(value => value + 500)}>Show {Math.min(500, rootEntries.length - rootShown)} more of {rootEntries.length - rootShown}</button>}
+        {rootEntries && rootEntries.length === 0 && !rootError && !creatingAtRoot && <div className="empty-small" onContextMenu={event => menu(event, null)}>This folder is empty. Ask Neru to create the first files, or right-click to add one.</div>}
+      </>}
+      {status && <div className="tree-index" role="status" aria-live="polite" title={status.state === 'ready' ? `${formatCount(status.files)} files and ${formatCount(status.symbols)} symbols indexed for instant search` : undefined}>
+        {status.state === 'indexing' ? <><LoaderCircle size={11} className="animate-spin" aria-hidden /> Indexing… {formatCount(status.files)}{status.total > 0 ? ` of ${formatCount(status.total)}` : ''} files</>
+          : status.state === 'ready' ? <><i className="tree-index-dot" aria-hidden /> Indexed {formatCount(status.files)} files{status.symbols > 0 ? ` · ${formatCount(status.symbols)} symbols` : ''}</>
+          : 'Search index unavailable'}
+      </div>}
     </div>
   </TreeContext.Provider>
 }

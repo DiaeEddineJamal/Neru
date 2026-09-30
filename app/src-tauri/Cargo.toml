@@ -1,6 +1,6 @@
 [package]
 name = "neru"
-version = "0.3.0"
+version = "0.4.0"
 description = "A calm, local-first coding agent"
 authors = ["Neru"]
 license = "MIT"
@@ -36,6 +36,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 ignore = "0.4"
 regex = "1"
+regex-syntax = "0.8"
 crossterm = "0.28"
 similar = "3"
 portable-pty = "0.9"

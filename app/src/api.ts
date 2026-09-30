@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AgentEvent, AgentMode, AgentResponse, AttachedDocument, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchHit, SessionSnapshot, SessionSummary, SkillView, VoiceView } from './types'
+import type { AgentEvent, AgentMode, AgentResponse, AttachedDocument, CheckProgress, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, SkillView, VoiceView } from './types'
 import type { ApiFormat } from './providerCatalog'
+import type { Route } from './lib/browser'
 
 export const api = {
   currentProject: () => invoke<ProjectInfo | null>('current_project'),
@@ -35,8 +36,13 @@ export const api = {
   cloneProject: (url: string, destination: string) => invoke<ProjectInfo>('clone_project', { url, destination }),
   listDirectory: (path?: string) => invoke<FileEntry[]>('list_directory', { path }),
   readFile: (path: string) => invoke<string>('read_file', { path }),
-  searchText: (query: string, options: { caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean } = {}) => invoke<SearchHit[]>('search_text', { query, ...options }),
+  searchText: (query: string, options: { caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean; glob?: string } = {}) => invoke<SearchResults>('search_text', { query, ...options }),
   listProjectFiles: () => invoke<string[]>('list_project_files'),
+  indexStatus: () => invoke<IndexStatus>('index_status'),
+  /** Checks the disk for edits made outside Neru; the tree hears about them through workspace://changed. */
+  indexRefresh: () => invoke<IndexStatus>('index_refresh'),
+  /** Fuzzy file finder over the project index, best match first. */
+  searchFiles: (query: string, limit = 60) => invoke<string[]>('search_files', { query, limit }),
   gitStatus: () => invoke<GitStatus>('git_status'),
   gitDiff: (path?: string, staged = false) => invoke<string>('git_diff', { path, staged }),
   gitStage: (path: string) => invoke<void>('git_stage', { path }),
@@ -63,6 +69,7 @@ export const api = {
   previewStart: () => invoke<{ command: string; url: string }>('preview_start'),
   previewCurrent: () => invoke<{ command: string; url: string } | null>('preview_current'),
   previewStop: () => invoke<void>('preview_stop'),
+  previewRoute: (url: string) => invoke<Route>('preview_route', { url }),
   proposeFile: (path: string, content: string) => invoke<{ diff: string }>('propose_file', { path, content }),
   applyPending: () => invoke<string>('apply_pending'),
   rejectPending: () => invoke<void>('reject_pending'),
@@ -70,10 +77,15 @@ export const api = {
   configureProvider: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string, model: string) => invoke<ProviderView>('configure_provider', { providerId, apiFormat, baseUrl, apiKey, model }),
   providerStatus: () => invoke<ProviderView>('provider_status'),
   newChat: () => invoke<void>('new_chat'),
-  listModels: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string) => invoke<string[]>('list_models', { providerId, apiFormat, baseUrl, apiKey }),
+  forkSession: (id: string) => invoke<SessionSnapshot>('fork_session', { id }),
+  listModels: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string) => invoke<ModelInfo[]>('list_models', { providerId, apiFormat, baseUrl, apiKey }),
+  probeModel: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string, model: string, force = false) => invoke<ProbeResult>('probe_model', { providerId, apiFormat, baseUrl, apiKey, model, force }),
+  checkModels: (runId: string, providerId: string, baseUrl: string, apiKey: string, targets: { model: string; apiFormat: ApiFormat }[]) => invoke<CheckSummary>('check_models', { runId, providerId, baseUrl, apiKey, targets }),
+  cancelCheckModels: (runId: string) => invoke<void>('cancel_check_models', { runId }),
+  onModelCheck: (handler: (progress: CheckProgress) => void) => listen<CheckProgress>('models://check', event => handler(event.payload)),
   chat: (options: { prompt: string; contextPaths: string[]; mode: AgentMode; web: boolean; documents: AttachedDocument[]; effort: Effort; sessionId: string | null; notes?: string | null; surface?: 'chat' | 'code' }) => invoke<AgentResponse>('ai_chat', {
     prompt: options.prompt, contextPaths: options.contextPaths, mode: options.mode, web: options.web, surface: options.surface ?? 'code',
-    documents: options.documents.filter(doc => doc.kind !== 'image').map(doc => ({ path: doc.path, text: doc.text ?? null })),
+    documents: options.documents.filter(doc => doc.kind !== 'image').map(doc => ({ path: doc.path, text: doc.text ?? null, name: doc.kind === 'element' ? doc.name : null, kind: doc.kind === 'element' ? 'element' : null })),
     images: options.documents.filter(doc => doc.kind === 'image' && doc.dataUrl).map(doc => ({ name: doc.name, dataUrl: doc.dataUrl })),
     effort: options.effort === 'auto' ? null : options.effort, sessionId: options.sessionId, notes: options.notes ?? null,
   }),

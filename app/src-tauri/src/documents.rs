@@ -28,6 +28,12 @@ pub struct DocumentInput {
     pub path: String,
     #[serde(default)]
     pub text: Option<String>,
+    /// Display name when `path` is not a file (an element picked in the preview).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// "element" for a page element picked in the in-app browser; otherwise a document.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 /// An image as sent with a message.

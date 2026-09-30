@@ -23,6 +23,8 @@ pub struct PreviewManager {
     /// The static server's accept loop, when a plain HTML folder is being served.
     server: Mutex<Option<tokio::task::JoinHandle<()>>>,
     current: Mutex<Option<PreviewHint>>,
+    /// Fronts local pages so the in-app browser can inject its page bridge.
+    pub proxy: crate::preview_proxy::ProxyManager,
 }
 
 #[derive(Serialize, Clone)]
@@ -422,6 +424,15 @@ pub async fn preview_start(app: AppHandle) -> Result<PreviewHint, String> {
     let hint = state.preview.start(&app, &root).await?;
     let _ = app.emit("preview://open", hint.url.clone());
     Ok(hint)
+}
+
+/// Where the in-app browser should load `url` from (through the bridge proxy when it is local).
+#[tauri::command]
+pub async fn preview_route(state: State<'_, AppState>, url: String) -> Result<crate::preview_proxy::Route, String> {
+    if !allowed_url(&url) {
+        return Err("Preview URLs must be http://127.0.0.1, http://localhost, or https".into());
+    }
+    state.preview.proxy.route(&url).await
 }
 
 #[tauri::command]
