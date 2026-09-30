@@ -66,7 +66,7 @@ interface Draft { previous?: string; kind: 'local' | 'hosted'; name: string; com
 const blank: Draft = { kind: 'hosted', name: '', command: 'npx', args: '', env: '', url: 'https://', headers: '', enabled: true }
 
 const statusText = (server: McpServer) => server.status === 'connected' ? `${server.tools.length} tool${server.tools.length === 1 ? '' : 's'}`
-  : server.status === 'starting' ? 'Connecting…' : server.status === 'off' ? 'Off' : server.status === 'needs_auth' ? 'Sign-in needed' : 'Not running'
+  : server.status === 'starting' ? 'Connecting…' : server.status === 'off' ? 'Off' : server.status === 'needs_auth' ? 'Sign-in needed' : server.status === 'needs_trust' ? 'Waiting for trust' : 'Not running'
 
 /** Settings → Connectors: MCP servers, hosted or local, that Neru offers to the model as tools. */
 export function Connectors({ onError }: { onError: (message: string) => void }) {
@@ -126,18 +126,20 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
     {servers && servers.length > 0 && <div className="connector-list">{servers.map(server => <div key={server.name} className="connector">
       <div className="connector-head">
         <span className={cn('connector-dot', server.status)} aria-hidden />
-        <div className="connector-title"><strong>{server.name}</strong><code>{server.url ?? `${server.command} ${joinArgs(server.args)}`}</code></div>
+        <div className="connector-title"><strong>{server.name}</strong><code>{server.url ?? `${server.command} ${joinArgs(server.args)}`}</code>{server.source === 'project' && <small className="connector-source">From this project (.mcp.json)</small>}</div>
         <span className="connector-status">{server.url ? <Cloud size={12} /> : <Monitor size={12} />} {statusText(server)}</span>
         <div className="connector-actions">
+          {server.status === 'needs_trust' && <button className="button primary small" disabled={working !== null} onClick={() => void act(server.name, async () => { await api.trustProject(); return api.mcpServers() })} title="Trust this project folder and start the connectors in its .mcp.json">{working === server.name ? <LoaderCircle size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Trust project</button>}
           {server.url && server.status === 'needs_auth' && <button className="button primary small" disabled={working === server.name} onClick={() => void act(server.name, () => api.mcpSignIn(server.name))}>{working === server.name ? <LoaderCircle size={13} className="animate-spin" /> : <LogIn size={13} />} Sign in</button>}
           {server.url && server.signedIn && <button className="icon-button small" disabled={working === server.name} onClick={() => void act(server.name, () => api.mcpSignOut(server.name))} title="Sign out" aria-label={`Sign out of ${server.name}`}><LogOut size={14} /></button>}
-          <button className="icon-button small" disabled={working === server.name} onClick={() => void toggle(server)} title={server.enabled ? 'Turn off' : 'Turn on'} aria-label={server.enabled ? `Turn off ${server.name}` : `Turn on ${server.name}`}><span className={cn('switch', server.enabled && 'on')} /></button>
-          <button className="icon-button small" disabled={!server.enabled || working === server.name} onClick={() => void act(server.name, () => api.mcpRestart(server.name))} title="Reconnect" aria-label={`Reconnect ${server.name}`}>{working === server.name && server.status !== 'needs_auth' ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCw size={14} />}</button>
-          <button className="button subtle small" onClick={() => setDraft({ previous: server.name, kind: server.url ? 'hosted' : 'local', name: server.name, command: server.command || 'npx', args: joinArgs(server.args), env: formatPairs(server.env, '='), url: server.url ?? 'https://', headers: formatPairs(server.headers ?? {}, ': '), enabled: server.enabled })}>Edit</button>
-          <button className="icon-button small" onClick={() => { if (window.confirm(`Remove the ${server.name} connector${server.signedIn ? ' and its sign-in' : ''}?`)) void act(server.name, () => api.mcpRemoveServer(server.name)) }} title="Remove" aria-label={`Remove ${server.name}`}><Trash2 size={14} /></button>
+          {server.source !== 'project' && <button className="icon-button small" disabled={working === server.name} onClick={() => void toggle(server)} title={server.enabled ? 'Turn off' : 'Turn on'} aria-label={server.enabled ? `Turn off ${server.name}` : `Turn on ${server.name}`}><span className={cn('switch', server.enabled && 'on')} /></button>}
+          {server.status !== 'needs_trust' && <button className="icon-button small" disabled={!server.enabled || working === server.name} onClick={() => void act(server.name, () => api.mcpRestart(server.name))} title="Reconnect" aria-label={`Reconnect ${server.name}`}>{working === server.name && server.status !== 'needs_auth' ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCw size={14} />}</button>}
+          {server.source !== 'project' && <><button className="button subtle small" onClick={() => setDraft({ previous: server.name, kind: server.url ? 'hosted' : 'local', name: server.name, command: server.command || 'npx', args: joinArgs(server.args), env: formatPairs(server.env, '='), url: server.url ?? 'https://', headers: formatPairs(server.headers ?? {}, ': '), enabled: server.enabled })}>Edit</button>
+          <button className="icon-button small" onClick={() => { if (window.confirm(`Remove the ${server.name} connector${server.signedIn ? ' and its sign-in' : ''}?`)) void act(server.name, () => api.mcpRemoveServer(server.name)) }} title="Remove" aria-label={`Remove ${server.name}`}><Trash2 size={14} /></button></>}
         </div>
       </div>
       {server.status === 'error' && server.error && <pre className="connector-error">{server.error}</pre>}
+      {server.status === 'needs_trust' && <p className="connector-note">Not started yet: this project's .mcp.json asks for it. Trust the folder if you know where the project came from.</p>}
       {server.status === 'connected' && server.tools.length > 0 && <div className="connector-tools">{server.tools.map(tool => <span key={tool.name} title={tool.description}>{tool.name}{tool.readOnly && <small>read-only</small>}</span>)}</div>}
     </div>)}</div>}
 

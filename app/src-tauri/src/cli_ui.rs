@@ -197,63 +197,175 @@ pub fn elapsed(since: Instant) -> String {
 
 // ---------- welcome ----------
 
-const ART: [&str; 8] = [
-    "            ▗▄▄▄▖    ",
-    "         ▗▟██████▙   ",
-    "       ▗▟█████████▌  ",
-    "     ▗▟███EE███EE██▙ ",
-    "   ▗▟███████████████▖",
-    " ▗▟█████████████████▌",
-    " ▝DDDDDDDDDDDDDDDDDD▘",
-    "   SSSSSSSSSSSSSSSS  ",
+/// Neru's mascot, a paper-cut lump of dough, traced from the app icon. Each character is one pixel:
+/// two pixel rows make one terminal row (drawn with ▀ and a background color).
+/// L highlight, B body, D base, E eyes, S shadow.
+const MASCOT: [&str; 16] = [
+    "                    ",
+    "            LBB     ",
+    "          LLBBBB    ",
+    "         LBBBBBB    ",
+    "        LBBBBBBBB   ",
+    "       LBBBBBBBBB   ",
+    "      LBBBBBBBBBBB  ",
+    "      LBBBBEBBEBBB  ",
+    "     LBBBBBEBBEBBB  ",
+    "    LBBBBBBEBBEBBBB ",
+    "   LBBBBBBBBBBBBBBB ",
+    " LLBBBBBBBBBBBBBBBB ",
+    " BBBBBBBBBBBBBBBBBBB",
+    " BBBBBBBBBBBBBBBBBB ",
+    "SSSSSDDDDDDDDDDDDDSS",
+    "   SSSSSSSSSSSSSS   ",
 ];
 
-fn paint(line: &str) -> String {
-    let mut out = String::new();
-    for c in line.chars() {
-        match c {
-            'E' => out.push_str(&format!("{CREAM}█{RESET}")),
-            'D' => out.push_str("\x1b[38;2;92;120;98m▀\x1b[0m"),
-            'S' => out.push_str("\x1b[38;2;58;61;55m░\x1b[0m"),
-            ' ' => out.push(' '),
-            other => out.push_str(&format!("{MOSS}{other}{RESET}")),
-        }
-    }
-    out
+/// The same figure at half size, for narrow terminals.
+const MASCOT_SMALL: [&str; 8] = [
+    "     LB    ",
+    "    LBBB   ",
+    "   LBEBEB  ",
+    "  LBBEBEBB ",
+    " LBBBBBBBB ",
+    "LBBBBBBBBBB",
+    "SSDDDDDDDSS",
+    " SSSSSSSSS ",
+];
+
+fn pixel(c: char) -> Option<(u8, u8, u8)> {
+    Some(match c {
+        'L' => (152, 180, 156),
+        'B' => (122, 154, 128),
+        'D' => (96, 124, 102),
+        'E' => (242, 240, 233),
+        'S' => (54, 58, 52),
+        _ => return None,
+    })
 }
 
-/// The boxed welcome: mascot, title, folder and model, like Claude Code's.
-pub fn welcome(cwd: &str, model: &str, mode: &str, version: &str) -> String {
-    let width = width();
-    let mut text = String::new();
-    if width < 72 {
-        for line in ART {
-            text.push_str(&format!(" {}\n", paint(line)));
+/// Terminal rows for a pixel figure. With `sparkle`, a small star sits by the top right, as in the icon.
+fn figure(rows: &[&str], sparkle: bool) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (row, pair) in rows.chunks(2).enumerate() {
+        let top: Vec<char> = pair[0].chars().collect();
+        let bottom: Vec<char> = pair.get(1).map_or(Vec::new(), |row| row.chars().collect());
+        let mut line = String::new();
+        for (index, &up) in top.iter().enumerate() {
+            let down = bottom.get(index).copied().unwrap_or(' ');
+            if sparkle && row == 0 && index + 3 == top.len() && pixel(up).is_none() && pixel(down).is_none() {
+                line.push_str(&format!("{CREAM}✦{RESET}"));
+                continue;
+            }
+            match (pixel(up), pixel(down)) {
+                (None, None) => line.push(' '),
+                (Some((r, g, b)), None) => line.push_str(&format!("\x1b[38;2;{r};{g};{b}m▀{RESET}")),
+                (None, Some((r, g, b))) => line.push_str(&format!("\x1b[38;2;{r};{g};{b}m▄{RESET}")),
+                (Some((r, g, b)), Some((r2, g2, b2))) => line.push_str(&format!("\x1b[38;2;{r};{g};{b};48;2;{r2};{g2};{b2}m▀{RESET}")),
+            }
         }
-        text.push_str(&format!("\n {MOSS}✻{RESET} {BOLD}{CREAM}Welcome to Neru{RESET} {DIM}v{version}{RESET}\n {DIM}{}{RESET}\n", truncate(cwd, width - 2)));
+        lines.push(line);
+    }
+    lines
+}
+
+/// What the welcome box shows.
+pub struct Welcome<'a> {
+    pub cwd: &'a str,
+    pub model: &'a str,
+    pub mode: &'a str,
+    pub version: &'a str,
+    /// Seen Neru here before: "Welcome back" instead of "Welcome to Neru".
+    pub returning: bool,
+    pub tips: Vec<String>,
+    /// (title, when) of recent sessions in this folder.
+    pub recent: Vec<(String, String)>,
+}
+
+fn center(text: &str, width: usize) -> String {
+    let shown = visible(text);
+    let left = width.saturating_sub(shown) / 2;
+    format!("{}{text}{}", " ".repeat(left), " ".repeat(width.saturating_sub(shown + left)))
+}
+
+fn pad(text: &str, width: usize) -> String {
+    let text = if visible(text) > width { strip_to(text, width) } else { text.to_string() };
+    let shown = visible(&text);
+    format!("{text}{}", " ".repeat(width.saturating_sub(shown)))
+}
+
+/// Shortens a path from the left, keeping its end: …\projects\neru.
+fn tail(path: &str, max: usize) -> String {
+    let count = path.chars().count();
+    if count <= max {
+        return path.to_string();
+    }
+    format!("…{}", path.chars().skip(count + 1 - max).collect::<String>())
+}
+
+/// The welcome box, like Claude Code's: the mascot and where you are on the left, tips and recent
+/// sessions on the right, the version in the top border. Narrow terminals get a compact stack.
+pub fn welcome(info: &Welcome) -> String {
+    let width = width();
+    let title = if info.returning { "Welcome back" } else { "Welcome to Neru" };
+    if width < 78 {
+        let art = figure(&MASCOT_SMALL, false);
+        let inner = width.saturating_sub(16);
+        let side = [
+            format!("{BOLD}{CREAM}{title}{RESET} {DIM}v{}{RESET}", info.version),
+            format!("{DIM}練る · think, build, refine{RESET}"),
+            String::new(),
+            format!("{SAGE}{}{RESET}", truncate(info.model, inner)),
+        ];
+        let mut text = String::new();
+        for (index, line) in art.iter().enumerate() {
+            text.push_str(&format!(" {line}   {}\n", side.get(index).cloned().unwrap_or_default()));
+        }
+        text.push_str(&format!(" {DIM}{}{RESET}\n {FAINT}/help commands · @ files · ! shell · shift+tab mode{RESET}\n", tail(info.cwd, width.saturating_sub(2))));
         return text;
     }
-    let inner = width.min(96) - 2;
-    let text_width = inner - 26;
-    let side = [
-        String::new(),
-        format!("{MOSS}✻{RESET} {BOLD}{CREAM}Welcome to Neru{RESET} {DIM}v{version}{RESET}"),
-        format!("{DIM}練る · think, build, refine{RESET}"),
-        String::new(),
-        format!("{DIM}cwd:{RESET}   {}", truncate(cwd, text_width - 7)),
-        format!("{DIM}model:{RESET} {}", truncate(model, text_width - 7)),
-        format!("{DIM}mode:{RESET}  {mode}"),
-        String::new(),
-    ];
-    text.push_str(&format!("{SAGE}╭{}╮{RESET}\n", "─".repeat(inner)));
-    for (index, art) in ART.iter().enumerate() {
-        let body = &side[index];
-        let pad = text_width.saturating_sub(visible(body));
-        text.push_str(&format!("{SAGE}│{RESET} {}   {body}{}{SAGE}│{RESET}\n", paint(art), " ".repeat(pad)));
+    let total = width.min(112);
+    let inner = total - 2;
+    let left = 34.min(inner / 2 - 2);
+    let right = inner - left - 3;
+    let label = format!(" {MOSS}✻{RESET} {BOLD}Neru{RESET} {DIM}v{}{RESET} ", info.version);
+    let border = |text: &str| format!("{SAGE}{text}{RESET}");
+    let mut left_col = vec![String::new(), center(&format!("{BOLD}{CREAM}{title}{RESET}"), left), String::new()];
+    left_col.extend(figure(&MASCOT, true).iter().map(|line| center(line, left)));
+    left_col.push(String::new());
+    left_col.push(center(&format!("{SAGE}{}{RESET}", truncate(info.model, left)), left));
+    left_col.push(center(&format!("{DIM}{}{RESET}", tail(info.cwd, left)), left));
+
+    let heading = |text: &str| format!("{MOSS}{BOLD}{text}{RESET}");
+    let mut right_col = vec![String::new(), heading("Tips for getting started")];
+    for tip in &info.tips {
+        right_col.push(truncate_visible(tip, right));
     }
-    text.push_str(&format!("{SAGE}╰{}╯{RESET}\n", "─".repeat(inner)));
-    text.push_str(&format!(" {DIM}/help for commands · @ to mention files · esc to interrupt · ctrl+c twice to quit{RESET}\n"));
+    right_col.push(format!("{FAINT}{}{RESET}", "─".repeat(right.min(48))));
+    right_col.push(heading("Recent activity"));
+    if info.recent.is_empty() {
+        right_col.push(format!("{DIM}No sessions in this folder yet{RESET}"));
+    }
+    for (title, when) in info.recent.iter().take(3) {
+        let when = format!("{when:>8}");
+        right_col.push(format!("{DIM}{when}{RESET}  {}", truncate(title, right.saturating_sub(11))));
+    }
+    right_col.push(String::new());
+    right_col.push(format!("{DIM}mode{RESET}  {}", info.mode));
+
+    let rows = left_col.len().max(right_col.len());
+    let fill = inner.saturating_sub(visible(&label) + 3);
+    let mut text = format!("{}{label}{}\n", border("╭───"), border(&format!("{}╮", "─".repeat(fill))));
+    for index in 0..rows {
+        let l = left_col.get(index).map_or(" ".repeat(left), |line| pad(line, left));
+        let r = right_col.get(index).map_or(" ".repeat(right), |line| pad(line, right));
+        text.push_str(&format!("{} {l} {} {r}{}\n", border("│"), border("│"), border("│")));
+    }
+    text.push_str(&format!("{}\n", border(&format!("╰{}╯", "─".repeat(inner)))));
     text
+}
+
+/// Truncates text that may hold color codes to `max` visible columns.
+fn truncate_visible(text: &str, max: usize) -> String {
+    if visible(text) <= max { text.to_string() } else { strip_to(text, max) }
 }
 
 // ---------- Markdown ----------
@@ -580,10 +692,25 @@ pub enum Input {
     Interrupt,
     /// Ctrl+D on an empty line.
     Eof,
+    /// Shift+Tab: switch to the next permission mode. What was typed is kept for the next read.
+    CycleMode,
+    /// Esc twice on an empty line: step back to an earlier message.
+    Rewind,
+}
+
+/// The prompt box's placeholder and the status line under it.
+pub struct Prompt<'a> {
+    pub hint: &'a str,
+    /// Left of the status line: the permission mode, or the shortcuts hint.
+    pub left: String,
+    /// Right of the status line: model and context use.
+    pub right: String,
 }
 
 pub struct Editor {
     pub history: Vec<String>,
+    /// Text kept across a mode switch, and the cursor within it.
+    draft: Option<(Vec<char>, usize)>,
 }
 
 fn is_press(key: &KeyEvent) -> bool {
@@ -591,20 +718,63 @@ fn is_press(key: &KeyEvent) -> bool {
 }
 
 impl Editor {
+    pub fn new(history: Vec<String>) -> Self {
+        Self { history, draft: None }
+    }
+
+    /// Ctrl+R: type to find an earlier message, ctrl+r again for an older match, enter to use it.
+    fn search_history(&self, screen: &mut Screen) -> Option<String> {
+        let mut query = String::new();
+        let mut skip = 0usize;
+        loop {
+            let lower = query.to_lowercase();
+            let matches: Vec<&String> = self.history.iter().rev().filter(|line| lower.is_empty() || line.to_lowercase().contains(&lower)).collect();
+            let found = matches.get(skip.min(matches.len().saturating_sub(1))).copied();
+            let shown = found.map_or(format!("{DIM}no match{RESET}"), |line| line.replace('\n', " ⏎ "));
+            screen.footer(&[format!(" {SAGE}history search{RESET} {BOLD}{query}{RESET}{DIM}▏{RESET}"), format!(" {CREAM}{}{RESET}", truncate(&strip(&shown), width().saturating_sub(4))), format!(" {FAINT}ctrl+r older · enter use · esc cancel{RESET}")], None);
+            let Ok(Event::Key(key)) = event::read() else { continue };
+            if !is_press(&key) {
+                continue;
+            }
+            match key.code {
+                KeyCode::Esc => return None,
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return None,
+                KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => skip = (skip + 1).min(matches.len().saturating_sub(1)),
+                KeyCode::Enter | KeyCode::Tab => return found.cloned(),
+                KeyCode::Backspace => {
+                    query.pop();
+                    skip = 0;
+                }
+                KeyCode::Char(c) => {
+                    query.push(c);
+                    skip = 0;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Text the next read starts with, such as a rewound message to edit and send again.
+    pub fn set_draft(&mut self, text: &str) {
+        let chars: Vec<char> = text.chars().collect();
+        let at = chars.len();
+        self.draft = Some((chars, at));
+    }
+
     /// Reads one message in a boxed prompt. `suggest` gives completions for the text so far.
-    pub fn read(&mut self, screen: &mut Screen, hint: &str, suggest: &dyn Fn(&str) -> Vec<Suggestion>) -> Input {
+    pub fn read(&mut self, screen: &mut Screen, prompt: &Prompt, suggest: &dyn Fn(&str) -> Vec<Suggestion>) -> Input {
         let _ = terminal::enable_raw_mode();
-        let mut text: Vec<char> = Vec::new();
-        let mut at = 0usize;
+        let (mut text, mut at) = self.draft.take().unwrap_or_default();
         let mut history_at = self.history.len();
         let mut stash = String::new();
         let mut selected = 0usize;
         let mut dismissed = String::new();
+        let mut last_escape: Option<Instant> = None;
         let result = loop {
             let current: String = text.iter().collect();
             let suggestions = if dismissed == current { Vec::new() } else { suggest(&current[..text[..at].iter().collect::<String>().len()]) };
             selected = selected.min(suggestions.len().saturating_sub(1));
-            draw(screen, &text, at, &suggestions, selected, hint);
+            draw(screen, &text, at, &suggestions, selected, prompt);
             let Ok(event) = event::read() else { break Input::Eof };
             let key = match event {
                 Event::Key(key) if is_press(&key) => key,
@@ -646,6 +816,14 @@ impl Editor {
                     let line: String = text.iter().collect();
                     break Input::Line(line);
                 }
+                KeyCode::BackTab => {
+                    self.draft = Some((text.clone(), at));
+                    break Input::CycleMode;
+                }
+                KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    self.draft = Some((text.clone(), at));
+                    break Input::CycleMode;
+                }
                 KeyCode::Tab => {
                     if let Some(choice) = suggestions.get(selected) {
                         complete(&mut text, &mut at, &choice.insert);
@@ -682,6 +860,13 @@ impl Editor {
                 KeyCode::Char('l') if ctrl => {
                     screen.clear();
                     let _ = write!(stdout(), "\x1b[2J\x1b[H");
+                }
+                KeyCode::Char('r') if ctrl => {
+                    if let Some(found) = self.search_history(screen) {
+                        text = found.chars().collect();
+                        at = text.len();
+                        dismissed = found;
+                    }
                 }
                 KeyCode::Char('j') if ctrl => {
                     text.insert(at, '\n');
@@ -738,9 +923,13 @@ impl Editor {
                 KeyCode::Esc => {
                     if !suggestions.is_empty() {
                         dismissed = text.iter().collect();
-                    } else {
+                    } else if !text.is_empty() {
                         text.clear();
                         at = 0;
+                    } else if last_escape.is_some_and(|at| at.elapsed() < Duration::from_millis(800)) {
+                        break Input::Rewind;
+                    } else {
+                        last_escape = Some(Instant::now());
                     }
                 }
                 _ => {}
@@ -784,15 +973,40 @@ fn complete(text: &mut Vec<char>, at: &mut usize, insert: &str) {
     *at = start + insert.chars().count();
 }
 
-fn draw(screen: &mut Screen, text: &[char], at: usize, suggestions: &[Suggestion], selected: usize, hint: &str) {
+/// Pink for shell commands (`!`), cyan for things to remember (`#`), quiet otherwise.
+const SHELL_MODE: &str = "\x1b[38;2;214;140;176m";
+
+const SHORTCUTS: [(&str, &str); 12] = [
+    ("/", "commands"),
+    ("@", "mention a file"),
+    ("!", "run a shell command"),
+    ("#", "remember something"),
+    ("shift+tab", "change permission mode"),
+    ("esc", "interrupt Neru"),
+    ("esc esc", "rewind to a message"),
+    ("shift+enter", "new line (or \\ enter)"),
+    ("↑ ↓", "history"),
+    ("ctrl+r", "search history"),
+    ("ctrl+l", "clear the screen"),
+    ("ctrl+c ×2", "quit"),
+];
+
+fn draw(screen: &mut Screen, text: &[char], at: usize, suggestions: &[Suggestion], selected: usize, prompt: &Prompt) {
     let width = width();
     let inner = width.saturating_sub(4).max(10);
-    let mut lines = vec![format!("{FAINT}╭{}╮{RESET}", "─".repeat(width.saturating_sub(2)))];
+    let (frame, mark) = match text.first() {
+        Some('!') => (SHELL_MODE, format!("{SHELL_MODE}{BOLD}!{RESET}")),
+        Some('#') => (CYAN, format!("{CYAN}{BOLD}#{RESET}")),
+        _ => (FAINT, format!("{SAGE}❯{RESET}")),
+    };
+    // The mode character replaces the prompt mark, so it is not drawn twice.
+    let skip = usize::from(matches!(text.first(), Some('!' | '#')));
+    let mut lines = vec![format!("{frame}╭{}╮{RESET}", "─".repeat(width.saturating_sub(2)))];
     // Wrap the text into rows of `inner` columns, remembering where the cursor lands.
     let mut rows: Vec<String> = vec![String::new()];
     let mut cursor = (0usize, 0usize);
     let mut column = 0;
-    for (index, c) in text.iter().enumerate() {
+    for (index, c) in text.iter().enumerate().skip(skip) {
         if index == at {
             cursor = (rows.len() - 1, column);
         }
@@ -806,18 +1020,39 @@ fn draw(screen: &mut Screen, text: &[char], at: usize, suggestions: &[Suggestion
         rows.last_mut().unwrap().push(*c);
         column += 1;
     }
-    if at == text.len() {
-        cursor = (rows.len() - 1, column);
+    if at == text.len() || at < skip {
+        cursor = if at < skip { (0, 0) } else { (rows.len() - 1, column) };
     }
     for (index, row) in rows.iter().enumerate() {
-        let prompt = if index == 0 { format!("{SAGE}❯{RESET} ") } else { "  ".into() };
-        let body = if text.is_empty() && index == 0 { format!("{DIM}{hint}{RESET}") } else { row.clone() };
+        let lead = if index == 0 { format!("{mark} ") } else { "  ".into() };
+        let body = if text.is_empty() && index == 0 {
+            format!("{DIM}{}{RESET}", prompt.hint)
+        } else if index == 0 && skip == 1 && row.is_empty() {
+            format!("{DIM}{}{RESET}", if text[0] == '!' { "Run a shell command in this project" } else { "Something Neru should remember in this project" })
+        } else {
+            row.clone()
+        };
         let pad = inner.saturating_sub(visible(&body) + 1);
-        lines.push(format!("{FAINT}│{RESET}{prompt}{body}{}{FAINT}│{RESET}", " ".repeat(pad)));
+        lines.push(format!("{frame}│{RESET}{lead}{body}{}{frame}│{RESET}", " ".repeat(pad)));
     }
-    lines.push(format!("{FAINT}╰{}╯{RESET}", "─".repeat(width.saturating_sub(2))));
-    if suggestions.is_empty() {
-        lines.push(format!("  {FAINT}? /help · @ files · shift+enter for a new line{RESET}"));
+    lines.push(format!("{frame}╰{}╯{RESET}", "─".repeat(width.saturating_sub(2))));
+    if text.len() == 1 && text[0] == '?' {
+        // Claude Code's shortcut sheet: three columns under the box.
+        let column = (width.saturating_sub(4) / 3).max(24);
+        for chunk in SHORTCUTS.chunks(3) {
+            let cells: Vec<String> = chunk.iter().map(|(key, what)| pad(&format!("{CREAM}{key}{RESET} {DIM}{what}{RESET}"), column)).collect();
+            lines.push(format!("  {}", cells.join("")));
+        }
+    } else if suggestions.is_empty() {
+        let left = match text.first() {
+            Some('!') => format!("{SHELL_MODE}! shell mode{RESET} {DIM}· runs in this folder, the output goes to Neru{RESET}"),
+            Some('#') => format!("{CYAN}# memory{RESET} {DIM}· saved to this project's memory{RESET}"),
+            _ => prompt.left.clone(),
+        };
+        let room = width.saturating_sub(visible(&left) + 4);
+        let right = if visible(&prompt.right) <= room { prompt.right.clone() } else { String::new() };
+        let gap = width.saturating_sub(visible(&left) + visible(&right) + 3);
+        lines.push(format!("  {left}{}{right}", " ".repeat(gap)));
     } else {
         let window = 8;
         let first = selected.saturating_sub(window - 1);
@@ -835,6 +1070,35 @@ fn draw(screen: &mut Screen, text: &[char], at: usize, suggestions: &[Suggestion
         }
     }
     screen.footer(&lines, Some((1 + cursor.0, 3 + cursor.1)));
+}
+
+/// Reads a secret, such as an API key, showing only dots. Esc or Ctrl+C cancels.
+pub fn read_secret(screen: &mut Screen, label: &str) -> Option<String> {
+    let _ = terminal::enable_raw_mode();
+    let mut text = String::new();
+    let result = loop {
+        let dots = "•".repeat(text.chars().count().min(width().saturating_sub(12)));
+        let body = if text.is_empty() { format!("{DIM}paste it here, then press enter{RESET}") } else { dots };
+        screen.footer(&[format!(" {BOLD}{label}{RESET}"), format!(" {SAGE}❯{RESET} {body}"), format!(" {FAINT}stored encrypted on this computer · esc to cancel{RESET}")], Some((1, 3 + text.chars().count().min(width().saturating_sub(12)))));
+        match event::read() {
+            Ok(Event::Paste(paste)) => text.push_str(paste.trim()),
+            Ok(Event::Key(key)) if is_press(&key) => match key.code {
+                KeyCode::Enter => break Some(text.trim().to_string()),
+                KeyCode::Esc => break None,
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break None,
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) => text.push(c),
+                _ => {}
+            },
+            Ok(_) => {}
+            Err(_) => break None,
+        }
+    };
+    screen.clear();
+    let _ = terminal::disable_raw_mode();
+    result.filter(|text| !text.is_empty())
 }
 
 // ---------- picker ----------
@@ -927,3 +1191,4 @@ mod tests {
         assert!(plain.contains("new"));
     }
 }
+

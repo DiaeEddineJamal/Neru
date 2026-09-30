@@ -199,7 +199,7 @@ export function SettingsModelPicker({ providerId, baseUrl, apiKey, models, onMod
     {notice && <p className={cn('model-notice-line', notice.tone)} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p>}
     <div className="model-picker-foot">
       {authoritative
-        ? <span className="model-foot-text">{providerId === 'openrouter' ? 'OpenRouter lists only models with a live endpoint.' : 'These models are installed or served right now.'}</span>
+        ? <span className="model-foot-text">{providerId === 'openrouter' ? 'Only the models your OpenRouter account can use, with tool calling. Free-tier keys see free models only.' : 'These models are installed or served right now.'}</span>
         : run
           ? <>
             <span className="model-foot-text" aria-live="polite">{run.done}/{run.total} checked</span>

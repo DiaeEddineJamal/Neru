@@ -343,7 +343,7 @@ fn front_name(text: &str) -> Option<String> {
 
 /// One key of YAML front matter: plain, "double" or 'single' quoted, or a `>`/`|` block whose
 /// indented lines follow. Enough YAML for skill headers.
-fn front_value(front: &str, key: &str) -> Option<String> {
+pub(crate) fn front_value(front: &str, key: &str) -> Option<String> {
     let lines: Vec<&str> = front.lines().collect();
     let prefix = format!("{key}:");
     let at = lines.iter().position(|line| line.trim_start() == line.trim_start() && line.starts_with(&prefix))?;

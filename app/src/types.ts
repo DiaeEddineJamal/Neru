@@ -42,10 +42,18 @@ export interface GitStatus {
   files: GitFile[]
 }
 
+/** A multiple-choice question from the agent's ask_user_question tool. */
+export interface AgentQuestion { question: string; header: string; options: { label: string; description: string }[]; multiSelect: boolean }
+
 export interface PendingView {
-  kind: 'edit' | 'delete' | 'move' | 'mkdir' | 'task'
+  kind: 'edit' | 'delete' | 'move' | 'mkdir' | 'task' | 'plan' | 'question'
   label: string
+  /** An edit's diff, or a plan's markdown. */
   diff: string | null
+  questions?: AgentQuestion[]
+  /** Kept on a settled card: what the user answered or asked to change. */
+  answers?: string[]
+  feedback?: string
 }
 
 /** One rate limit on the API key, as the provider last reported it. */
@@ -83,7 +91,9 @@ export interface RewindResult { snapshot: SessionSnapshot; prompt: string; conte
 export interface RemoteInfo { branch: string; base: string; remote: string | null; ahead: number | null; behind: number | null; github: string | null; web: string | null; ghCli: boolean }
 
 export interface McpTool { name: string; description: string; readOnly: boolean }
-export interface McpServer { name: string; command: string; args: string[]; env: Record<string, string>; url?: string; headers: Record<string, string>; enabled: boolean; status: 'connected' | 'starting' | 'error' | 'off' | 'needs_auth'; signedIn: boolean; error: string | null; tools: McpTool[] }
+export interface McpServer { name: string; command: string; args: string[]; env: Record<string, string>; url?: string; headers: Record<string, string>; enabled: boolean; status: 'connected' | 'starting' | 'error' | 'off' | 'needs_auth' | 'needs_trust'; signedIn: boolean; error: string | null; tools: McpTool[]; source?: 'user' | 'project' }
+/** Whether the open project folder is trusted, and what trusting it would turn on. */
+export interface TrustStatus { trusted: boolean; mcpServers: string[]; hookEvents: string[] }
 
 export type Effort = 'auto' | 'low' | 'medium' | 'high'
 
@@ -92,7 +102,7 @@ export type AgentMode = 'manual' | 'accept_edits' | 'plan' | 'auto' | 'bypass'
 
 export interface SessionChange { path: string; diff: string; additions: number; deletions: number; status: 'added' | 'modified' | 'deleted' }
 
-export interface SlashCommand { name: string; description: string; template: string; source: 'project' | 'personal' | 'built-in' | 'skill' }
+export interface SlashCommand { name: string; description: string; template: string; source: 'project' | 'personal' | 'built-in' | 'skill'; argumentHint?: string; model?: string; allowedTools?: string[] }
 
 export interface CiCheck { name: string; state: 'pending' | 'success' | 'failure' | 'skipped'; url: string | null }
 export interface PrStatus { number: number; url: string; title: string; state: string; checks: CiCheck[] }
@@ -175,8 +185,37 @@ export interface ProviderView {
   hasKey: boolean
 }
 
+/** Where the `neru` terminal command stands, as Settings → CLI shows it. */
+export interface CliStatus { onPath: boolean; path: string | null; version: string | null; bundled: string | null; platform: string; note: string | null }
+
 /** A skill the agent can load, as Settings lists it. */
 export interface SkillView { name: string; description: string; source: 'personal' | 'project' | 'claude' | 'built-in'; path: string; chars: number; enabled: boolean }
+
+/** A custom sub-agent from .neru/agents, .claude/agents or the personal agents folder. */
+export interface AgentView {
+  name: string
+  description: string
+  source: 'project' | 'claude' | 'personal'
+  /** Neru tools it gets (sub-agents only read). */
+  tools: string[]
+  /** Tools its file lists that a sub-agent cannot have. */
+  ignoredTools: string[]
+  model: string | null
+  path: string
+}
+
+/** A command the agent left running in the background. */
+export interface ShellView {
+  id: string
+  sessionId: string
+  command: string
+  status: 'running' | 'exited' | 'killed'
+  exitCode: number | null
+  /** Like "running for 42s". */
+  detail: string
+  elapsedSecs: number
+  lines: number
+}
 
 /** One model a provider offers, classified from the provider's own metadata or, failing that, its name. */
 export interface ModelInfo {

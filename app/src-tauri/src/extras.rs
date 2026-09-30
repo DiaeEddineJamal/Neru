@@ -19,6 +19,142 @@ pub const EXTRA_TOOLS: &str = r#"[
     {"type":"function","function":{"name":"save_memory","description":"Remember a durable fact for future sessions: a user preference, a project convention, or a decision. scope project is for this repository, user is for all projects. Not for things already in the code or for this conversation only.","parameters":{"type":"object","properties":{"fact":{"type":"string"},"scope":{"type":"string","enum":["project","user"]}},"required":["fact","scope"]}}}
 ]"#;
 
+/// Offered in Plan mode only: hands the finished plan to the user for approval.
+pub const PLAN_TOOL: &str = r#"[
+    {"type":"function","function":{"name":"exit_plan_mode","description":"Call when your plan is ready. Pass the whole plan in markdown: the goal, the files to change and how, and how you will verify it. The user approves it (and Neru switches to editing) or asks for changes. Only call it after you have researched enough to be concrete.","parameters":{"type":"object","properties":{"plan":{"type":"string","description":"The plan, in markdown"}},"required":["plan"]}}}
+]"#;
+
+/// Offered in every mode: asks the user multiple-choice questions and waits for the answers.
+pub const QUESTION_TOOL: &str = r#"[
+    {"type":"function","function":{"name":"ask_user_question","description":"Ask the user 1-4 multiple-choice questions when a decision only they can make blocks you (requirements, preferences, trade-offs between approaches). Each question has 2-4 options; the user can also type their own answer, so do not add an Other option. Not for things you can find out from the code or the web.","parameters":{"type":"object","properties":{"questions":{"type":"array","minItems":1,"maxItems":4,"items":{"type":"object","properties":{"question":{"type":"string","description":"The full question, ending with a question mark"},"header":{"type":"string","description":"A short label of at most 12 characters, like Auth method"},"options":{"type":"array","minItems":2,"maxItems":4,"items":{"type":"object","properties":{"label":{"type":"string","description":"1-5 words"},"description":{"type":"string","description":"What this choice means or implies"}},"required":["label","description"]}},"multiSelect":{"type":"boolean","description":"true when several options can be chosen together"}},"required":["question","header","options","multiSelect"]}}},"required":["questions"]}}}
+]"#;
+
+// ---------- plans and questions ----------
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionOption {
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    pub question: String,
+    #[serde(default)]
+    pub header: String,
+    pub options: Vec<QuestionOption>,
+    #[serde(default)]
+    pub multi_select: bool,
+}
+
+pub fn parse_questions(args: &Value) -> Result<Vec<Question>, String> {
+    let items = args["questions"].as_array().ok_or("questions must be a list of 1-4 questions")?;
+    if items.is_empty() || items.len() > 4 {
+        return Err("ask 1-4 questions at a time".into());
+    }
+    items
+        .iter()
+        .map(|item| {
+            let question = item["question"].as_str().unwrap_or("").trim().to_string();
+            if question.is_empty() {
+                return Err("every question needs question text".to_string());
+            }
+            let options: Vec<QuestionOption> = item["options"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|option| {
+                    let label = option["label"].as_str().or_else(|| option.as_str())?.trim().to_string();
+                    let description = option["description"].as_str().unwrap_or("").trim().to_string();
+                    (!label.is_empty()).then_some(QuestionOption { label, description })
+                })
+                .collect();
+            if !(2..=4).contains(&options.len()) {
+                return Err(format!("“{question}” needs 2-4 options with a label each"));
+            }
+            let header: String = item["header"].as_str().unwrap_or("").trim().chars().take(12).collect();
+            let multi_select = item["multiSelect"].as_bool().or_else(|| item["multi_select"].as_bool()).unwrap_or(false);
+            Ok(Question { question, header, options, multi_select })
+        })
+        .collect()
+}
+
+/// The tool result for exit_plan_mode once the user has decided.
+pub fn plan_result(approve: bool, mode: &str, feedback: &str) -> String {
+    let feedback = feedback.trim();
+    if approve {
+        let how = match mode {
+            "accept_edits" | "auto" | "bypass" => "File edits now apply without asking.",
+            _ => "Each edit and command now waits for the user's approval.",
+        };
+        let note = if feedback.is_empty() { String::new() } else { format!(" They added: {feedback}") };
+        format!("The user approved the plan. Proceed with it now: make the changes, then verify them. {how}{note}")
+    } else if feedback.is_empty() {
+        "The user wants to keep planning. You are still in Plan mode: ask what to change, or refine the plan and call exit_plan_mode again.".into()
+    } else {
+        format!("The user wants changes to the plan: {feedback}\nYou are still in Plan mode. Revise the plan and call exit_plan_mode again.")
+    }
+}
+
+/// The tool result for ask_user_question: one answer per question, in order.
+pub fn answers_result(questions: &[Question], answers: &[String]) -> String {
+    let pairs: Vec<String> = questions
+        .iter()
+        .enumerate()
+        .map(|(index, question)| {
+            let answer = answers.get(index).map(|answer| answer.trim()).filter(|answer| !answer.is_empty()).unwrap_or("(no answer)");
+            format!("\"{}\" = \"{answer}\"", question.question)
+        })
+        .collect();
+    format!("User answered: {}. Continue with these answers in mind.", pairs.join("; "))
+}
+
+fn session_for(state: &crate::AppState, session_id: Option<&str>) -> Result<crate::sessions::Shared, String> {
+    match session_id {
+        Some(id) => crate::sessions::runtime(state, id),
+        None => crate::sessions::active(state),
+    }
+}
+
+/// Answers a pending exit_plan_mode call. Returns the mode the session continues in.
+#[tauri::command]
+pub fn resolve_plan(session_id: Option<String>, approve: bool, mode: Option<String>, feedback: Option<String>, state: tauri::State<'_, crate::AppState>) -> Result<String, String> {
+    let shared = session_for(&state, session_id.as_deref())?;
+    let mut runtime = crate::sessions::lock(&shared)?;
+    let Some(crate::PendingAction::Plan { tool_call_id, .. }) = runtime.pending.clone() else {
+        return Err("No plan is waiting for review".into());
+    };
+    let mode = match (approve, mode.as_deref()) {
+        (false, _) => "plan",
+        (true, Some(mode @ ("accept_edits" | "auto" | "bypass"))) => mode,
+        (true, _) => "manual",
+    };
+    runtime.pending = None;
+    if let Some(id) = tool_call_id {
+        runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":plan_result(approve, mode, feedback.as_deref().unwrap_or(""))}));
+    }
+    runtime.save()?;
+    Ok(mode.into())
+}
+
+/// Answers a pending ask_user_question call, one answer per question (several choices joined by ", ").
+#[tauri::command]
+pub fn answer_question(session_id: Option<String>, answers: Vec<String>, state: tauri::State<'_, crate::AppState>) -> Result<(), String> {
+    let shared = session_for(&state, session_id.as_deref())?;
+    let mut runtime = crate::sessions::lock(&shared)?;
+    let Some(crate::PendingAction::Question { questions, tool_call_id }) = runtime.pending.clone() else {
+        return Err("No question is waiting for an answer".into());
+    };
+    runtime.pending = None;
+    if let Some(id) = tool_call_id {
+        runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":answers_result(&questions, &answers)}));
+    }
+    runtime.save()
+}
+
 // ---------- memory ----------
 
 pub fn project_memory_path(root: &Path) -> PathBuf {
@@ -120,6 +256,7 @@ pub fn nested_instructions(root: &Path, relative: &str, loaded: &mut HashSet<Pat
             let path = root.join(&folder).join(name);
             if path.is_file() && loaded.insert(path.clone()) {
                 if let Ok(body) = fs::read_to_string(&path) {
+                    let body = expand_file(&body, &path);
                     text.push_str(&format!(
                         "\n\n[Instructions from {}/{name}, which apply to files in that folder]\n{}",
                         folder.display().to_string().replace('\\', "/"),
@@ -128,6 +265,119 @@ pub fn nested_instructions(root: &Path, relative: &str, loaded: &mut HashSet<Pat
                 }
             }
         }
+    }
+    text
+}
+
+// ---------- instruction files ----------
+
+/// How deep `@path` imports nest, as in Claude Code.
+pub const IMPORT_DEPTH: usize = 5;
+const FILE_CHARS: usize = 20_000;
+const INSTRUCTION_CHARS: usize = 60_000;
+
+/// Replaces each line that is exactly `@path` (relative to `base_dir`, or `~/…` for the home
+/// folder) with that file's contents, recursively up to `depth` levels. Missing files leave the
+/// line as it is; a file is included once, which also breaks import cycles. Fenced code is left
+/// alone.
+#[allow(dead_code)] // Instruction files go through `expand_file`; this is for other text.
+pub fn expand_imports(text: &str, base_dir: &Path, depth: usize) -> String {
+    expand_with(text, base_dir, depth, &mut HashSet::new())
+}
+
+/// `expand_imports` for the text of `file`, which is never pulled back into itself.
+fn expand_file(text: &str, file: &Path) -> String {
+    let folder = file.parent().unwrap_or(Path::new("."));
+    let mut seen = HashSet::from([file.canonicalize().unwrap_or_else(|_| file.to_path_buf())]);
+    expand_with(text.trim_start_matches('\u{feff}'), folder, IMPORT_DEPTH, &mut seen)
+}
+
+fn import_target(line: &str, base_dir: &Path) -> Option<PathBuf> {
+    let spec = line.trim().strip_prefix('@')?;
+    if spec.is_empty() || spec.chars().any(char::is_whitespace) {
+        return None;
+    }
+    if let Some(rest) = spec.strip_prefix("~/").or_else(|| spec.strip_prefix("~\\")) {
+        return dirs::home_dir().map(|home| home.join(rest));
+    }
+    let path = Path::new(spec);
+    Some(if path.is_absolute() { path.to_path_buf() } else { base_dir.join(path) })
+}
+
+fn expand_with(text: &str, base_dir: &Path, depth: usize, seen: &mut HashSet<PathBuf>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut fenced = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        }
+        let target = if fenced || depth == 0 { None } else { import_target(line, base_dir) };
+        let found = target.and_then(|path| path.canonicalize().ok()).filter(|path| path.is_file());
+        match found {
+            Some(path) if seen.insert(path.clone()) => {
+                if let Ok(body) = crate::workspace::read_limited(&path) {
+                    let folder = path.parent().map(Path::to_path_buf).unwrap_or_else(|| base_dir.to_path_buf());
+                    let body: String = body.trim_start_matches('\u{feff}').chars().take(FILE_CHARS).collect();
+                    out.push_str(expand_with(&body, &folder, depth - 1, seen).trim_end());
+                    out.push('\n');
+                }
+            }
+            // Already included higher up (or a cycle): drop the line rather than repeat the file.
+            Some(_) => {}
+            None => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+/// Instruction files for a session in `root`, most general first so that the project's own
+/// files come last: the user's (`~/.claude/CLAUDE.md`, Neru's data-folder `AGENTS.md`), parent
+/// folders' `AGENTS.md` / `CLAUDE.md` below the home folder or drive root, then the project's.
+pub fn instruction_files(root: &Path) -> Vec<(String, PathBuf)> {
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    let home = dirs::home_dir();
+    if let Some(home) = &home {
+        files.push(("User instructions from ~/.claude/CLAUDE.md (apply to every project)".into(), home.join(".claude").join("CLAUDE.md")));
+    }
+    if let Ok(dir) = data_dir() {
+        files.push(("User instructions from Neru's AGENTS.md (apply to every project)".into(), dir.join("AGENTS.md")));
+    }
+    let home = home.and_then(|home| home.canonicalize().ok());
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut parents: Vec<&Path> = canonical
+        .ancestors()
+        .skip(1)
+        .take_while(|folder| folder.parent().is_some() && home.as_deref() != Some(*folder))
+        .collect();
+    parents.reverse();
+    for folder in parents {
+        for name in ["AGENTS.md", "CLAUDE.md"] {
+            let shown = folder.join(name).display().to_string().trim_start_matches(r"\\?\").to_string();
+            files.push((format!("Instructions from the parent folder file {shown} (apply to this project)"), folder.join(name)));
+        }
+    }
+    for name in ["AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md", ".neru/instructions.md"] {
+        files.push((format!("Project instructions from {name}"), root.join(name)));
+    }
+    let mut seen = HashSet::new();
+    files.retain(|(_, path)| path.is_file() && seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())));
+    files
+}
+
+/// Every instruction file for `root`, with `@path` imports expanded, as system-prompt text.
+pub fn instructions_prompt(root: &Path) -> String {
+    let mut text = String::new();
+    for (label, path) in instruction_files(root) {
+        let Ok(body) = crate::workspace::read_limited(&path) else { continue };
+        let body = expand_file(&body, &path);
+        let remaining = INSTRUCTION_CHARS.saturating_sub(text.chars().count());
+        if remaining < 200 {
+            break;
+        }
+        text.push_str(&format!("\n\n{label}:\n{}", body.trim().chars().take(FILE_CHARS.min(remaining)).collect::<String>()));
     }
     text
 }
@@ -246,6 +496,37 @@ mod tests {
     }
 
     #[test]
+    fn questions_parse_and_answers_read_back() {
+        let args = json!({"questions":[
+            {"question":"Which database?","header":"Database engine choice","options":[{"label":"SQLite","description":"One file"},{"label":"Postgres","description":"A server"}],"multiSelect":false},
+            {"question":"Which extras?","header":"Extras","options":["Auth","Search","Tests"],"multi_select":true}
+        ]});
+        let questions = parse_questions(&args).unwrap();
+        assert_eq!(questions[0].header, "Database eng");
+        assert!(questions[1].multi_select && questions[1].options[2].label == "Tests");
+        assert_eq!(
+            answers_result(&questions, &["SQLite".into(), "Auth, Tests".into()]),
+            "User answered: \"Which database?\" = \"SQLite\"; \"Which extras?\" = \"Auth, Tests\". Continue with these answers in mind."
+        );
+        assert!(answers_result(&questions, &["Postgres".into()]).contains("\"Which extras?\" = \"(no answer)\""));
+        assert!(parse_questions(&json!({"questions":[{"question":"Only one?","options":[{"label":"Yes"}]}]})).is_err());
+        assert!(parse_questions(&json!({"questions":[]})).is_err());
+        let pending = crate::PendingAction::Question { questions: questions.clone(), tool_call_id: Some("call-1".into()) };
+        let restored: crate::PendingAction = serde_json::from_str(&serde_json::to_string(&pending).unwrap()).unwrap();
+        assert!(matches!(restored, crate::PendingAction::Question { questions: saved, .. } if saved == questions));
+    }
+
+    #[test]
+    fn plan_results_tell_the_model_what_to_do() {
+        let approved = plan_result(true, "accept_edits", "");
+        assert!(approved.starts_with("The user approved the plan. Proceed") && approved.contains("without asking"));
+        assert!(plan_result(true, "manual", "").contains("waits for the user's approval"));
+        let changes = plan_result(false, "plan", "Use SQLite instead");
+        assert!(changes.starts_with("The user wants changes to the plan: Use SQLite instead") && changes.contains("exit_plan_mode again"));
+        assert!(plan_result(false, "plan", "  ").starts_with("The user wants to keep planning"));
+    }
+
+    #[test]
     fn nested_instructions_load_once_per_folder() {
         let root = std::env::temp_dir().join(format!("neru-nested-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("web/src")).unwrap();
@@ -256,6 +537,26 @@ mod tests {
         let first = nested_instructions(&root, "web/src/app.ts", &mut loaded);
         assert!(first.contains("web rules") && !first.contains("root rules"));
         assert!(nested_instructions(&root, "web/src/app.ts", &mut loaded).is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imports_expand_relative_files_once_and_stop_at_cycles() {
+        let root = std::env::temp_dir().join(format!("neru-imports-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(root.join("docs/style.md"), "Use tabs.\n@../AGENTS.md\n@missing.md").unwrap();
+        fs::write(root.join("AGENTS.md"), "Top rules\n@docs/style.md\n@docs/style.md\n```\n@docs/style.md\n```\nwrite @docs/style.md inline").unwrap();
+        let text = expand_file(&fs::read_to_string(root.join("AGENTS.md")).unwrap(), &root.join("AGENTS.md"));
+        assert_eq!(text.matches("Use tabs.").count(), 1);
+        assert!(text.contains("@missing.md"), "missing imports stay as written");
+        assert!(text.contains("```\n@docs/style.md\n```"), "fenced code is not expanded");
+        assert!(text.contains("write @docs/style.md inline"));
+        assert_eq!(text.matches("Top rules").count(), 1);
+        assert!(!expand_imports("@docs/style.md", &root, 0).contains("Use tabs."));
+        fs::write(root.join("CLAUDE.local.md"), "local only").unwrap();
+        let prompt = instructions_prompt(&root);
+        assert!(prompt.contains("Project instructions from AGENTS.md:\nTop rules"));
+        assert!(prompt.contains("Project instructions from CLAUDE.local.md:\nlocal only"));
         let _ = fs::remove_dir_all(root);
     }
 

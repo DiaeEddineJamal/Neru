@@ -2,6 +2,10 @@
 # publishes a GitHub release whose notes come from app/src/changelog.json. Installed copies of Neru
 # check releases/latest/download/latest.json and offer the new version.
 #
+# Each build also uploads the standalone `neru` CLI (neru-cli-<target>.zip/.tar.gz plus a .sha256),
+# which install.sh, install.ps1, the npm package and winget download. After publishing, the npm and
+# winget jobs push the new version there when their secrets (NPM_TOKEN, WINGET_TOKEN) are set.
+#
 # To release: bump the version in app/package.json, app/src-tauri/tauri.conf.json and
 # app/src-tauri/Cargo.toml, add an entry to app/src/changelog.json, then push a tag: v0.2.0.
 name: Release
@@ -45,13 +49,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `target` names the standalone CLI archive: neru-cli-<target>.zip / .tar.gz.
           - platform: windows-latest
+            target: x86_64-pc-windows-msvc
             args: '--bundles nsis,msi'
           - platform: macos-latest
+            target: aarch64-apple-darwin
             args: '--target aarch64-apple-darwin --bundles app,dmg'
           - platform: macos-latest
+            target: x86_64-apple-darwin
             args: '--target x86_64-apple-darwin --bundles app,dmg'
           - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             args: '--bundles deb,appimage'
     runs-on: ${{ matrix.platform }}
     steps:
@@ -99,6 +108,60 @@ jobs:
           # The bundle config also builds and ships the `neru` terminal CLI beside the app.
           args: ${{ matrix.args }} --config src-tauri/tauri.bundle.conf.json
 
+      # The same neru-cli binary the app bundles, as a flat archive: neru(.exe) + skills/.
+      - name: Package the neru CLI
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          cd app/src-tauri
+          exe=''
+          if [ "$RUNNER_OS" = Windows ]; then exe='.exe'; fi
+          # macOS builds pass --target, so their output sits under target/<triple>/.
+          if [ "$RUNNER_OS" = macOS ]; then
+            out="target/$TARGET/release"; target_arg="--target $TARGET"
+          else
+            out='target/release'; target_arg=''
+          fi
+          if [ ! -f "$out/neru-cli$exe" ]; then
+            # shellcheck disable=SC2086
+            cargo build --release --bin neru-cli $target_arg
+          fi
+
+          stage="$RUNNER_TEMP/neru-cli-stage"
+          rm -rf "$stage" && mkdir -p "$stage"
+          cp "$out/neru-cli$exe" "$stage/neru$exe"
+          cp -R skills "$stage/skills"
+
+          asset="neru-cli-$TARGET"
+          if [ "$RUNNER_OS" = Windows ]; then
+            asset="$asset.zip"
+            (cd "$stage" && 7z a -tzip -mx=9 "$RUNNER_TEMP/$asset" neru.exe skills > /dev/null)
+          else
+            asset="$asset.tar.gz"
+            chmod +x "$stage/neru"
+            COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/$asset" -C "$stage" neru skills
+          fi
+
+          cd "$RUNNER_TEMP"
+          if command -v sha256sum > /dev/null; then
+            hash=$(sha256sum "$asset" | awk '{print $1}')
+          else
+            hash=$(shasum -a 256 "$asset" | awk '{print $1}')
+          fi
+          printf '%s  %s\n' "$hash" "$asset" > "$asset.sha256"
+          cat "$asset.sha256"
+          echo "CLI_ASSET=$asset" >> "$GITHUB_ENV"
+
+      # The release is still a draft here; gh finds drafts by tag.
+      - name: Upload the neru CLI to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ${{ runner.temp }}
+        run: gh release upload "$TAG" "$CLI_ASSET" "$CLI_ASSET.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -107,3 +170,86 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  # npm: `npm install -g neru-cli`. The package downloads the CLI archive for its version from the
+  # release, so it goes out after publishing. Skipped until the NPM_TOKEN secret exists.
+  npm:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - id: token
+        name: Check for NPM_TOKEN
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo 'set=true' >> "$GITHUB_OUTPUT"
+          else
+            echo '::notice::NPM_TOKEN is not set; skipping the npm publish.'
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.set == 'true'
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.set == 'true'
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish neru-cli
+        if: steps.token.outputs.set == 'true'
+        working-directory: packaging/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          node scripts/sync-version.mjs "$TAG"
+          # Pre-releases (v0.5.0-beta.1) go to the `next` dist-tag so `latest` stays stable.
+          dist_tag=latest
+          case "$TAG" in *-*) dist_tag=next ;; esac
+          npm publish --provenance --access public --tag "$dist_tag"
+
+  # winget: opens update PRs on microsoft/winget-pkgs for the app and the standalone CLI.
+  # The first version of each package is submitted by hand (packaging/winget/README.md).
+  # Skipped until the WINGET_TOKEN secret (classic token, public_repo) exists.
+  winget:
+    needs: publish
+    runs-on: windows-latest
+    steps:
+      - id: token
+        name: Check for WINGET_TOKEN
+        shell: bash
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -n "$WINGET_TOKEN" ]; then
+            echo 'set=true' >> "$GITHUB_OUTPUT"
+            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo '::notice::WINGET_TOKEN is not set; skipping winget.'
+          fi
+
+      - name: Luziv.Neru (desktop app)
+        if: steps.token.outputs.set == 'true'
+        uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: Luziv.Neru
+          version: ${{ steps.token.outputs.version }}
+          release-tag: ${{ env.TAG }}
+          installers-regex: '_x64-setup\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
+
+      - name: Luziv.Neru.CLI (terminal CLI)
+        if: steps.token.outputs.set == 'true'
+        uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: Luziv.Neru.CLI
+          version: ${{ steps.token.outputs.version }}
+          release-tag: ${{ env.TAG }}
+          installers-regex: 'neru-cli-x86_64-pc-windows-msvc\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}

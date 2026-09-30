@@ -1,6 +1,6 @@
 [package]
 name = "neru"
-version = "0.4.0"
+version = "0.5.0"
 description = "A calm, local-first coding agent"
 authors = ["Neru"]
 license = "MIT"
@@ -39,6 +39,7 @@ regex = "1"
 regex-syntax = "0.8"
 crossterm = "0.28"
 similar = "3"
+sha2 = "0.10"
 portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["time", "process", "sync", "macros", "io-util", "net", "fs", "rt"] }

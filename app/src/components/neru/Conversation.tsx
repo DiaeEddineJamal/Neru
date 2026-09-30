@@ -1,5 +1,5 @@
 import { createContext, isValidElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, ChevronDown, CircleAlert, Globe, History, LoaderCircle, Paperclip, Play, ShieldCheck, X } from 'lucide-react'
+import { Check, ChevronDown, CircleAlert, Globe, History, ListChecks, LoaderCircle, MessageCircleQuestion, Paperclip, Play, ShieldCheck, X } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
 import { Mascot } from './Mascot'
 import { ErrorNotice } from './ErrorNotice'
 import type { ErrorAction } from '@/lib/friendlyError'
-import type { ChatEntry, PendingView, Source, SubagentProgress, ToolEventStatus } from '../../types'
+import type { AgentMode, ChatEntry, PendingView, Source, SubagentProgress, ToolEventStatus } from '../../types'
 
 /** A step of the reply. `agent` carries a sub-agent's live progress; `since` is when it started, for a ticking clock. */
 export interface LiveTool { id: string; label: string; status: ToolEventStatus; agent?: SubagentProgress & { since: number } }
@@ -372,9 +372,78 @@ function AssistantMessage({ id, content, sources, tools, drafts = [], thinking =
   </Message>
 }
 
-export function ApprovalCard({ pending, status, projectPath, onApprove, onAlwaysAllow, onDeny }: {
+/** A plan from Plan mode: approve it (and pick how edits are handled) or keep planning with feedback. */
+export function PlanCard({ pending, status, onResolve }: { pending: PendingView; status: ToolApprovalStatus; onResolve?: PlanResolver }) {
+  const [asking, setAsking] = useState(false)
+  const [feedback, setFeedback] = useState('')
+  const open = status === 'pending' && Boolean(onResolve)
+  const badge = status === 'pending' ? 'Waiting for you' : status === 'approving' ? 'Sending…' : status === 'complete' ? 'Approved' : 'Kept planning'
+  return <section className="agent-prompt" data-state={status} aria-label="Neru's plan">
+    <header className="agent-prompt-head"><ListChecks size={16} aria-hidden /><strong>Neru's plan</strong><span className="agent-prompt-badge">{badge}</span></header>
+    <div className={cn('agent-prompt-plan', RESPONSE_PROSE, !open && 'settled')}><ResponseMarkdown content={pending.diff ?? ''} sources={[]} idPrefix="plan" onCite={() => undefined} /></div>
+    {pending.feedback && <p className="agent-prompt-note">You asked: {pending.feedback}</p>}
+    {open && onResolve && <>
+      <div className="agent-prompt-actions">
+        <button type="button" className="button primary" onClick={() => onResolve(true, 'accept_edits', '')}>Approve and let Neru edit</button>
+        <button type="button" className="button subtle" onClick={() => onResolve(true, 'manual', '')}>Approve, ask before each change</button>
+        <button type="button" className="button subtle" aria-expanded={asking} onClick={() => setAsking(value => !value)}>Keep planning</button>
+      </div>
+      {asking && <form className="agent-prompt-feedback" onSubmit={event => { event.preventDefault(); onResolve(false, null, feedback) }}>
+        <input autoFocus value={feedback} onChange={event => setFeedback(event.target.value)} placeholder="What should change? (optional)" aria-label="What should change in the plan" />
+        <button type="submit" className="button subtle">Send</button>
+      </form>}
+    </>}
+  </section>
+}
+
+/** Multiple-choice questions from the agent, each with a typed "Other" answer. */
+export function QuestionCard({ pending, status, onAnswer }: { pending: PendingView; status: ToolApprovalStatus; onAnswer?: (answers: string[]) => void }) {
+  const questions = pending.questions ?? []
+  const [picked, setPicked] = useState<string[][]>(() => questions.map(() => []))
+  const [other, setOther] = useState<string[]>(() => questions.map(() => ''))
+  const open = status === 'pending' && Boolean(onAnswer)
+  const answers = questions.map((_, index) => [...(picked[index] ?? []), (other[index] ?? '').trim()].filter(Boolean).join(', '))
+  const toggle = (index: number, label: string, multi: boolean) => {
+    setPicked(current => current.map((list, at) => at !== index ? list : multi ? (list.includes(label) ? list.filter(item => item !== label) : [...list, label]) : [label]))
+    if (!multi) setOther(current => current.map((text, at) => at === index ? '' : text))
+  }
+  const type = (index: number, text: string, multi: boolean) => {
+    setOther(current => current.map((value, at) => at === index ? text : value))
+    if (!multi && text) setPicked(current => current.map((list, at) => at === index ? [] : list))
+  }
+  const badge = status === 'pending' ? 'Waiting for you' : status === 'approving' ? 'Sending…' : status === 'complete' ? 'Answered' : 'Skipped'
+  return <section className="agent-prompt" data-state={status} aria-label="Questions from Neru">
+    <header className="agent-prompt-head"><MessageCircleQuestion size={16} aria-hidden /><strong>{questions.length === 1 ? 'Neru has a question' : `Neru has ${questions.length} questions`}</strong><span className="agent-prompt-badge">{badge}</span></header>
+    {questions.map((question, index) => <fieldset className="agent-question" key={index} disabled={!open}>
+      <legend>{question.header && <span className="agent-question-header">{question.header}</span>}{question.question}</legend>
+      {pending.answers ? <p className="agent-prompt-note">{pending.answers[index] || 'No answer'}</p> : <>
+        <div className="agent-question-options" role={question.multiSelect ? 'group' : 'radiogroup'}>
+          {question.options.map(option => {
+            const on = picked[index]?.includes(option.label) ?? false
+            return <button type="button" key={option.label} role={question.multiSelect ? 'checkbox' : 'radio'} aria-checked={on} className={cn('agent-question-option', on && 'on')} onClick={() => toggle(index, option.label, question.multiSelect)}>
+              <span className={cn('agent-question-mark', question.multiSelect ? 'box' : 'dot')} aria-hidden>{on && <Check size={11} strokeWidth={3} />}</span>
+              <span className="agent-question-text"><strong>{option.label}</strong>{option.description && <span>{option.description}</span>}</span>
+            </button>
+          })}
+        </div>
+        <input className="agent-question-other" value={other[index] ?? ''} onChange={event => type(index, event.target.value, question.multiSelect)} placeholder={question.multiSelect ? 'Something else (optional)' : 'Other: type your own answer'} aria-label={`Other answer to: ${question.question}`} />
+      </>}
+    </fieldset>)}
+    {open && onAnswer && <div className="agent-prompt-actions">
+      <button type="button" className="button primary" disabled={!answers.every(Boolean)} onClick={() => onAnswer(answers)}>Submit {questions.length === 1 ? 'answer' : 'answers'}</button>
+      {!answers.every(Boolean) && <span className="agent-prompt-hint">Answer every question to continue.</span>}
+    </div>}
+  </section>
+}
+
+export type PlanResolver = (approve: boolean, mode: AgentMode | null, feedback: string) => void
+
+export function ApprovalCard({ pending, status, projectPath, onApprove, onAlwaysAllow, onDeny, onResolvePlan, onAnswer }: {
   pending: PendingView; status: ToolApprovalStatus; projectPath?: string; onApprove?: () => void; onAlwaysAllow?: () => void; onDeny?: () => void
+  onResolvePlan?: PlanResolver; onAnswer?: (answers: string[]) => void
 }) {
+  if (pending.kind === 'plan') return <PlanCard pending={pending} status={status} onResolve={onResolvePlan} />
+  if (pending.kind === 'question') return <QuestionCard pending={pending} status={status} onAnswer={onAnswer} />
   if (pending.kind === 'move' || pending.kind === 'mkdir') {
     const [from, to] = pending.label.split(' → ')
     return <ToolApproval tool={pending.kind === 'move' ? 'move_path' : 'create_folder'} title={pending.kind === 'move' ? 'Rename or move this?' : 'Create this folder?'}
@@ -470,6 +539,8 @@ export interface ConversationProps {
   onApprove: () => void
   onAlwaysAllow: () => void
   onDeny: () => void
+  onResolvePlan?: PlanResolver
+  onAnswer?: (answers: string[]) => void
   /** A fix offered by an error notice (open settings, compact, …). */
   onErrorAction?: (action: ErrorAction) => void
   /** A reply built something viewable: offer to open it in the Browser section. */
@@ -504,6 +575,6 @@ export function Conversation(props: ConversationProps) {
       <button type="button" className="button primary" onClick={props.onOpenPreview}><Play size={14} /> Open preview</button>
       <button type="button" className="icon-button" aria-label="Dismiss" onClick={props.onDismissPreview}><X size={14} /></button>
     </div></div>}
-    {pending && <div className="approval-row"><ApprovalCard pending={pending} status={props.pendingStatus} projectPath={props.projectPath} onApprove={props.onApprove} onAlwaysAllow={pending.kind === 'task' ? props.onAlwaysAllow : undefined} onDeny={props.onDeny} /></div>}
+    {pending && <div className="approval-row"><ApprovalCard pending={pending} status={props.pendingStatus} projectPath={props.projectPath} onApprove={props.onApprove} onAlwaysAllow={pending.kind === 'task' ? props.onAlwaysAllow : undefined} onDeny={props.onDeny} onResolvePlan={props.onResolvePlan} onAnswer={props.onAnswer} /></div>}
   </MessageScroller></FreshContext.Provider>
 }

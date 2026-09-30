@@ -1,6 +1,8 @@
 mod agent;
+mod agents;
 mod cli;
 mod cli_ui;
+mod cli_setup;
 mod commands;
 mod documents;
 mod extras;
@@ -16,14 +18,17 @@ mod policy;
 mod preview;
 mod preview_proxy;
 mod providers;
+mod run_options;
 mod sessions;
 mod settings;
+mod shells;
 mod skills;
 mod stream;
 mod subagent;
 mod tasks;
 mod terminal;
 mod tools;
+mod trust;
 mod voice;
 mod web;
 mod workspace;
@@ -58,12 +63,28 @@ pub enum PendingAction {
     Command {
         command: String,
         tool_call_id: Option<String>,
+        /// Runs detached (a dev server, a watcher); the agent reads its output with shell_output.
+        #[serde(default)]
+        background: bool,
+        /// Seconds before the command is stopped; None keeps the default limit.
+        #[serde(default)]
+        timeout_seconds: Option<u64>,
     },
     /// A tool on a connected MCP server.
     Mcp {
         server: String,
         tool: String,
         arguments: Value,
+        tool_call_id: Option<String>,
+    },
+    /// A plan from exit_plan_mode, waiting for the user to approve it or ask for changes.
+    Plan {
+        plan: String,
+        tool_call_id: Option<String>,
+    },
+    /// Questions from ask_user_question, waiting for the user's answers.
+    Question {
+        questions: Vec<extras::Question>,
         tool_call_id: Option<String>,
     },
 }
@@ -74,7 +95,9 @@ impl PendingAction {
             Self::Edit { tool_call_id, .. }
             | Self::Task { tool_call_id, .. }
             | Self::Command { tool_call_id, .. }
-            | Self::Mcp { tool_call_id, .. } => tool_call_id.as_deref(),
+            | Self::Mcp { tool_call_id, .. }
+            | Self::Plan { tool_call_id, .. }
+            | Self::Question { tool_call_id, .. } => tool_call_id.as_deref(),
         }
     }
 }
@@ -138,10 +161,38 @@ impl Default for AppState {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     builder(|app| {
+        fit_main_window(&app);
         tauri::async_runtime::spawn(mcp::start_enabled(app));
     })
-    .run(context())
-    .expect("error while building Neru");
+    .build(context())
+    .expect("error while building Neru")
+    .run(|_, event| {
+        // Background shells would outlive the window otherwise; statics are never dropped.
+        if let tauri::RunEvent::Exit = event {
+            shells::kill_all();
+        }
+    });
+}
+
+/// Shrinks the main window to the screen it opens on when the configured size would not fit, so small
+/// laptop screens still show the whole window, then centers it.
+fn fit_main_window(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else { return };
+    let (Ok(Some(monitor)), Ok(size)) = (window.current_monitor(), window.outer_size()) else { return };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let (area_w, area_h) = (area.size.width as f64 / scale, area.size.height as f64 / scale);
+    let (width, height) = (size.width as f64 / scale, size.height as f64 / scale);
+    let (max_w, max_h) = (area_w * 0.92, area_h * 0.92);
+    if width <= max_w && height <= max_h {
+        return;
+    }
+    let fitted = tauri::LogicalSize::new(width.min(max_w).max(640.0_f64.min(area_w)), height.min(max_h).max(480.0_f64.min(area_h)));
+    let _ = window.set_size(fitted);
+    let x = area.position.x + ((area_w - fitted.width).max(0.0) * scale / 2.0) as i32;
+    let y = area.position.y + ((area_h - fitted.height).max(0.0) * scale / 2.0) as i32;
+    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
 /// The terminal version (`neru` on the command line): the same core with no window.
@@ -250,6 +301,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             workspace::reveal_path,
             workspace::file_action,
             commands::list_commands,
+            commands::expand_command,
             terminal::terminal_start,
             terminal::terminal_write,
             terminal::terminal_resize,
@@ -270,6 +322,8 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             agent::permission_rules,
             agent::revoke_permission,
             extras::doctor,
+            extras::resolve_plan,
+            extras::answer_question,
             extras::open_memory_file,
             agent::run_task_command,
             agent::allow_pending_always,
@@ -282,6 +336,9 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             skills::remove_skill,
             skills::open_skills_folder,
             skills::set_skill_enabled,
+            agents::list_agents,
+            shells::list_shells,
+            shells::stop_shell,
             workspace::session_changes,
             agent::effort_supported,
             documents::document_bytes,
@@ -292,10 +349,15 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             mcp::mcp_restart,
             mcp::mcp_sign_in,
             mcp::mcp_sign_out,
+            mcp::mcp_sync_project,
+            trust::commands::project_trust_status,
+            trust::commands::trust_project,
             voice::voice_status,
             voice::configure_voice,
             settings::forget_keys,
             voice::transcribe_audio,
             web::open_url,
+            cli_setup::cli_status,
+            cli_setup::cli_install_path,
         ])
 }

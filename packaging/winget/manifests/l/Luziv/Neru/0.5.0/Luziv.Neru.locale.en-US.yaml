@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: Luziv.Neru
+PackageVersion: 0.5.0
+PackageLocale: en-US
+Publisher: Luziv
+PublisherUrl: https://github.com/DiaeEddineJamal
+PublisherSupportUrl: https://github.com/DiaeEddineJamal/Neru/issues
+PackageName: Neru
+PackageUrl: https://github.com/DiaeEddineJamal/Neru
+License: MIT
+LicenseUrl: https://github.com/DiaeEddineJamal/Neru/blob/main/README.md
+Copyright: (c) 2026 Luziv
+ShortDescription: A quiet, local-first coding agent.
+Description: |-
+  Neru is a local-first coding agent. It explores your project, proposes changes you read line by line,
+  and never acts without asking. Works with free and local models or your own keys.
+  The installer also puts the neru command on your PATH for use in any terminal.
+Moniker: neru
+Tags:
+- agent
+- ai
+- coding-agent
+- developer-tools
+- llm
+- tauri
+ReleaseNotesUrl: https://github.com/DiaeEddineJamal/Neru/releases/tag/v0.5.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

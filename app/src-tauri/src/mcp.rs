@@ -66,12 +66,23 @@ pub struct ToolInfo {
 pub struct ServerView {
     #[serde(flatten)]
     pub config: ServerConfig,
-    /// "connected", "starting", "error", "off" or "needs_auth".
+    /// "connected", "starting", "error", "off", "needs_auth", or "needs_trust" for a project
+    /// connector whose folder the user has not trusted yet (it is not started).
     pub status: String,
     /// True when a saved OAuth sign-in exists for this hosted connector.
     pub signed_in: bool,
     pub error: Option<String>,
     pub tools: Vec<ToolInfo>,
+    /// "user" for connectors saved in Settings, "project" for the open project's `.mcp.json`.
+    pub source: String,
+}
+
+/// A connector from the open project's `.mcp.json`. `legacy_sse` marks `"type": "sse"` entries,
+/// which are tried as Streamable HTTP.
+#[derive(Clone, PartialEq, Debug)]
+pub struct ProjectServer {
+    pub config: ServerConfig,
+    pub legacy_sse: bool,
 }
 
 type Reply = oneshot::Sender<Result<Value, String>>;
@@ -93,6 +104,11 @@ pub struct McpManager {
     auth_needed: Mutex<HashMap<String, Option<String>>>,
     errors: Mutex<HashMap<String, String>>,
     starting: Mutex<Vec<String>>,
+    /// Connectors from the open project's `.mcp.json`, as last synced; they win over saved ones
+    /// with the same name and are never written to Neru's own `mcp.json`.
+    project: Mutex<Vec<ProjectServer>>,
+    /// Whether the user trusts the project those came from; untrusted ones are never started.
+    project_trusted: std::sync::atomic::AtomicBool,
 }
 
 fn config_path() -> Result<std::path::PathBuf, String> {
@@ -134,6 +150,72 @@ fn write_config(servers: &[ServerConfig]) -> Result<(), String> {
         .collect();
     let text = serde_json::to_string_pretty(&json!({ "servers": stored })).map_err(|e| e.to_string())?;
     fs::write(config_path()?, text).map_err(|e| e.to_string())
+}
+
+/// `${VAR}` and `${VAR:-default}` from the environment, as Claude Code expands them in `.mcp.json`.
+fn expand_env(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let Some(end) = rest[start..].find('}') else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let inner = &rest[start + 2..start + end];
+        let (name, default) = match inner.split_once(":-") {
+            Some((name, default)) => (name, Some(default)),
+            None => (inner, None),
+        };
+        match std::env::var(name).ok().filter(|value| !value.is_empty()).or(default.map(String::from)) {
+            Some(value) => out.push_str(&value),
+            None => out.push_str(&rest[start..start + end + 1]),
+        }
+        rest = &rest[start + end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Reads Claude Code's project format: `{"mcpServers": {name: {command, args, env}` or
+/// `{type: "http" | "sse", url, headers}}}`.
+fn parse_project_config(value: &Value) -> Vec<ProjectServer> {
+    let Some(servers) = value["mcpServers"].as_object() else { return Vec::new() };
+    let strings = |value: &Value| -> HashMap<String, String> {
+        value
+            .as_object()
+            .map(|map| map.iter().filter_map(|(key, value)| Some((key.clone(), expand_env(value.as_str()?)))).collect())
+            .unwrap_or_default()
+    };
+    let mut list: Vec<ProjectServer> = servers
+        .iter()
+        .filter(|(name, _)| valid_name(name))
+        .filter_map(|(name, entry)| {
+            let kind = entry["type"].as_str().unwrap_or(if entry.get("url").is_some() { "http" } else { "stdio" });
+            let remote = matches!(kind, "http" | "sse" | "streamable-http");
+            let config = ServerConfig {
+                name: name.clone(),
+                command: if remote { String::new() } else { expand_env(entry["command"].as_str()?.trim()) },
+                url: if remote { Some(expand_env(entry["url"].as_str()?.trim())) } else { None },
+                headers: strings(&entry["headers"]),
+                args: entry["args"].as_array().map(|args| args.iter().filter_map(Value::as_str).map(expand_env).collect()).unwrap_or_default(),
+                env: strings(&entry["env"]),
+                enabled: entry["disabled"].as_bool() != Some(true),
+            };
+            (!config.command.is_empty() || config.url.as_deref().is_some_and(|url| !url.is_empty())).then_some(ProjectServer { config, legacy_sse: kind == "sse" })
+        })
+        .collect();
+    list.sort_by(|a, b| a.config.name.cmp(&b.config.name));
+    list
+}
+
+/// Connectors the project at `root` declares in `.mcp.json`.
+pub fn read_project_config(root: &std::path::Path) -> Vec<ProjectServer> {
+    fs::read_to_string(root.join(".mcp.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')).ok())
+        .map(|value| parse_project_config(&value))
+        .unwrap_or_default()
 }
 
 fn valid_name(name: &str) -> bool {
@@ -616,6 +698,9 @@ impl McpManager {
                     }
                     Err("Sign in to connect this account".to_string())
                 }
+                Err(HttpError::Other(error)) if self.is_legacy_sse(&config.name) => Err(format!(
+                    "{error}. This connector is declared with \"type\": \"sse\" in .mcp.json; Neru only speaks Streamable HTTP, not the legacy SSE transport. Point it at the server's Streamable HTTP endpoint (often /mcp) and set \"type\": \"http\"."
+                )),
                 Err(HttpError::Other(error)) => Err(error),
             }
         } else {
@@ -638,10 +723,82 @@ impl McpManager {
         }
     }
 
-    fn views(&self) -> Vec<ServerView> {
-        read_config()
+    fn is_legacy_sse(&self, name: &str) -> bool {
+        self.project.lock().is_ok_and(|project| project.iter().any(|server| server.config.name == name && server.legacy_sse))
+    }
+
+    fn project_configs(&self) -> Vec<ServerConfig> {
+        self.project.lock().map(|project| project.iter().map(|server| server.config.clone()).collect()).unwrap_or_default()
+    }
+
+    /// Saved connectors and the open project's `.mcp.json` ones (which win on a name clash),
+    /// each with its source: "user" or "project".
+    fn configs(&self) -> Vec<(ServerConfig, &'static str)> {
+        let project = self.project_configs();
+        let mut all: Vec<(ServerConfig, &'static str)> = read_config()
             .into_iter()
-            .map(|config| {
+            .filter(|config| !project.iter().any(|item| item.name == config.name))
+            .map(|config| (config, "user"))
+            .collect();
+        all.extend(project.into_iter().map(|config| (config, "project")));
+        all.sort_by(|a, b| a.0.name.cmp(&b.0.name));
+        all
+    }
+
+    fn find_config(&self, name: &str) -> Option<ServerConfig> {
+        self.configs().into_iter().map(|(config, _)| config).find(|config| config.name == name)
+    }
+
+    fn is_project(&self, name: &str) -> bool {
+        self.project_configs().iter().any(|config| config.name == name)
+    }
+
+    /// Switches the project connectors to those in `root`'s `.mcp.json` (none for `None`): stops
+    /// ones that went away or changed, brings back a saved connector a removed one had shadowed,
+    /// and starts the new ones. An untrusted project's connectors are listed but not started.
+    pub async fn sync_project(&self, root: Option<&std::path::Path>) {
+        let next = root.map(read_project_config).unwrap_or_default();
+        let trusted = !next.is_empty() && root.is_some_and(crate::trust::is_trusted);
+        let was_trusted = self.project_trusted.swap(trusted, Ordering::SeqCst);
+        let previous = match self.project.lock() {
+            Ok(mut project) => std::mem::replace(&mut *project, next.clone()),
+            Err(_) => return,
+        };
+        let saved = read_config();
+        for old in &previous {
+            if next.iter().any(|server| server.config == old.config) {
+                continue;
+            }
+            self.stop(&old.config.name);
+            if !next.iter().any(|server| server.config.name == old.config.name) {
+                if let Some(config) = saved.iter().find(|config| config.name == old.config.name && config.enabled) {
+                    self.start(config).await;
+                }
+            }
+        }
+        for server in &next {
+            let running = self.client(&server.config.name).is_some_and(|client| client.alive());
+            if !server.config.enabled || !trusted {
+                self.stop(&server.config.name);
+            } else if !(running && was_trusted && previous.iter().any(|old| old.config == server.config)) {
+                self.start(&server.config).await;
+            }
+        }
+    }
+
+    /// A connector from a project the user has not trusted, which must not start.
+    fn needs_trust(&self, name: &str) -> bool {
+        self.is_project(name) && !self.project_trusted.load(Ordering::SeqCst)
+    }
+
+    fn views(&self) -> Vec<ServerView> {
+        self.configs()
+            .into_iter()
+            .map(|(config, source)| {
+                if source == "project" && config.enabled && !self.project_trusted.load(Ordering::SeqCst) {
+                    let error = Some("Trust this project to start the connectors in its .mcp.json".to_string());
+                    return ServerView { config, status: "needs_trust".into(), signed_in: false, error, tools: vec![], source: source.into() };
+                }
                 let client = self.client(&config.name).filter(|client| client.alive());
                 let needs_auth = self.auth_needed.lock().map(|auth| auth.contains_key(&config.name)).unwrap_or(false);
                 let signed_in = config.url.is_some() && oauth::load(&config.name).is_some();
@@ -662,7 +819,7 @@ impl McpManager {
                     ("error", None) => Some(self.client(&config.name).map(|client| client.last_error()).filter(|text| !text.is_empty()).unwrap_or_else(|| "The server stopped".into())),
                     (_, error) => error,
                 };
-                ServerView { config, status: status.into(), signed_in, error, tools }
+                ServerView { config, status: status.into(), signed_in, error, tools, source: source.into() }
             })
             .collect()
     }
@@ -736,17 +893,41 @@ impl McpManager {
     }
 }
 
-/// Starts every enabled connector; called once when Neru opens.
+/// Starts every enabled connector, including the open project's `.mcp.json` ones; called once
+/// when Neru opens.
 pub async fn start_enabled(app: AppHandle) {
     let state = app.state::<AppState>();
+    let root = state.root.lock().ok().and_then(|root| root.clone());
+    let project = root.as_deref().map(read_project_config).unwrap_or_default();
     for config in read_config().into_iter().filter(|config| config.enabled) {
-        state.mcp.start(&config).await;
+        if !project.iter().any(|server| server.config.name == config.name) {
+            state.mcp.start(&config).await;
+        }
     }
+    state.mcp.sync_project(root.as_deref()).await;
 }
 
 #[tauri::command]
 pub fn mcp_servers(app: AppHandle) -> Vec<ServerView> {
     app.state::<AppState>().mcp.views()
+}
+
+/// Brings the project connectors in line with the open project's `.mcp.json`; the window calls
+/// this after opening a project.
+#[tauri::command]
+pub async fn mcp_sync_project(app: AppHandle) -> Result<Vec<ServerView>, String> {
+    let state = app.state::<AppState>();
+    let root = state.root.lock().map_err(|e| e.to_string())?.clone();
+    state.mcp.sync_project(root.as_deref()).await;
+    Ok(state.mcp.views())
+}
+
+fn untrusted(name: &str) -> String {
+    format!("{name} comes from this project's .mcp.json. Trust the project folder to start it.")
+}
+
+fn project_owned(name: &str) -> String {
+    format!("{name} comes from this project's .mcp.json. Change it in that file instead.")
 }
 
 /// Adds or updates a connector (renaming when `previous` differs) and (re)starts it if enabled.
@@ -786,6 +967,10 @@ pub async fn mcp_save_server(
         None if server.command.is_empty() => return Err("Enter the command that starts the server, or a URL".into()),
         None => {}
     }
+    let state = app.state::<AppState>();
+    if state.mcp.is_project(&server.name) {
+        return Err(project_owned(&server.name));
+    }
     let mut servers = read_config();
     let previous = previous.unwrap_or_else(|| server.name.clone());
     if server.name != previous && servers.iter().any(|item| item.name == server.name) {
@@ -795,7 +980,6 @@ pub async fn mcp_save_server(
     servers.push(server.clone());
     servers.sort_by(|a, b| a.name.cmp(&b.name));
     write_config(&servers)?;
-    let state = app.state::<AppState>();
     state.mcp.stop(&previous);
     if server.enabled {
         state.mcp.start(&server).await;
@@ -807,6 +991,9 @@ pub async fn mcp_save_server(
 
 #[tauri::command]
 pub fn mcp_remove_server(name: String, app: AppHandle) -> Result<Vec<ServerView>, String> {
+    if app.state::<AppState>().mcp.is_project(&name) {
+        return Err(project_owned(&name));
+    }
     let mut servers = read_config();
     servers.retain(|item| item.name != name);
     write_config(&servers)?;
@@ -819,12 +1006,12 @@ pub fn mcp_remove_server(name: String, app: AppHandle) -> Result<Vec<ServerView>
 /// Opens the browser to sign in to a hosted connector, then connects it.
 #[tauri::command]
 pub async fn mcp_sign_in(name: String, app: AppHandle) -> Result<Vec<ServerView>, String> {
-    let config = read_config()
-        .into_iter()
-        .find(|item| item.name == name)
-        .ok_or("Unknown connector")?;
-    let url = config.url.clone().ok_or("Only hosted connectors sign in")?;
     let state = app.state::<AppState>();
+    if state.mcp.needs_trust(&name) {
+        return Err(untrusted(&name));
+    }
+    let config = state.mcp.find_config(&name).ok_or("Unknown connector")?;
+    let url = config.url.clone().ok_or("Only hosted connectors sign in")?;
     let hint = state.mcp.auth_needed.lock().ok().and_then(|auth| auth.get(&name).cloned()).flatten();
     oauth::sign_in(&name, &url, hint.as_deref()).await?;
     state.mcp.start(&config).await;
@@ -835,7 +1022,7 @@ pub async fn mcp_sign_in(name: String, app: AppHandle) -> Result<Vec<ServerView>
 pub async fn mcp_sign_out(name: String, app: AppHandle) -> Result<Vec<ServerView>, String> {
     oauth::store(&name, None)?;
     let state = app.state::<AppState>();
-    if let Some(config) = read_config().into_iter().find(|item| item.name == name && item.enabled) {
+    if let Some(config) = state.mcp.find_config(&name).filter(|item| item.enabled && !state.mcp.needs_trust(&item.name)) {
         state.mcp.start(&config).await;
     } else {
         state.mcp.stop(&name);
@@ -845,11 +1032,11 @@ pub async fn mcp_sign_out(name: String, app: AppHandle) -> Result<Vec<ServerView
 
 #[tauri::command]
 pub async fn mcp_restart(name: String, app: AppHandle) -> Result<Vec<ServerView>, String> {
-    let config = read_config()
-        .into_iter()
-        .find(|item| item.name == name)
-        .ok_or("Unknown connector")?;
     let state = app.state::<AppState>();
+    if state.mcp.needs_trust(&name) {
+        return Err(untrusted(&name));
+    }
+    let config = state.mcp.find_config(&name).ok_or("Unknown connector")?;
     state.mcp.start(&config).await;
     Ok(state.mcp.views())
 }
@@ -865,6 +1052,32 @@ mod tests {
         assert!(function_name("server", &"x".repeat(100)).len() <= 64);
         assert!(valid_name("my-server_1"));
         assert!(!valid_name("bad name"));
+    }
+
+    #[test]
+    fn reads_claude_project_mcp_json() {
+        // SAFETY: tests in this module do not read this variable concurrently.
+        unsafe { std::env::set_var("NERU_TEST_MCP_TOKEN", "secret") };
+        let value = json!({"mcpServers": {
+            "files": {"command": "npx", "args": ["-y", "@mcp/fs", "${NERU_TEST_MCP_ROOT:-.}"], "env": {"TOKEN": "${NERU_TEST_MCP_TOKEN}"}},
+            "docs": {"type": "http", "url": "https://docs.example.com/mcp", "headers": {"Authorization": "Bearer ${NERU_TEST_MCP_TOKEN}"}},
+            "old": {"type": "sse", "url": "https://old.example.com/sse"},
+            "off": {"command": "x", "disabled": true},
+            "bad name": {"command": "x"},
+            "empty": {"type": "stdio"}
+        }});
+        let servers = parse_project_config(&value);
+        let names: Vec<&str> = servers.iter().map(|server| server.config.name.as_str()).collect();
+        assert_eq!(names, vec!["docs", "files", "off", "old"]);
+        let files = &servers[1].config;
+        assert_eq!(files.command, "npx");
+        assert_eq!(files.args, vec!["-y", "@mcp/fs", "."]);
+        assert_eq!(files.env["TOKEN"], "secret");
+        assert_eq!(servers[0].config.url.as_deref(), Some("https://docs.example.com/mcp"));
+        assert_eq!(servers[0].config.headers["Authorization"], "Bearer secret");
+        assert!(servers[3].legacy_sse && !servers[0].legacy_sse);
+        assert!(!servers[2].config.enabled);
+        assert_eq!(expand_env("${NERU_TEST_UNSET_VAR}"), "${NERU_TEST_UNSET_VAR}");
     }
 
     #[test]

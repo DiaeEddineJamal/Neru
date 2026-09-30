@@ -13,6 +13,7 @@ import { author } from '../../credits'
 import { formatForModel, providerPresets, type ApiFormat } from '../../providerCatalog'
 import type { ProjectInfo, ProviderView } from '../../types'
 import { Mascot } from './Mascot'
+import { WindowControls } from './TitleBar'
 import { SpeechModelCatalog, useSpeechModels } from './SpeechModels'
 import './Onboarding.css'
 
@@ -256,13 +257,14 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
   const activeGroup = featureGroups.find(item => item.id === group) ?? featureGroups[0]
 
   return <main className="onboarding" aria-label="Getting started with Neru">
-    <header className="ob-header">
-      <div className="ob-brand"><Mascot size={26} /><span>Neru <span lang="ja">練る</span></span></div>
+    <header className={cn('ob-header', /Mac/i.test(navigator.platform) && 'mac')} data-tauri-drag-region>
+      <div className="ob-brand" data-tauri-drag-region><Mascot size={26} /><span>Neru <span lang="ja">練る</span></span></div>
       <div className="ob-header-actions">
         <a className="ob-credit" href={author.url} target="_blank" rel="noreferrer">Kneaded by <strong>{author.handle}</strong></a>
         <button type="button" className="ob-quiet" onClick={onToggleTheme} aria-label={light ? 'Use dark appearance' : 'Use light appearance'}>{light ? <Moon size={14} /> : <Sun size={14} />}<span>{light ? 'Dark' : 'Light'}</span></button>
         <button type="button" className="ob-quiet" onClick={onFinish}>Skip setup</button>
       </div>
+      <WindowControls />
     </header>
 
     <nav className="ob-stepper" aria-label={`Setup progress, step ${step + 1} of ${steps.length}: ${stepLabel}`}>

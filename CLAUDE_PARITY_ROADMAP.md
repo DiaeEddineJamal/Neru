@@ -1,32 +1,29 @@
-# Neru capability roadmap
+# Neru and Claude Code: what matches and what doesn't
 
-Neru is a local coding agent. This tracks the implementation work identified in the Claude Desktop Code comparison, without treating every Claude ecosystem feature as part of the first release.
+Audited from the source for 0.5.0. Neru aims to work like Claude Code's desktop app and CLI, with any model provider.
 
-## Implemented in the first pass
+## Matches Claude Code
 
-- Saved project conversations under `D:\Neru\.local\data\sessions`, with restoration after app restart, switching, rename, and delete.
-- Pending edit/task approvals are saved with their conversation.
-- Stop a model response while its provider request is running.
-- Attach up to five project text files to a prompt through a searchable picker or `@` entry point.
-- Load top-level `AGENTS.md`, `CLAUDE.md`, and `.neru/instructions.md` into a new agent conversation.
-- Review and Plan modes; Plan exposes only read tools.
-- Agent can propose an exact PowerShell command for approval, with Neru storage variables sourced from D: before execution.
-- Read Git diffs in the agent and request a focused code review from the app toolbar.
+- **Tools**: read, write, multi-edit, delete, move; glob, grep, symbols and a project map; shell commands in the foreground or background (`shell_output`, `kill_shell`); web search and fetch with citations; a to-do list; sub-agents in parallel, including custom agents from `.neru/agents` and `.claude/agents`; `ask_user_question`; plan mode that ends with `exit_plan_mode` and a plan to approve; images in the app.
+- **Permissions**: review, accept edits, plan, auto and bypass modes; always-allow; `permissions.allow/ask/deny` rules from `.claude/settings.json`, `.claude/settings.local.json`, `.neru/settings.json` and `~/.claude/settings.json` (a project's allow rules only after the folder is trusted).
+- **Hooks**: `.neru/hooks.json`, the personal `hooks.json`, and Claude's `hooks` block in project settings (after trust). Events: PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, SessionEnd, Stop, SubagentStop, PreCompact, Notification; exit code 2 or JSON decisions.
+- **Instructions**: `~/.claude/CLAUDE.md`, parent folders, `AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, nested files as Neru reads them, `@path` imports, `#` memory in the CLI.
+- **Sessions**: resume, fork, rename, rewind with code restore, automatic and manual compaction, export, a context meter, parallel sessions in Git worktrees.
+- **Commands**: custom commands from `.claude/commands` and `.neru/commands` with front matter, `$ARGUMENTS`, `$1…$9`, `@file` and folder namespaces; skills.
+- **MCP**: stdio and Streamable HTTP, OAuth, per-project `.mcp.json` (after trust).
+- **Desktop**: review pane, pull requests and CI checks, live preview with annotations, terminals, file tree, notifications, command palette, attachments, voice, auto-updates.
+- **CLI**: `-p`, `-c`, `-r`, `--permission-mode`, `--dangerously-skip-permissions`, `--model`, `--effort`, `--output-format text|json|stream-json`, `--append-system-prompt`, `--allowedTools`, `--disallowedTools`, `--max-turns`, `--cwd`; `login`, `logout`, `models`, `mcp`, `sessions`, `doctor`, `config`, `update`; `!` shell, `#` memory, `@` files, shift+tab, esc esc, ctrl+r, `?`; 39 built-in slash commands. Installs with npm, winget or the official scripts.
 
-## Next implementation order
+## Not yet
 
-1. Isolated parallel sessions using Git worktrees, then session grouping and background progress.
-2. Streaming agent events, queued steering, cancellable tools, and a visible task timeline.
-3. Multi-file patch proposals, file-by-file visual diff review, and inline feedback.
-4. Image/PDF prompt attachments and context usage controls.
-5. Integrated app preview and automated browser verification.
-6. GitHub pull-request creation, checks, review feedback, and CI status.
-7. Skills, plugins, and MCP connectors with scoped permissions.
-8. Resizable panes, multiple terminal tabs, and workspace layouts.
-9. Optional SSH/cloud execution, scheduling, and cross-device continuation.
-
-## Verification notes
-
-- The first pass has a React production build, lint run, Rust check, and a Rust persistence test.
-- Native interaction and model-provider behavior still need end-to-end checks in the rebuilt desktop executable.
-- Features in the next implementation order are not yet available in Neru.
+| Gap | Size |
+| --- | --- |
+| MCP resources and prompts (only tools are used); legacy SSE transport | M |
+| `--add-dir`, `--session-id`, `--settings`, `--mcp-config`, `--input-format stream-json`, `--system-prompt`, `--fallback-model` | S–M each |
+| `/output-style`, `/statusline` commands, `/vim` mode, image paste in the CLI | S–M |
+| Custom sub-agents that edit or run commands (they are read-only: sub-agents can't ask for approval) | M |
+| Custom commands' `model` and `allowed-tools`, and `` !`cmd` `` expansion | S |
+| Un-trusting a folder from the UI | S |
+| Notebook editing | M |
+| Customizable keyboard shortcuts | M |
+| The CLI on Linux without a desktop session (it needs WebKitGTK today) | L |

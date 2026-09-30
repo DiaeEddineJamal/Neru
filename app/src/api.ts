@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AgentEvent, AgentMode, AgentResponse, AttachedDocument, CheckProgress, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, SkillView, VoiceView } from './types'
+import type { AgentEvent, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, SkillView, TrustStatus, VoiceView } from './types'
 import type { ApiFormat } from './providerCatalog'
 import type { Route } from './lib/browser'
 
@@ -20,6 +20,7 @@ export const api = {
   refreshContext: (sessionId: string | null) => invoke<ContextUsage>('refresh_context', { sessionId }),
   sessionChanges: () => invoke<SessionChange[]>('session_changes'),
   listCommands: () => invoke<SlashCommand[]>('list_commands'),
+  expandCommand: (name: string, args: string) => invoke<string>('expand_command', { name, args }),
   pullRequestStatus: () => invoke<PrStatus | null>('pull_request_status'),
   failedCheckLog: () => invoke<string>('failed_check_log'),
   selectSession: (id: string) => invoke<SessionSnapshot>('select_session', { id }),
@@ -30,9 +31,18 @@ export const api = {
   removeSkill: (name: string) => invoke<SkillView[]>('remove_skill', { name }),
   openSkillsFolder: () => invoke<void>('open_skills_folder'),
   setSkillEnabled: (name: string, enabled: boolean) => invoke<SkillView[]>('set_skill_enabled', { name, enabled }),
+  /** Custom sub-agents of the open project, plus personal ones. */
+  listAgents: () => invoke<AgentView[]>('list_agents'),
+  /** Commands the agent left running in the background; one session's when given. */
+  listShells: (sessionId?: string) => invoke<ShellView[]>('list_shells', { sessionId: sessionId ?? null }),
+  stopShell: (id: string) => invoke<void>('stop_shell', { id }),
+  cliStatus: () => invoke<CliStatus>('cli_status'),
+  /** Puts the CLI bundled with this app on the PATH. */
+  cliInstallPath: () => invoke<CliStatus>('cli_install_path'),
   autoTitleSession: (sessionId: string) => invoke<SessionSummary | null>('auto_title_session', { sessionId }),
   deleteSession: (id: string) => invoke<SessionSnapshot>('delete_session', { id }),
-  openProject: (path: string) => invoke<ProjectInfo>('open_project', { path }),
+  // The project's own .mcp.json connectors follow the open project; they reconnect in the background.
+  openProject: (path: string) => invoke<ProjectInfo>('open_project', { path }).then(info => { void invoke('mcp_sync_project').catch(() => undefined); return info }),
   cloneProject: (url: string, destination: string) => invoke<ProjectInfo>('clone_project', { url, destination }),
   listDirectory: (path?: string) => invoke<FileEntry[]>('list_directory', { path }),
   readFile: (path: string) => invoke<string>('read_file', { path }),
@@ -73,6 +83,10 @@ export const api = {
   proposeFile: (path: string, content: string) => invoke<{ diff: string }>('propose_file', { path, content }),
   applyPending: () => invoke<string>('apply_pending'),
   rejectPending: () => invoke<void>('reject_pending'),
+  /** Answers a plan from exit_plan_mode; returns the mode the session continues in. */
+  resolvePlan: (sessionId: string | null, approve: boolean, mode: AgentMode | null, feedback: string | null) => invoke<AgentMode>('resolve_plan', { sessionId, approve, mode, feedback }),
+  /** One answer per question; several choices joined by ", ". */
+  answerQuestion: (sessionId: string | null, answers: string[]) => invoke<void>('answer_question', { sessionId, answers }),
   restoreCheckpoint: (id: string) => invoke<void>('restore_checkpoint', { id }),
   configureProvider: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string, model: string) => invoke<ProviderView>('configure_provider', { providerId, apiFormat, baseUrl, apiKey, model }),
   providerStatus: () => invoke<ProviderView>('provider_status'),
@@ -98,8 +112,13 @@ export const api = {
   mcpSaveServer: (server: Pick<McpServer, 'name' | 'command' | 'args' | 'env' | 'url' | 'headers' | 'enabled'>, previous?: string) => invoke<McpServer[]>('mcp_save_server', { server, previous }),
   mcpRemoveServer: (name: string) => invoke<McpServer[]>('mcp_remove_server', { name }),
   mcpRestart: (name: string) => invoke<McpServer[]>('mcp_restart', { name }),
+  mcpSyncProject: () => invoke<McpServer[]>('mcp_sync_project'),
   mcpSignIn: (name: string) => invoke<McpServer[]>('mcp_sign_in', { name }),
   mcpSignOut: (name: string) => invoke<McpServer[]>('mcp_sign_out', { name }),
+  /** Whether the open project is trusted, and which `.mcp.json` servers and hooks it would run. */
+  projectTrustStatus: () => invoke<TrustStatus>('project_trust_status'),
+  /** Trusts the open project folder and starts its `.mcp.json` connectors. */
+  trustProject: () => invoke<TrustStatus>('trust_project'),
   onAgentEvent: (handler: (event: AgentEvent) => void) => listen<AgentEvent>('agent://event', event => handler(event.payload)),
   allowPendingAlways: () => invoke<void>('allow_pending_always'),
   voiceStatus: () => invoke<VoiceView>('voice_status'),

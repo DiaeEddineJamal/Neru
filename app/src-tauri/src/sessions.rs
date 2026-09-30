@@ -280,7 +280,7 @@ fn all_sessions() -> Result<Vec<SessionSummary>, String> {
     Ok(summaries)
 }
 
-fn pending_view(action: &PendingAction) -> (PendingView, bool) {
+pub(crate) fn pending_view(action: &PendingAction) -> (PendingView, bool) {
     match action {
         PendingAction::Edit {
             proposal,
@@ -290,6 +290,21 @@ fn pending_view(action: &PendingAction) -> (PendingView, bool) {
                 kind: crate::workspace::proposal_kind(proposal).into(),
                 label: crate::workspace::proposal_label(proposal),
                 diff: Some(proposal.diff.clone()),
+                questions: None,
+            },
+            tool_call_id.is_some(),
+        ),
+        // The plan's markdown travels in `diff`.
+        PendingAction::Plan { plan, tool_call_id } => (
+            PendingView { kind: "plan".into(), label: "Plan".into(), diff: Some(plan.clone()), questions: None },
+            tool_call_id.is_some(),
+        ),
+        PendingAction::Question { questions, tool_call_id } => (
+            PendingView {
+                kind: "question".into(),
+                label: questions.iter().map(|question| question.question.as_str()).collect::<Vec<_>>().join(" · "),
+                diff: None,
+                questions: Some(questions.clone()),
             },
             tool_call_id.is_some(),
         ),
@@ -298,17 +313,21 @@ fn pending_view(action: &PendingAction) -> (PendingView, bool) {
                 kind: "task".into(),
                 label: format!("npm run {task}"),
                 diff: None,
+                questions: None,
             },
             tool_call_id.is_some(),
         ),
         PendingAction::Command {
             command,
             tool_call_id,
+            background,
+            ..
         } => (
             PendingView {
                 kind: "task".into(),
-                label: command.clone(),
+                label: if *background { format!("{command} (in the background)") } else { command.clone() },
                 diff: None,
+                questions: None,
             },
             tool_call_id.is_some(),
         ),
@@ -329,6 +348,7 @@ fn pending_view(action: &PendingAction) -> (PendingView, bool) {
                         .collect::<String>()
                 ),
                 diff: None,
+                questions: None,
             },
             tool_call_id.is_some(),
         ),
@@ -616,7 +636,7 @@ pub fn clean_title(raw: &str) -> Option<String> {
 #[tauri::command]
 pub fn delete_session(id: String, state: State<'_, AppState>) -> Result<SessionSnapshot, String> {
     let shared = owned(&state, &id)?;
-    let (worktree, loose) = {
+    let (worktree, loose, hook_root) = {
         let runtime = lock(&shared)?;
         if runtime.running {
             return Err("Stop this session's response first".into());
@@ -624,10 +644,17 @@ pub fn delete_session(id: String, state: State<'_, AppState>) -> Result<SessionS
         (
             runtime.summary.worktree.clone(),
             is_loose_chat(&runtime.summary.project_path),
+            (!runtime.summary.project_path.is_empty()).then(|| runtime.work_root()),
         )
     };
+    if let Some(root) = hook_root {
+        // Off this thread: a slow hook must not hold up the window.
+        let id = id.clone();
+        std::thread::spawn(move || crate::hooks::session_end(&root, &id, "session_deleted"));
+    }
     fs::remove_file(path(&id)?).map_err(|e| e.to_string())?;
     state.sessions.lock().map_err(|e| e.to_string())?.remove(&id);
+    crate::shells::kill_session(&id);
     if let Some(tree) = worktree {
         if let Ok(root) = main_root(&state) {
             // A worktree with uncommitted work is kept; Git refuses to remove it without --force.

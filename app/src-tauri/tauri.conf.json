@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Neru",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "dev.neru.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -15,8 +15,8 @@
         "title": "Neru",
         "width": 1320,
         "height": 840,
-        "minWidth": 940,
-        "minHeight": 620,
+        "minWidth": 640,
+        "minHeight": 480,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,

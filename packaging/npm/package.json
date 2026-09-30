@@ -1,0 +1,42 @@
+{
+  "name": "neru-cli",
+  "version": "0.5.0",
+  "description": "Neru in your terminal: a local-first coding agent that proposes changes you review and never acts without asking.",
+  "keywords": [
+    "neru",
+    "cli",
+    "coding-agent",
+    "ai",
+    "agent",
+    "llm",
+    "terminal",
+    "code-assistant"
+  ],
+  "homepage": "https://github.com/DiaeEddineJamal/Neru#readme",
+  "bugs": {
+    "url": "https://github.com/DiaeEddineJamal/Neru/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DiaeEddineJamal/Neru.git",
+    "directory": "packaging/npm"
+  },
+  "license": "MIT",
+  "author": "Luziv",
+  "bin": {
+    "neru": "bin/neru.js"
+  },
+  "files": [
+    "bin/",
+    "install.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node install.js",
+    "sync-version": "node scripts/sync-version.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "preferUnplugged": true
+}

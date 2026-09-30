@@ -22,6 +22,7 @@ import { downloadModel, transcribeLocally } from '@/lib/speech/local'
 import { ApprovalCard, Conversation, TodoPanel, agentPhase, draftState, type LiveResponse, type ResolvedApproval } from './components/neru/Conversation'
 import { FileTree, type TreeChange } from './components/neru/FileTree'
 import { Skills } from './components/neru/Skills'
+import { CliSettings } from './components/neru/CliSettings'
 import { UpdateToast, WhatsNew } from './components/neru/WhatsNew'
 import { findUpdate, installUpdate, type Update } from './lib/updates'
 import { getVersion } from '@tauri-apps/api/app'
@@ -41,7 +42,7 @@ import { SearchPanel } from './components/neru/SearchPanel'
 import { ErrorNotice } from './components/neru/ErrorNotice'
 import { useContextMenu } from './components/neru/ContextMenu'
 import type { ErrorAction } from '@/lib/friendlyError'
-import type { ModelInfo, Todo, WorkspaceChange, AgentEvent, AgentMode, AgentResponse, PrStatus, SessionChange, SlashCommand, AttachedDocument, ChatEntry, ContextUsage, Effort, GitStatus, PendingView, ProjectInfo, ProviderView, RemoteInfo, Section, SessionSnapshot, SessionSummary, VoiceView } from './types'
+import type { ModelInfo, Todo, WorkspaceChange, AgentEvent, AgentMode, AgentResponse, PrStatus, SessionChange, SlashCommand, AttachedDocument, ChatEntry, ContextUsage, Effort, GitStatus, PendingView, ProjectInfo, ProviderView, RemoteInfo, Section, SessionSnapshot, SessionSummary, TrustStatus, VoiceView } from './types'
 import { Connectors } from './components/neru/Connectors'
 import { ReviewPane, type ReviewComment } from './components/neru/ReviewPane'
 import { PullRequestChecks } from './components/neru/PullRequestChecks'
@@ -58,10 +59,18 @@ const errorText = (value: unknown) => value instanceof Error ? value.message : S
 const sectionTitles: Record<Section, string> = { home: 'Session', explorer: 'Explorer', search: 'Search', git: 'Source control', terminal: 'Terminal', preview: 'Preview', settings: 'Settings' }
 const ATTACH_LIMIT = 20
 
+/** "MCP servers github, db · hooks on PreToolUse, Stop" for the trust banner. */
+function trustSummary(status: TrustStatus) {
+  const parts: string[] = []
+  if (status.mcpServers.length) parts.push(`${status.mcpServers.length === 1 ? 'MCP server' : 'MCP servers'} ${status.mcpServers.join(', ')}`)
+  if (status.hookEvents.length) parts.push(`hooks on ${status.hookEvents.join(', ')}`)
+  return parts.join(' · ')
+}
+
 /** Overrides for one send: who it goes to, what it carries, and whether the message box is left alone (a queued message). */
-interface SendOptions { sessionId?: string; documents?: AttachedDocument[]; contextPaths?: string[]; keepComposer?: boolean; onStarted?: () => void }
-type SettingsTab = 'general' | 'appearance' | 'model' | 'voice' | 'connectors' | 'skills'
-const settingsTabs: { id: SettingsTab; label: string }[] = [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }, { id: 'model', label: 'Model provider' }, { id: 'voice', label: 'Voice' }, { id: 'connectors', label: 'Connectors' }, { id: 'skills', label: 'Skills' }]
+interface SendOptions { mode?: AgentMode; sessionId?: string; documents?: AttachedDocument[]; contextPaths?: string[]; keepComposer?: boolean; onStarted?: () => void }
+type SettingsTab = 'general' | 'appearance' | 'model' | 'voice' | 'connectors' | 'skills' | 'cli'
+const settingsTabs: { id: SettingsTab; label: string }[] = [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }, { id: 'model', label: 'Model provider' }, { id: 'voice', label: 'Voice' }, { id: 'connectors', label: 'Connectors' }, { id: 'skills', label: 'Skills' }, { id: 'cli', label: 'CLI' }]
 const readStored = <T,>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }
 type Surface = 'chat' | 'code'
 const CHAT_PHRASES = ["Let's noodle", "Let's cook", "Let's knead", "Let's sketch", "Let's tinker", "Let's riff", "Let's wander", "Let's mull it over", "Let's poke at it", "Let's make a mess", "Let's chew on it", "Let's daydream"]
@@ -140,6 +149,9 @@ function App() {
   const [effortOk, setEffortOk] = useState(false)
   const [context, setContext] = useState<ContextUsage | null>(null)
   const [notice, setNotice] = useState('')
+  // What the open project's .mcp.json and settings hooks would run, until the folder is trusted.
+  const [trust, setTrust] = useState<(TrustStatus & { path: string }) | null>(null)
+  const [trustBusy, setTrustBusy] = useState(false)
   const [remote, setRemote] = useState<RemoteInfo | null>(null)
   const [reading, setReading] = useState(0)
   const responding = Boolean(activeSessionId && running.has(activeSessionId))
@@ -632,7 +644,7 @@ function App() {
       const lastAssistant = [...messages].reverse().find(message => message.role === 'assistant')
       const mark = lastAssistant ? feedback[lastAssistant.id] : undefined
       const notes = mark === 'up' ? 'The user marked the previous reply helpful.' : mark === 'down' ? 'The user marked the previous reply not helpful. Change the approach.' : null
-      const result: AgentResponse = await api.chat({ prompt: value, contextPaths: surface === 'chat' ? [] : attached, mode: agentMode, web, documents: docs, effort, sessionId, notes, surface })
+      const result: AgentResponse = await api.chat({ prompt: value, contextPaths: surface === 'chat' ? [] : attached, mode: options.mode ?? agentMode, web, documents: docs, effort, sessionId, notes, surface })
       const summary = sessions.find(item => item.id === sessionId)
       const title = summary?.title ?? 'Neru'
       // Name the session after its task once the first reply is in.
@@ -763,6 +775,20 @@ function App() {
     { label: 'Copy relative path', icon: <FileText size={14} />, onSelect: () => void navigator.clipboard.writeText(path.replace(/\\/g, '/')) },
     { label: 'Open File Location', icon: <FolderSearch size={14} />, onSelect: () => void api.revealPath(path).catch(cause => setError(errorText(cause))) },
   ])
+  // Ask once per project folder before its .mcp.json servers and settings hooks may run.
+  useEffect(() => {
+    const path = project?.path
+    if (!path) return
+    let alive = true
+    api.projectTrustStatus().then(status => { if (alive) setTrust({ ...status, path }) }).catch(() => undefined)
+    return () => { alive = false }
+  }, [project?.path])
+  const trustOpenProject = async () => {
+    const path = project?.path
+    if (!path) return
+    setTrustBusy(true)
+    try { const status = await api.trustProject(); setTrust({ ...status, path }) } catch (cause) { setError(errorText(cause)) } finally { setTrustBusy(false) }
+  }
   // One-click fixes offered by error notices.
   const errorAction = (action: ErrorAction) => {
     switch (action) {
@@ -879,7 +905,8 @@ function App() {
   }
   const slashCommands = [...builtInCommands, ...customCommands.filter(command => !builtInCommands.some(item => item.name === command.name))]
   const runCommand = (command: SlashCommand, args: string) => {
-    if (command.source !== 'built-in') { void runChat(expandCommand(command, args)); return true }
+    // The core fills in $ARGUMENTS, $1…$9 and @file references; the local expansion is a fallback.
+    if (command.source !== 'built-in') { void api.expandCommand(command.name, args).catch(() => expandCommand(command, args)).then(prompt => runChat(prompt)); return true }
     switch (command.name) {
       case 'new': void newChat(); return true
       case 'worktree': void newChat(true); return true
@@ -910,7 +937,7 @@ function App() {
       await refreshSessions()
     } catch (cause) { setError(errorText(cause)) }
   }
-  const settle = (status: ToolApprovalStatus) => { const settled = pending; if (settled) setResolved(current => [...current, { id: uid(), after: messages.at(-1)?.id ?? null, pending: settled, status }]); setPending(null); setPendingFromAgent(false); setPendingStatus('pending') }
+  const settle = (status: ToolApprovalStatus, shown?: PendingView) => { const settled = shown ?? pending; if (settled) setResolved(current => [...current, { id: uid(), after: messages.at(-1)?.id ?? null, pending: settled, status }]); setPending(null); setPendingFromAgent(false); setPendingStatus('pending') }
   const approve = async () => {
     if (!pending) return
     setBusy(true); setError(''); setPendingStatus(pending.kind === 'task' ? 'running' : 'approving')
@@ -922,6 +949,24 @@ function App() {
     } catch (cause) { setError(errorText(cause)); setPendingStatus('pending'); setBusy(false) }
   }
   const alwaysAllow = async () => { try { await api.allowPendingAlways(); await approve() } catch (cause) { setError(errorText(cause)) } }
+  /** Answers a plan from Plan mode; approving switches the mode selector and resumes the run. */
+  const resolvePlan = async (approve: boolean, mode: AgentMode | null, feedback: string) => {
+    if (!pending) return
+    const settled = { ...pending, feedback: feedback.trim() || undefined }
+    setBusy(true); setError(''); setPendingStatus('approving')
+    try {
+      const next = await api.resolvePlan(activeSessionId, approve, mode, feedback.trim() || null)
+      setAgentMode(next); settle(approve ? 'complete' : 'denied', settled); setBusy(false)
+      if (approve || feedback.trim()) await runChat('', false, { mode: next })
+    } catch (cause) { setError(errorText(cause)); setPendingStatus('pending'); setBusy(false) }
+  }
+  const answerQuestion = async (answers: string[]) => {
+    if (!pending) return
+    const settled = { ...pending, answers }
+    setBusy(true); setError(''); setPendingStatus('approving')
+    try { await api.answerQuestion(activeSessionId, answers); settle('complete', settled); setBusy(false); await runChat('', false) }
+    catch (cause) { setError(errorText(cause)); setPendingStatus('pending'); setBusy(false) }
+  }
   const reject = async () => { try { await api.rejectPending(); settle('denied'); await refreshSessions() } catch (cause) { setError(errorText(cause)) } }
   /** Switches the active model after a one-token check that the provider serves it. Returns false and keeps the previous model when it does not. */
   const changeModel = async (model: string): Promise<boolean> => {
@@ -1322,11 +1367,22 @@ function App() {
   <div className="workspace-row"><div className="workspace">
     {error && <div className="error-banner-wrap"><ErrorNotice error={error} onAction={action => { setError(''); errorAction(action) }} onDismiss={() => setError('')} /></div>}
     {notice && !error && <div className="notice-banner" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss"><X size={14} /></button></div>}
+    {trust && !trust.trusted && trust.path === project?.path && (trust.mcpServers.length > 0 || trust.hookEvents.length > 0) && <div className="trust-banner" role="status">
+      <ShieldCheck size={16} aria-hidden />
+      <div className="trust-banner-body">
+        <strong>This project wants to run its own tools</strong>
+        <span title={trustSummary(trust)}>{trustSummary(trust)}. Trust the folder only if you know where it came from.</span>
+      </div>
+      <div className="trust-banner-actions">
+        <button className="button subtle small" disabled={trustBusy} onClick={() => setTrust(null)}>Not now</button>
+        <button className="button primary small" disabled={trustBusy} onClick={() => void trustOpenProject()}>{trustBusy ? 'Trusting…' : 'Trust this folder'}</button>
+      </div>
+    </div>}
     {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''}`}>
       {threadOpen
         ? <Conversation onErrorAction={errorAction} previewOffer={previewOffer && !responding} onOpenPreview={openPreview} onDismissPreview={() => setPreviewOffer(false)} messages={messages} live={live} phase={responding ? agentPhase(live, agentMode) : null} busy={responding || busy} pending={pending} pendingStatus={pendingStatus} resolved={resolved} failed={failed} projectPath={project?.path}
             feedback={feedback} onFeedback={(id, value) => setFeedback(current => { const next = { ...current, [id]: value }; writeStored('neru.feedback', next); return next })}
-            onRetry={() => void runChat('', false)} onRewind={(index, restoreCode) => void rewind(index, restoreCode)} onApprove={() => void approve()} onAlwaysAllow={() => void alwaysAllow()} onDeny={() => void reject()} />
+            onRetry={() => void runChat('', false)} onRewind={(index, restoreCode) => void rewind(index, restoreCode)} onApprove={() => void approve()} onAlwaysAllow={() => void alwaysAllow()} onDeny={() => void reject()} onResolvePlan={(approve, mode, feedback) => void resolvePlan(approve, mode, feedback)} onAnswer={answers => void answerQuestion(answers)} />
         : chatHome
           ? <div className="chat-hero"><Mascot size={52} interactive /><h1>{chatPhrase}</h1></div>
           : <div className="home-hero"><Mascot size={96} interactive /><h1>What would you like to <em>build</em> today?</h1><p>A quiet space to understand your code and move it forward.</p></div>}
@@ -1399,6 +1455,7 @@ function App() {
           </section>}
           {settingsTab === 'connectors' && <Connectors onError={setError} />}
           {settingsTab === 'skills' && <Skills onError={setError} onNotice={setNotice} />}
+          {settingsTab === 'cli' && <CliSettings onError={setError} onNotice={setNotice} />}
           {settingsTab === 'model' && <section className="settings-section provider-settings"><h2>Model provider</h2><p className="settings-lede">Free keys for everyday frontend and backend work, a model on this PC, or your own API key.</p>
             <label>Provider<select value={providerId} onChange={event => selectProvider(event.target.value)}>{providerPresets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             {(() => { const preset = providerPresets.find(item => item.id === providerId); return <div className="provider-description"><p>{preset?.description}</p>{(preset?.freeLimit || preset?.keyUrl) && <p className="provider-meta">{preset.freeLimit && <span className="provider-free">Free: {preset.freeLimit}</span>}{preset.keyUrl && <a className="provider-key-link" href={preset.keyUrl} target="_blank" rel="noreferrer"><KeyRound size={13} /> Get a {preset.name} API key <ExternalLink size={12} /></a>}</p>}</div> })()}

@@ -546,6 +546,9 @@ pub fn classify_probe(status: u16, body: &str) -> Verdict {
                 Verdict::Unavailable(format!("This key has no access to the model ({})", said_or("HTTP 403")))
             }
         }
+        // A bare "404 page not found" is the gateway itself, not an answer about the model (NVIDIA
+        // says "Function … not found for account" for a model it does not serve).
+        404 if !strong && lower.contains("404 page not found") => Verdict::Unknown("The provider's gateway answered 404; try again".into()),
         404 | 410 => Verdict::Unavailable(format!("Not served by this provider ({})", said_or(&format!("HTTP {status}")))),
         400 | 405 | 415 | 422 => {
             if strong {
@@ -608,7 +611,8 @@ fn load_cache() -> Scopes {
         .unwrap_or_default();
     let cutoff = now().saturating_sub(TTL_SECONDS);
     for entries in scopes.values_mut() {
-        entries.retain(|_, entry| entry.at >= cutoff);
+        // Gateway 404s were once stored as "unavailable"; they said nothing about the model.
+        entries.retain(|_, entry| entry.at >= cutoff && !entry.reason.contains("404 page not found"));
     }
     scopes.retain(|_, entries| !entries.is_empty());
     scopes
@@ -749,6 +753,21 @@ async fn ollama_details(client: &Client, config: &ProviderConfig, body: &mut Val
     }
 }
 
+/// OpenRouter's list for this key: `/models/user` leaves out models the account's privacy settings,
+/// provider preferences or guardrails block (the ones that fail with "No endpoints found"). Models
+/// without tool calling cannot run Neru's agent, and a key on the free tier cannot call paid models,
+/// so both are left out too.
+async fn openrouter_for_key(client: &Client, config: &ProviderConfig) -> Option<Vec<ModelInfo>> {
+    let request = providers::authorize(client.get(format!("{}/models/user", config.base_url)), config);
+    let body = json_ok(request).await.filter(|body| body["data"].is_array())?;
+    let key = json_ok(providers::authorize(client.get(format!("{}/key", config.base_url)), config)).await;
+    let free_tier = key.as_ref().is_some_and(|key| key["data"]["is_free_tier"].as_bool() == Some(true));
+    crate::limits::record_windows(&body, &config.provider_id);
+    let mut models = parse_models(&body, &config.provider_id).ok()?;
+    models.retain(|info| info.tools && (!free_tier || info.free));
+    Some(models)
+}
+
 async fn fetch_list(client: &Client, config: &ProviderConfig) -> Result<Vec<ModelInfo>, String> {
     let provider_id = config.provider_id.as_str();
     if provider_id == "gemini" {
@@ -761,6 +780,11 @@ async fn fetch_list(client: &Client, config: &ProviderConfig) -> Result<Vec<Mode
         if let Some(body) = xai_language_models(client, config).await {
             crate::limits::record_windows(&body, provider_id);
             return parse_models(&body, provider_id);
+        }
+    }
+    if provider_id == "openrouter" && !config.api_key.is_empty() {
+        if let Some(models) = openrouter_for_key(client, config).await {
+            return Ok(models);
         }
     }
     let request = providers::models_request(client, config).timeout(Duration::from_secs(15));
@@ -779,8 +803,75 @@ async fn fetch_list(client: &Client, config: &ProviderConfig) -> Result<Vec<Mode
         ollama_details(client, config, &mut body).await;
     }
     crate::limits::record_windows(&body, provider_id);
-    let models = parse_models(&body, provider_id)?;
+    let mut models = parse_models(&body, provider_id)?;
+    if provider_id == "nvidia" {
+        apply_nvidia_checks(&mut models);
+    }
     Ok(models)
+}
+
+/// NVIDIA's catalog lists far more models than a free key can call: most answer "Function not found
+/// for account". Each model was checked with a free key (see `live_probe`); the ones that refused are
+/// left out, the ones that answered start confirmed. Models NVIDIA adds later are checked in the
+/// background the first time the list is loaded (`verify_new`).
+fn apply_nvidia_checks(models: &mut Vec<ModelInfo>) {
+    models.retain(|info| !NVIDIA_NOT_SERVED.contains(&info.id.as_str()));
+    for info in models.iter_mut() {
+        if NVIDIA_SERVED.contains(&info.id.as_str()) {
+            info.verified = "ok".into();
+            info.verified_reason = Some("Answered a test request with a free key".into());
+        }
+    }
+}
+
+/// NVIDIA models that answered a test request from a free key (checked 2026-09-30).
+const NVIDIA_SERVED: &[&str] = &[
+    "deepseek-ai/deepseek-v4.1-flash", "google/diffusiongemma-26b-a4b-it", "google/gemma-4-31b-it", "meta/llama-3.2-11b-vision-instruct",
+    "meta/muse-glimmer-30b", "nvidia/ising-calibration-1.5-31b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3.5-lightning-30b-a3b", "openai/gpt-oss-20b", "poolside/laguna-xs-2.1", "z-ai/glm-5.3",
+    "z-ai/glm-5.3-flash",
+];
+
+/// NVIDIA models listed in the catalog that a free key cannot call (checked 2026-09-30).
+const NVIDIA_NOT_SERVED: &[&str] = &[
+    "01-ai/yi-large", "ai21labs/jamba-1.5-large-instruct", "aisingapore/sea-lion-7b-instruct", "bigcode/starcoder2-15b", "databricks/dbrx-instruct",
+    "deepseek-ai/deepseek-coder-6.7b-instruct", "google/codegemma-1.1-7b", "google/codegemma-7b", "google/gemma-2b", "google/gemma-3-12b-it",
+    "google/gemma-3-4b-it", "google/recurrentgemma-2b", "ibm/granite-3.0-3b-a800m-instruct", "ibm/granite-3.0-8b-instruct",
+    "ibm/granite-34b-code-instruct", "ibm/granite-8b-code-instruct", "meta/codellama-70b", "meta/llama2-70b", "microsoft/phi-3-vision-128k-instruct",
+    "microsoft/phi-3.5-moe-instruct", "mistralai/codestral-22b-instruct-v0.1", "mistralai/mistral-7b-instruct-v0.3", "mistralai/mistral-large",
+    "mistralai/mistral-large-2-instruct", "mistralai/mixtral-8x22b-v0.1", "moonshotai/kimi-k2.6", "nv-mistralai/mistral-nemo-12b-instruct",
+    "nvidia/cosmos-reason2-8b", "nvidia/llama-3.1-nemotron-51b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct",
+    "nvidia/llama-3.1-nemotron-ultra-253b-v1", "nvidia/llama3-chatqa-1.5-70b", "nvidia/mistral-nemo-minitron-8b-8k-instruct",
+    "nvidia/nemotron-4-340b-instruct", "nvidia/nemotron-nano-3-30b-a3b", "writer/palmyra-creative-122b", "writer/palmyra-fin-70b-32k",
+    "writer/palmyra-med-70b", "writer/palmyra-med-70b-32k", "zyphra/zamba2-7b-instruct",
+];
+
+static VERIFYING: AtomicBool = AtomicBool::new(false);
+
+/// Checks, one at a time and within the free plan's pace, the models nobody has checked yet, so the
+/// next listing drops the ones the provider refuses. Runs once at a time; at most 25 per run.
+fn verify_new(config: &ProviderConfig, models: &[ModelInfo]) {
+    if config.provider_id != "nvidia" || config.api_key.is_empty() {
+        return;
+    }
+    let unchecked: Vec<String> = models.iter().filter(|info| info.verified == "unknown").map(|info| info.id.clone()).take(25).collect();
+    if unchecked.is_empty() || VERIFYING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let template = config.clone();
+    tauri::async_runtime::spawn(async move {
+        let client = Client::new();
+        for model in unchecked {
+            let config = ProviderConfig { model: model.clone(), api_format: "openai-chat".into(), ..template.clone() };
+            let verdict = probe_once(&client, &config).await;
+            store(&config, &model, &verdict);
+            if matches!(verdict, Verdict::RateLimited(_) | Verdict::BadKey(_)) {
+                break;
+            }
+            tokio::time::sleep(probe_spacing(&config.provider_id)).await;
+        }
+        VERIFYING.store(false, Ordering::SeqCst);
+    });
 }
 
 fn resolve(provider_id: String, api_format: String, base_url: String, api_key: String, model: String, app: &AppHandle) -> Result<ProviderConfig, String> {
@@ -815,6 +906,9 @@ pub async fn list_models(provider_id: String, api_format: String, base_url: Stri
     let config = resolve(provider_id, api_format, base_url, api_key, String::new(), &app)?;
     let mut models = fetch_list(&Client::new(), &config).await?;
     apply_cache(&config, &mut models);
+    verify_new(&config, &models);
+    // A model this key's provider refused is not offered at all.
+    models.retain(|info| info.verified != "unavailable" || info.id == config.model);
     remember(&config.provider_id, &models);
     sort_for_coding(&mut models);
     Ok(models)
@@ -1091,6 +1185,15 @@ mod tests {
     }
 
     #[test]
+    fn nvidia_drops_models_a_free_key_cannot_call() {
+        let mut models: Vec<ModelInfo> = [NVIDIA_SERVED[0], NVIDIA_NOT_SERVED[0], "acme/brand-new-coder"].iter().filter_map(|id| info_from_item(&json!({"id": id}), "nvidia")).collect();
+        apply_nvidia_checks(&mut models);
+        assert_eq!(ids(&models), vec![NVIDIA_SERVED[0], "acme/brand-new-coder"]);
+        assert_eq!(models[0].verified, "ok");
+        assert_eq!(models[1].verified, "unknown");
+    }
+
+    #[test]
     fn nvidia_list_keeps_chat_models_and_drops_the_rest() {
         let chat = [
             "meta/llama-3.1-70b-instruct", "meta/llama-3.3-70b-instruct", "qwen/qwen3-coder-480b-a35b-instruct", "qwen/qwq-32b",
@@ -1348,6 +1451,7 @@ mod tests {
         // NVIDIA: listed but not deployed for this account.
         let nvidia = r#"{"status":404,"title":"Not Found","detail":"Function '0f8f6b2e-1234': Not found for account 'abcd'"}"#;
         assert!(matches!(classify_probe(404, nvidia), Verdict::Unavailable(_)));
+        assert!(matches!(classify_probe(404, "404 page not found"), Verdict::Unknown(_)));
         let nvidia_400 = r#"{"error":{"message":"The model `foo/bar` is not supported by the provider."}}"#;
         assert!(matches!(classify_probe(400, nvidia_400), Verdict::Unavailable(_)));
         assert!(matches!(classify_probe(400, r#"{"error":{"message":"The model gpt-9 does not exist or you do not have access to it."}}"#), Verdict::Unavailable(_)));
@@ -1414,5 +1518,68 @@ mod tests {
             cache.remove(&scope(&config));
             save_cache(&cache);
         }
+    }
+}
+
+#[cfg(test)]
+mod live_probe {
+    use super::*;
+
+    /// Checks every model a saved key lists and writes the verdicts to NERU_PROBE_OUT (JSON).
+    /// NERU_PROBE_PROVIDER picks the saved key. Run: cargo test --lib live_probe -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_saved_key() {
+        let (Ok(provider), Ok(out)) = (std::env::var("NERU_PROBE_PROVIDER"), std::env::var("NERU_PROBE_OUT")) else { return };
+        let mut current = ProviderConfig { provider_id: String::new(), api_format: String::new(), base_url: String::new(), api_key: String::new(), model: String::new() };
+        let mut keys = HashMap::new();
+        crate::settings::load(&mut current, &mut keys, &mut Default::default());
+        let (id, key) = keys.iter().find(|(id, _)| id.starts_with(&format!("{provider}\n"))).expect("no saved key for that provider");
+        let base_url = id.split_once('\n').unwrap().1.to_string();
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let client = Client::new();
+            let config = ProviderConfig { provider_id: provider.clone(), api_format: "openai-chat".into(), base_url, api_key: key.clone(), model: String::new() };
+            let models = fetch_list(&client, &config).await.expect("model list");
+            eprintln!("{} chat models listed", models.len());
+            let mut results = Vec::new();
+            for (index, info) in models.iter().enumerate() {
+                let probe = ProviderConfig { model: info.id.clone(), ..config.clone() };
+                let mut verdict = Verdict::Unknown(String::new());
+                for attempt in 0..3 {
+                    verdict = probe_once(&client, &probe).await;
+                    if !matches!(verdict, Verdict::RateLimited(_) | Verdict::Unknown(_)) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(if matches!(verdict, Verdict::RateLimited(_)) { 30 } else { 5 } * (attempt + 1))).await;
+                }
+                eprintln!("{:>3}/{} {:<12} {} {}", index + 1, models.len(), verdict.status(), info.id, verdict.reason());
+                results.push(json!({"id": info.id, "status": verdict.status(), "reason": verdict.reason(), "tools": info.tools, "vision": info.vision}));
+                tokio::time::sleep(probe_spacing(&provider)).await;
+            }
+            std::fs::write(&out, serde_json::to_string_pretty(&results).unwrap()).unwrap();
+        });
+    }
+    /// Compares OpenRouter's public list with the per-account one. NERU_PROBE_OUT gets the ids.
+    #[test]
+    #[ignore]
+    fn openrouter_lists() {
+        let Ok(out) = std::env::var("NERU_PROBE_OUT") else { return };
+        let mut current = ProviderConfig { provider_id: String::new(), api_format: String::new(), base_url: String::new(), api_key: String::new(), model: String::new() };
+        let mut keys = HashMap::new();
+        crate::settings::load(&mut current, &mut keys, &mut Default::default());
+        let (id, key) = keys.iter().find(|(id, _)| id.starts_with("openrouter\n")).expect("no OpenRouter key");
+        let config = ProviderConfig { provider_id: "openrouter".into(), api_format: "openai-chat".into(), base_url: id.split_once('\n').unwrap().1.into(), api_key: key.clone(), model: String::new() };
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let client = Client::new();
+            let public = parse_models(&providers::read_response(providers::models_request(&client, &config).send().await.unwrap()).await.unwrap(), "openrouter").unwrap();
+            let key_info = json_ok(providers::authorize(client.get(format!("{}/key", config.base_url)), &config)).await;
+            let user = openrouter_for_key(&client, &config).await.expect("models/user");
+            let ids: Vec<&str> = user.iter().map(|info| info.id.as_str()).collect();
+            eprintln!("public (tools) {}, public free {}, for this key {}, key {:?}", public.len(), public.iter().filter(|m| m.free).count(), user.len(), key_info.map(|k| k["data"]["is_free_tier"].clone()));
+            eprintln!("openrouter/free listed: {}", ids.contains(&"openrouter/free"));
+            std::fs::write(&out, serde_json::to_string_pretty(&ids).unwrap()).unwrap();
+        });
     }
 }

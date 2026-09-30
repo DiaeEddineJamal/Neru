@@ -1,5 +1,57 @@
 [
   {
+    "version": "0.5.0",
+    "date": "2026-09-30",
+    "title": "The neru CLI everywhere, only models that work, and Claude Code parity",
+    "summary": "Install the neru command with npm, winget or a one-line script and use it with the same commands as Claude Code. NVIDIA NIM and OpenRouter now list only the models your key can actually call, and Neru picks up Claude Code project setups: .mcp.json, CLAUDE.md imports, settings permissions, hooks, custom agents and commands.",
+    "sections": [
+      {
+        "title": "Install the CLI",
+        "items": [
+          "`npm install -g neru-cli`, `winget install Luziv.Neru.CLI`, or the official scripts: `irm https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.ps1 | iex` on Windows and `curl -fsSL https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.sh | bash` on macOS and Linux.",
+          "`neru update` updates the CLI the same way it was installed. Every release now ships standalone CLI archives with checksums.",
+          "Settings has a new CLI section with the install commands for your system, an Add neru to PATH button, and a reference of commands, flags and shortcuts."
+        ]
+      },
+      {
+        "title": "The terminal, like Claude Code",
+        "items": [
+          "A redesigned welcome with Neru's mascot, tips and recent sessions, and a status line showing the permission mode, the model and how much context is left.",
+          "`neru login` connects a provider from the terminal. New commands: `logout`, `models`, `mcp list|get|add|remove`, `sessions`, `doctor`, `config` and `update`.",
+          "New flags: `--permission-mode`, `--dangerously-skip-permissions`, `--effort`, `--output-format json|stream-json`, `--append-system-prompt`, `--allowedTools`, `--disallowedTools`, `--max-turns` and `--cwd`.",
+          "`!` runs a shell command and hands its output to Neru, `#` saves a memory, shift+tab cycles the permission mode, esc esc rewinds, ctrl+r searches your history and `?` shows every shortcut.",
+          "New slash commands: /login, /logout, /effort, /fork, /rename, /rewind, /mcp, /skills, /agents, /bashes, /security-review, /pr-comments, /diff, /copy, /release-notes, /update, /bug and /terminal-setup."
+        ]
+      },
+      {
+        "title": "Only models that work",
+        "items": [
+          "NVIDIA NIM: every model in the catalog was checked with a free key. The 40 that answer “Function not found for account” are gone; the 14 that work are marked confirmed. Models NVIDIA adds later are checked quietly in the background.",
+          "OpenRouter: Neru now asks for the models your account can use (its privacy settings, provider preferences and guardrails), keeps only models that can call tools, and hides paid models on a free-tier key.",
+          "A model a provider refuses is no longer offered anywhere."
+        ]
+      },
+      {
+        "title": "Claude Code parity",
+        "items": [
+          "Plan mode ends with a plan to approve: approve and let Neru edit, approve and review each change, or keep planning with feedback.",
+          "Neru can ask you multiple-choice questions when a decision is yours, in the app and in the terminal.",
+          "Dev servers and watchers run in the background; Neru reads their output and stops them when asked.",
+          "Custom sub-agents from .neru/agents and .claude/agents, and custom commands with arguments ($1, $ARGUMENTS), @file includes and folders as namespaces.",
+          "Claude Code project setups work unchanged: .mcp.json servers, CLAUDE.md hierarchy with @imports, permission rules and hooks from .claude/settings.json. Project servers and hooks run only after you trust the folder once."
+        ]
+      },
+      {
+        "title": "Fixes",
+        "items": [
+          "The onboarding fits small laptop screens: the window can be moved, resized and maximized, and Get started is always visible.",
+          "Session times in the terminal no longer all read “just now”.",
+          "Replies from providers that don't stream now show up in the terminal."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.4.0",
     "date": "2026-09-30",
     "title": "Replies that don't drop, draw on your app, and a faster agent",
