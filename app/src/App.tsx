@@ -3,7 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, LoaderCircle, MessageCircle, Mic, Moon, Paperclip, PenLine, Play, RotateCw, Plus, Search, ShieldCheck, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
+import { FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, LoaderCircle, MessageCircle, Mic, Moon, Paperclip, PenLine, Play, RotateCw, FolderSearch, Plus, Search, ShieldCheck, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
 import { FileDiff } from '@/components/agents/file-diff'
 import { languageForPath } from '@/components/agents/agent-code'
 import type { StreamingResponseFeedback } from '@/components/agents/streaming-response'
@@ -32,6 +32,7 @@ import { GitActions } from './components/neru/GitActions'
 import { PreviewPane } from './components/neru/PreviewPane'
 import { SearchPanel } from './components/neru/SearchPanel'
 import { ErrorNotice } from './components/neru/ErrorNotice'
+import { useContextMenu } from './components/neru/ContextMenu'
 import type { ErrorAction } from '@/lib/friendlyError'
 import type { Todo, AgentEvent, AgentMode, AgentResponse, PrStatus, SessionChange, SlashCommand, AttachedDocument, ChatEntry, ContextUsage, Effort, GitStatus, PendingView, ProjectInfo, ProviderView, RemoteInfo, Section, SessionSnapshot, SessionSummary, VoiceView } from './types'
 import { Connectors } from './components/neru/Connectors'
@@ -150,6 +151,7 @@ function App() {
   const [previewOffer, setPreviewOffer] = useState(false)
   const [previewRun, setPreviewRun] = useState(0)
   const [todos, setTodos] = useState<Todo[]>([])
+  const openMenu = useContextMenu()
   const [terminalSeen, setTerminalSeen] = useState(false)
   useEffect(() => { if (section === 'terminal') setTerminalSeen(true) }, [section])
   const webTouched = useRef(false)
@@ -377,6 +379,22 @@ function App() {
     try { const next = await api.openProject(path); setProject(next); setRecent(await api.recentProjects()); const snapshot = await api.currentSession(); if (snapshot) loadSession(snapshot); await refreshSessions(); setSelectedFile(null); setGitStatus(null); setSection('home') }
     catch (cause) { setError(errorText(cause)) } finally { setBusy(false) }
   }
+  // Takes a project off the sidebar. Nothing on disk changes, and its sessions return if it is opened again.
+  const forgetProject = async (path: string) => {
+    const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path
+    let sure = false
+    try { const { ask } = await import('@tauri-apps/plugin-dialog'); sure = await ask(`Remove ${name} from Neru? Your files stay where they are, and its sessions come back if you open the folder again.`, { title: 'Remove project', kind: 'warning', okLabel: 'Remove', cancelLabel: 'Cancel' }) } catch { sure = window.confirm(`Remove ${name} from Neru?`) }
+    if (!sure) return
+    try {
+      setRecent(await api.forgetProject(path))
+      if (project && project.path === path) {
+        setProject(null); setMessages([]); setActiveSessionId(null); activeRef.current = null
+        setSelectedFile(null); setFileText(''); setFileDraft(''); setTabs([]); setPending(null); setTodos([])
+      }
+      await refreshSessions()
+      setNotice(`Removed ${name} from Neru.`)
+    } catch (cause) { setError(errorText(cause)) }
+  }
   const chooseProject = async () => { if (!isTauri()) { setError('Open the Neru desktop window to access local projects.'); return } try { const selected = await open({ directory: true, multiple: false, title: 'Open a project in Neru' }); if (typeof selected === 'string') await openPath(selected) } catch (cause) { setError(errorText(cause)) } }
   /** Repository name from an HTTPS or SSH Git URL, used as the new folder's name. */
   const repoName = (url: string) => url.trim().replace(/\.git$/, '').split(/[/:]/).filter(Boolean).pop() ?? ''
@@ -552,6 +570,41 @@ function App() {
       setMessages(current => [...current, { id: uid(), role: 'user', content: text }])
     } catch (cause) { setError(errorText(cause)) }
   }
+  // Right-click actions on files: attach, ask, and keep open tabs in step with renames and deletes.
+  const treeActions = {
+    onAttach: (path: string) => { attachFile(path); setSection('home'); setNotice(`Attached ${path}.`) },
+    onAsk: (path: string) => { setSection('home'); setPrompt(current => `${current.trim() ? `${current.trim()} ` : ''}@${path} `) },
+    onChanged: (gone?: string) => {
+      setTreeVersion(value => value + 1)
+      void refreshGit()
+      if (!gone) return
+      const under = (path: string) => path === gone || path.startsWith(`${gone}/`) || path.startsWith(`${gone}\\`)
+      setTabs(current => current.filter(tab => !under(tab.path)))
+      if (selectedFile && under(selectedFile)) { setSelectedFile(null); setFileText(''); setFileDraft('') }
+    },
+    onError: (message: string) => setError(message),
+  }
+  const closeTabs = (drop: (tab: { path: string }) => boolean) => {
+    const dirty = tabs.filter(drop).filter(tab => tab.draft !== tab.saved)
+    if (dirty.length && !window.confirm(`Close ${dirty.length === 1 ? dirty[0].path : `${dirty.length} files`} without saving?`)) return
+    const left = tabs.filter(tab => !drop(tab))
+    setTabs(left)
+    if (selectedFile && !left.some(tab => tab.path === selectedFile)) {
+      const next = left.at(-1)
+      if (next) void showFile(next.path)
+      else { setSelectedFile(null); setFileText(''); setFileDraft('') }
+    }
+  }
+  const tabMenu = (event: React.MouseEvent, path: string) => openMenu(event, [
+    { label: 'Close', icon: <X size={14} />, shortcut: 'Middle-click', onSelect: () => closeTabs(tab => tab.path === path) },
+    { label: 'Close others', icon: <X size={14} />, disabled: tabs.length < 2, onSelect: () => closeTabs(tab => tab.path !== path) },
+    { label: 'Close all', icon: <X size={14} />, onSelect: () => closeTabs(() => true) },
+    'separator',
+    { label: 'Attach to message', icon: <Paperclip size={14} />, onSelect: () => treeActions.onAttach(path) },
+    { label: 'Open in external editor', icon: <ExternalLink size={14} />, onSelect: () => void api.openInEditor(path).catch(cause => setError(errorText(cause))) },
+    { label: 'Copy relative path', icon: <FileText size={14} />, onSelect: () => void navigator.clipboard.writeText(path.replace(/\\/g, '/')) },
+    { label: 'Open File Location', icon: <FolderSearch size={14} />, onSelect: () => void api.revealPath(path).catch(cause => setError(errorText(cause))) },
+  ])
   // One-click fixes offered by error notices.
   const errorAction = (action: ErrorAction) => {
     switch (action) {
@@ -1005,7 +1058,7 @@ function App() {
   const chatHome = surface === 'chat' && section === 'home' && !threadOpen
   const sidebar = (floating: boolean) => <Sidebar surface={surface} project={project} recent={recent} sessions={sessions} activeSessionId={activeSessionId} section={section} busy={busy} light={light} model={provider.model}
     onSection={next => { setSection(next); if (next === 'git') void refreshGit() }} onNewSession={newSessionIn} onOpenSession={openSession} onOpenProject={() => void chooseProject()} onCloneProject={() => setCloneOpen(true)}
-    onRenameSession={(id, title) => void renameSession(id, title)} onDeleteSession={id => void removeSession(id)} onToggleTheme={() => setLight(value => !value)} onPalette={() => setPalette(true)} onGuide={() => setOnboarding('show')} onCollapse={() => dockSidebar(floating)} floating={floating} />
+    onRenameSession={(id, title) => void renameSession(id, title)} onDeleteSession={id => void removeSession(id)} onForgetProject={path => void forgetProject(path)} onRevealProject={path => void api.revealPath(path).catch(cause => setError(errorText(cause)))} onToggleTheme={() => setLight(value => !value)} onPalette={() => setPalette(true)} onGuide={() => setOnboarding('show')} onCollapse={() => dockSidebar(floating)} floating={floating} />
   const activeWorktree = sessions.find(item => item.id === activeSessionId)?.worktree
   const pageTitle = section === 'home' ? (sessions.find(session => session.id === activeSessionId)?.title || 'New session') : sectionTitles[section]
   return <div className="app-shell">
@@ -1028,7 +1081,7 @@ function App() {
   <div className="workspace">{!chatHome && <header className="page-header"><div className="page-title">{project && surface !== 'chat' && section !== 'settings' && <><span className="page-project" title={project.path}>{project.name}</span><ChevronRight size={14} className="page-sep" /></>}<strong title={pageTitle}>{pageTitle}</strong>{section === 'home' && activeWorktree && <span className="page-branch" title={`Working in ${activeWorktree.path}`}><GitBranch size={12} />{activeWorktree.branch}</span>}</div><div className="page-actions">{checkpoint && <button className="text-action" onClick={() => { void api.restoreCheckpoint(checkpoint).then(() => { setCheckpoint(''); if (selectedFile) void showFile(selectedFile); void refreshGit() }).catch(cause => setError(errorText(cause))) }} title="Restore the files changed by the last approved edit"><Undo2 size={14} /> Undo last change</button>}{project && section === 'home' && surface !== 'chat' && <button className={`text-action ${treeOpen ? 'on' : ''}`} onClick={() => setTreeOpen(open => { writeStored('neru.tree.open', !open); return !open })} title="Show the project tree beside the conversation" aria-pressed={treeOpen}><FolderTree size={14} /> Files</button>}{project && section === 'home' && <button className={`text-action ${reviewOpen ? 'on' : ''}`} onClick={() => { setReviewOpen(open => !open); if (!reviewOpen) void loadChanges() }} title="Everything Neru changed in this session"><FileDiffIcon size={14} /> Changes{changes.length > 0 && <span className="count-badge">{changes.length}</span>}</button>}{project && <button className="text-action" disabled={busy || responding || Boolean(pending)} onClick={reviewCode}><Search size={14} /> Review code</button>}{project && <button className="text-action" onClick={() => void runBuild()}><Play size={14} /> Build</button>}<button className="icon-button" onClick={() => setPalette(true)} aria-label="Command palette" title={`Command palette (${modKey} K)`}><Command size={15} /></button></div></header>}
     {error && <div className="error-banner-wrap"><ErrorNotice error={error} onAction={action => { setError(''); errorAction(action) }} onDismiss={() => setError('')} /></div>}
     {notice && !error && <div className="notice-banner" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss"><X size={14} /></button></div>}
-    {section === 'home' && treeOpen && project && surface !== 'chat' && <aside className="tree-pane" aria-label="Project files"><div className="panel-heading">Files <span>{project.name}</span><button className="icon-button tree-refresh" onClick={() => setTreeVersion(value => value + 1)} title="Refresh files" aria-label="Refresh files"><RotateCw size={14} /></button></div><FileTree key={project.path} projectKey={project.path} selected={selectedFile} version={treeVersion} changed={touched} onSelect={path => void showFile(path)} /></aside>}
+    {section === 'home' && treeOpen && project && surface !== 'chat' && <aside className="tree-pane" aria-label="Project files"><div className="panel-heading">Files <span>{project.name}</span><button className="icon-button tree-refresh" onClick={() => setTreeVersion(value => value + 1)} title="Refresh files" aria-label="Refresh files"><RotateCw size={14} /></button></div><FileTree key={project.path} projectKey={project.path} selected={selectedFile} version={treeVersion} changed={touched} onSelect={path => void showFile(path)} {...treeActions} /></aside>}
     {section === 'home' && reviewOpen && <ReviewPane changes={changes} loading={changesLoading} comments={reviewComments} onComments={setReviewComments} onRefresh={() => void loadChanges()} onClose={() => setReviewOpen(false)} onSend={message => void runChat(message)} onOpenFile={path => void showFile(path)} />}
     {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''} ${reviewOpen ? 'with-review' : ''} ${treeOpen && project && surface !== 'chat' ? 'with-tree' : ''}`}>
       {threadOpen
@@ -1055,7 +1108,7 @@ function App() {
         {chatHome && <div className="chat-ideas">{CHAT_IDEAS.map(idea => <button key={idea.label} type="button" onClick={() => setPrompt(idea.prompt)}><idea.icon size={14} strokeWidth={1.75} />{idea.label}</button>)}<button type="button" onClick={() => chooseSurface('code')}><CodeXml size={14} strokeWidth={1.75} />Code</button></div>}
       </div>
     </main>}
-    {section === 'explorer' && <main className="explorer-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <><div className="tree-panel"><div className="panel-heading">Files <span>{project.name}</span></div><FileTree key={project.path} projectKey={project.path} selected={selectedFile} version={treeVersion} changed={touched} onSelect={path => void showFile(path)} /></div><div className="editor-panel">{selectedFile ? <><div className="editor-tabs">{tabs.map(tab => <button key={tab.path} type="button" className={tab.path === selectedFile ? 'active' : ''} onClick={() => void showFile(tab.path)} title={tab.path}>{tab.path.split(/[/\\]/).pop()}{tab.draft !== tab.saved ? ' •' : ''}</button>)}</div><div className="file-toolbar"><FileDiffIcon size={14} /><span className="truncate">{selectedFile}</span>{fileDraft !== fileText && <span className="unsaved-mark">Edited</span>}<button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void saveDraft()}>Save</button><button className="button subtle" onClick={() => void openEditor()}>Open in editor</button><button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void proposeDraft()}>Review changes</button></div><div className="editor-host">{fileLoading ? 'Reading file…' : <Suspense fallback="Loading editor…"><CodeEditor path={selectedFile} value={fileDraft} onChange={setFileDraft} light={light} /></Suspense>}</div>{pending && !pendingFromAgent && <div className="editor-pending"><ApprovalCard pending={pending} status={pendingStatus} projectPath={project.path} onApprove={() => void approve()} onDeny={() => void reject()} /></div>}</> : <div className="empty-pane"><FileSearch size={27} /><h2>Select a file</h2><p>Browse your project from the tree.</p></div>}</div></>}</main>}
+    {section === 'explorer' && <main className="explorer-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <><div className="tree-panel"><div className="panel-heading">Files <span>{project.name}</span></div><FileTree key={project.path} projectKey={project.path} selected={selectedFile} version={treeVersion} changed={touched} onSelect={path => void showFile(path)} {...treeActions} /></div><div className="editor-panel">{selectedFile ? <><div className="editor-tabs">{tabs.map(tab => <button key={tab.path} type="button" className={tab.path === selectedFile ? 'active' : ''} onClick={() => void showFile(tab.path)} onContextMenu={event => tabMenu(event, tab.path)} onAuxClick={event => { if (event.button === 1) closeTabs(item => item.path === tab.path) }} title={tab.path}>{tab.path.split(/[/\\]/).pop()}{tab.draft !== tab.saved ? ' •' : ''}</button>)}</div><div className="file-toolbar"><FileDiffIcon size={14} /><span className="truncate">{selectedFile}</span>{fileDraft !== fileText && <span className="unsaved-mark">Edited</span>}<button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void saveDraft()}>Save</button><button className="button subtle" onClick={() => void openEditor()}>Open in editor</button><button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void proposeDraft()}>Review changes</button></div><div className="editor-host">{fileLoading ? 'Reading file…' : <Suspense fallback="Loading editor…"><CodeEditor path={selectedFile} value={fileDraft} onChange={setFileDraft} light={light} /></Suspense>}</div>{pending && !pendingFromAgent && <div className="editor-pending"><ApprovalCard pending={pending} status={pendingStatus} projectPath={project.path} onApprove={() => void approve()} onDeny={() => void reject()} /></div>}</> : <div className="empty-pane"><FileSearch size={27} /><h2>Select a file</h2><p>Browse your project from the tree.</p></div>}</div></>}</main>}
     {section === 'search' && <main className="content-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <div className="content-column"><div className="section-intro"><h2>Find what matters.</h2><p>Search source text with Git ignore rules respected.</p></div><SearchPanel key={project.path} projectKey={project.path} onOpen={path => void showFile(path)} /></div>}</main>}
     {section === 'git' && <main className="content-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <div className="git-layout"><div className="git-column"><div className="section-intro"><h2>Your work, clearly.</h2><p>{gitStatus ? `${gitStatus.files.length} changed files on ${gitStatus.branch}` : gitError || 'Loading Git status…'}</p></div>{gitStatus && <><div className="branch-card"><GitBranch size={16} /> {gitStatus.branch}<button className="mini-action" onClick={() => void refreshGit()}>Refresh</button></div>
               <GitActions busy={busy} branch={gitStatus.branch} branches={branches.length ? branches : [gitStatus.branch]} files={gitStatus.files} remote={remote} onFetch={() => void gitAct(() => api.gitFetch())} onPull={() => void gitAct(() => api.gitPull())} onCheckout={name => void gitAct(() => api.gitCheckout(name))} onMerge={name => void gitAct(() => api.gitMerge(name))} onRebase={name => void gitAct(() => api.gitRebase(name))} onStash={action => void gitAct(() => api.gitStash(action))} onPush={() => void push()} onPullRequest={(title, body) => void openPullRequest(title, body)} />

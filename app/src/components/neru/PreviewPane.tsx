@@ -3,6 +3,23 @@ import { listen } from '@tauri-apps/api/event'
 import { ExternalLink, LoaderCircle, Play, RotateCw, Square } from 'lucide-react'
 import { api } from '../../api'
 
+/**
+ * The page itself. Neru's window is cross-origin isolated (for on-device speech), which blocks
+ * ordinary iframes of other origins ("refused to connect"). A credentialless iframe may load
+ * them; the attribute has to be set before the frame navigates, and React drops it when it is
+ * rendered as an empty string, so it is set by hand before `src`.
+ */
+function PreviewFrame({ src }: { src: string }) {
+  const frame = useRef<HTMLIFrameElement>(null)
+  useEffect(() => {
+    const node = frame.current
+    if (!node) return
+    node.setAttribute('credentialless', '')
+    node.src = src
+  }, [src])
+  return <iframe ref={frame} className="preview-frame" title="App preview" />
+}
+
 /** The in-app browser. `run` changes when something asks for a fresh preview (e.g. "Open preview"). */
 export function PreviewPane({ projectKey, run = 0, onOpenExternal }: { projectKey: string; run?: number; onOpenExternal: (url: string) => void }) {
   const [url, setUrl] = useState('')
@@ -56,8 +73,7 @@ export function PreviewPane({ projectKey, run = 0, onOpenExternal }: { projectKe
     {(progress || hint) && <p className="preview-hint">{progress || `Runs ${hint}. The page loads here once it is up.`}</p>}
     {error && <pre className="clone-error preview-error">{error}</pre>}
     {shown
-      // credentialless lets a local dev server load inside Neru's cross-origin-isolated window.
-      ? <iframe key={frameKey} className="preview-frame" title="App preview" src={shown} {...{ credentialless: '' }} />
+      ? <PreviewFrame key={frameKey} src={shown} />
       : <div className="empty-pane">{busy ? <><LoaderCircle size={22} className="animate-spin" /><p>{progress || 'Starting…'}</p></> : <p>Run the preview, or type a localhost or https URL.</p>}</div>}
   </div>
 }

@@ -364,7 +364,7 @@ async fn serve_one(mut stream: tokio::net::TcpStream, base: &Path) -> std::io::R
         Err(_) => ("404 Not Found", "text/plain; charset=utf-8", format!("Not found: {decoded}").into_bytes()),
     };
     let head = format!(
-        "HTTP/1.1 {code}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nCross-Origin-Resource-Policy: cross-origin\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {code}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nCross-Origin-Resource-Policy: cross-origin\r\nCross-Origin-Embedder-Policy: credentialless\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(head.as_bytes()).await?;

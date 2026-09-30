@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { BookOpen, ChevronRight, Command, Folder, FolderOpen, FolderPlus, GitBranch, GitBranchPlus, Globe, LoaderCircle, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, SquareTerminal, Sun, Trash2 } from 'lucide-react'
+import { BookOpen, ChevronRight, Command, Copy, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Globe, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, SquareTerminal, Sun, Trash2 } from 'lucide-react'
+import { useContextMenu } from './ContextMenu'
 import { Mascot } from './Mascot'
 import type { ProjectInfo, Section, SessionSummary } from '../../types'
 
@@ -49,6 +50,9 @@ export interface SidebarProps {
   onCloneProject: () => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  /** Takes a project off the list; its files and saved sessions are kept. */
+  onForgetProject: (path: string) => void
+  onRevealProject: (path: string) => void
   onToggleTheme: () => void
   onPalette: () => void
   onGuide: () => void
@@ -64,6 +68,22 @@ export function Sidebar(props: SidebarProps) {
   const [resizing, setResizing] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => readStorage(EXPANDED_KEY, {}))
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const openMenu = useContextMenu()
+  const projectMenu = (event: React.MouseEvent, path: string, name: string, current: boolean) => openMenu(event, [
+    { label: 'New session', icon: <Plus size={14} />, disabled: busy, onSelect: () => props.onNewSession(path) },
+    ...(current && project?.git ? [{ label: 'New worktree session', icon: <GitBranchPlus size={14} />, disabled: busy, onSelect: () => props.onNewSession(path, true) }] : []),
+    'separator',
+    { label: 'Open File Location', icon: <FolderSearch size={14} />, onSelect: () => props.onRevealProject(path) },
+    { label: 'Copy path', icon: <Copy size={14} />, onSelect: () => void navigator.clipboard.writeText(path.replace(/^\\\\\?\\/, '')) },
+    'separator',
+    { label: `Remove ${name} from Neru`, icon: <FolderMinus size={14} />, danger: true, disabled: busy, onSelect: () => props.onForgetProject(path) },
+  ])
+  const sessionMenu = (event: React.MouseEvent, path: string, session: SessionSummary, current: boolean) => openMenu(event, [
+    { label: 'Open', icon: <MessageSquare size={14} />, disabled: busy, onSelect: () => props.onOpenSession(path, session.id) },
+    { label: 'Rename…', icon: <Pencil size={14} />, disabled: busy || !current, onSelect: () => { setRenamingId(session.id); setRenameValue(session.title) } },
+    'separator',
+    { label: 'Delete session', icon: <Trash2 size={14} />, danger: true, disabled: busy || session.running || !current, onSelect: () => props.onDeleteSession(session.id) },
+  ])
   const [renameValue, setRenameValue] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -148,16 +168,17 @@ export function Sidebar(props: SidebarProps) {
         const name = current && project ? project.name : baseName(path)
         return <section className={`project-group ${current ? 'current' : ''}`} key={path} aria-label={`${name} sessions`}>
           <div className="project-row">
-            <button className="project-toggle" onClick={() => toggle(path)} aria-expanded={open} title={path}>
+            <button className="project-toggle" onClick={() => toggle(path)} onContextMenu={event => projectMenu(event, path, name, current)} aria-expanded={open} title={path}>
               <span className="project-icon">{open ? <FolderOpen size={16} strokeWidth={1.75} /> : <Folder size={16} strokeWidth={1.75} />}<ChevronRight size={14} className={`chevron ${open ? 'open' : ''}`} /></span>
               <span className="truncate">{name}</span>
             </button>
             {current && project?.git && <button className="icon-button small row-action" onClick={() => props.onNewSession(path, true)} disabled={busy} aria-label={`New worktree session in ${name}`} title="New session in its own Git worktree, for parallel work"><GitBranchPlus size={14} /></button>}
+            <button className="icon-button small row-action" onClick={event => projectMenu(event, path, name, current)} aria-label={`More actions for ${name}`} title="More actions"><MoreHorizontal size={14} /></button>
             <button className="icon-button small row-action" onClick={() => props.onNewSession(path)} disabled={busy} aria-label={`New session in ${name}`} title={`New session in ${name}`}><Plus size={14} /></button>
           </div>
           {open && <div className="session-list">
             {projectSessions.length === 0 && <p className="session-empty">No sessions yet</p>}
-            {projectSessions.map(session => <div className={`session-row ${session.id === activeSessionId && section === 'home' ? 'active' : ''}`} key={session.id}>
+            {projectSessions.map(session => <div className={`session-row ${session.id === activeSessionId && section === 'home' ? 'active' : ''}`} key={session.id} onContextMenu={event => sessionMenu(event, path, session, current)}>
               {renamingId === session.id
                 ? <input className="session-rename" autoFocus aria-label="Rename session" value={renameValue} onChange={event => setRenameValue(event.target.value)} onBlur={finishRename} onKeyDown={event => { if (event.key === 'Enter') finishRename(); if (event.key === 'Escape') setRenamingId(null) }} />
                 : <>

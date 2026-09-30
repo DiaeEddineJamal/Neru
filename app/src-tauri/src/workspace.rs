@@ -933,3 +933,85 @@ mod file_op_tests {
         let _ = fs::remove_dir_all(&base);
     }
 }
+
+/// Removes a project from Neru's list (the sidebar). Files on disk are not touched, and its
+/// sessions stay saved, so opening the folder again brings everything back.
+#[tauri::command]
+pub fn forget_project(path: String, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let recent_path = data_dir()?.join("recent-projects.json");
+    let mut recent: Vec<String> = fs::read_to_string(&recent_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let same = |item: &str| item == path || PathBuf::from(item).canonicalize().ok() == PathBuf::from(&path).canonicalize().ok();
+    recent.retain(|item| !same(item));
+    fs::write(&recent_path, serde_json::to_vec_pretty(&recent).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let mut root = state.root.lock().map_err(|e| e.to_string())?;
+    if root.as_ref().is_some_and(|current| same(&current.to_string_lossy())) {
+        *root = None;
+        *state.active_session.lock().map_err(|e| e.to_string())? = None;
+    }
+    Ok(recent)
+}
+
+/// Shows a file or folder in the system file manager (Explorer, Finder), selected.
+/// `path` is project-relative, or absolute for a project folder itself.
+#[tauri::command]
+pub fn reveal_path(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let target = if Path::new(&path).is_absolute() {
+        PathBuf::from(&path)
+    } else {
+        resolve_existing(&project_root(&state)?, &path)?
+    };
+    if !target.exists() {
+        return Err(format!("{} no longer exists", target.display()));
+    }
+    // Explorer does not understand the \\?\ prefix that canonical paths carry on Windows.
+    let shown = target.display().to_string().trim_start_matches(r"\\?\").to_string();
+    #[cfg(windows)]
+    let status = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer.exe").raw_arg(format!("/select,\"{shown}\"")).spawn()
+    };
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg("-R").arg(&shown).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = std::process::Command::new("xdg-open").arg(if target.is_dir() { target.clone() } else { target.parent().map(Path::to_path_buf).unwrap_or(target.clone()) }).spawn();
+    status.map(|_| ()).map_err(|e| format!("Could not open the file manager: {e}"))
+}
+
+/// File-tree actions the user takes directly (right-click menu). Each keeps a checkpoint like
+/// an agent edit. `action` is new_file, new_folder, rename, duplicate or delete.
+#[tauri::command]
+pub fn file_action(action: String, path: String, to: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
+    let root = project_root(&state)?;
+    let clean = |value: &str| value.trim().replace('\\', "/").trim_matches('/').to_string();
+    let path = clean(&path);
+    let proposal = match action.as_str() {
+        "new_file" => {
+            if root.join(&path).exists() {
+                return Err(format!("{path} already exists"));
+            }
+            make_proposal(&root, &path, String::new())?
+        }
+        "new_folder" => make_folder_proposal(&root, &path)?,
+        "rename" => make_move_proposal(&root, &path, &clean(to.as_deref().ok_or("Enter a new name")?))?,
+        "delete" => make_delete_proposal(&root, &path)?,
+        "duplicate" => {
+            let source = resolve_existing(&root, &path)?;
+            if !source.is_file() {
+                return Err("Only files can be duplicated".into());
+            }
+            let text = read_limited(&source)?;
+            let (stem, ext) = match path.rsplit_once('.') {
+                Some((stem, ext)) if !stem.ends_with('/') && !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+                _ => (path.clone(), String::new()),
+            };
+            let copy = (1..100).map(|n| if n == 1 { format!("{stem} copy{ext}") } else { format!("{stem} copy {n}{ext}") }).find(|candidate| !root.join(candidate).exists()).ok_or("Too many copies")?;
+            make_proposal(&root, &copy, text)?
+        }
+        _ => return Err("Unknown file action".into()),
+    };
+    let (checkpoint, _) = apply_edit(&root, &proposal)?;
+    Ok(checkpoint)
+}

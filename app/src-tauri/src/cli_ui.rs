@@ -25,7 +25,6 @@ pub const GREEN: &str = "\x1b[38;2;142;190;140m";
 pub const YELLOW: &str = "\x1b[38;2;217;184;112m";
 pub const CYAN: &str = "\x1b[38;2;127;181;173m";
 pub const BOLD: &str = "\x1b[1m";
-pub const ITALIC: &str = "\x1b[3m";
 pub const STRIKE: &str = "\x1b[9m";
 pub const RESET: &str = "\x1b[0m";
 const DIFF_ADD_BG: &str = "\x1b[48;2;28;52;34m";
