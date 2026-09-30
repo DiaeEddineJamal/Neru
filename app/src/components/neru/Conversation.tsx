@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, ChevronDown, CircleAlert, History, LoaderCircle, Paperclip, ShieldCheck } from 'lucide-react'
+import { createContext, isValidElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Check, ChevronDown, CircleAlert, Globe, History, LoaderCircle, Paperclip, Play, ShieldCheck, X } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { AgentDisclosure } from '@/components/agents/agent-disclosure'
-import { languageForPath } from '@/components/agents/agent-code'
+import { languageForFence, languageForPath } from '@/components/agents/agent-code'
+import { CodeBlock } from '@/components/agents/code-block'
+import { FileWriteCard, type FileWriteState } from '@/components/agents/file-write-card'
 import { Citation, type CitationItem } from '@/components/agents/citations'
 import { FileDiff } from '@/components/agents/file-diff'
 import { MessageScroller } from '@/components/agents/message-scroller'
@@ -15,10 +17,14 @@ import { EASE_OUT, SPRING_SWAP } from '@/lib/ease'
 import { diffCounts, parseUnifiedDiff } from '@/lib/diff'
 import { cn } from '@/lib/utils'
 import { Mascot } from './Mascot'
+import { ErrorNotice } from './ErrorNotice'
+import type { ErrorAction } from '@/lib/friendlyError'
 import type { ChatEntry, PendingView, Source, ToolEventStatus } from '../../types'
 
 export interface LiveTool { id: string; label: string; status: ToolEventStatus }
-export interface LiveResponse { text: string; tools: LiveTool[]; sources: Source[] }
+/** A file the model is writing, streamed from its unfinished tool call. */
+export interface LiveDraft { id: string; path: string; content: string; edit?: boolean; state?: FileWriteState }
+export interface LiveResponse { text: string; tools: LiveTool[]; sources: Source[]; drafts: LiveDraft[]; reasoning: number; thinking?: string }
 /** A settled approval, shown after the message that was last when it was decided. */
 export interface ResolvedApproval { id: string; after: string | null; pending: PendingView; status: ToolApprovalStatus }
 export interface AgentPhase { state: OrbState; label: string }
@@ -29,7 +35,12 @@ const RESPONSE_PROSE = 'text-base leading-7 text-foreground [&_a]:text-[var(--sa
 const WEB_TOOL = /^(Searched the web|Read [a-z0-9.-]+\.[a-z]{2,}$)/i
 
 /** Maps what the agent is doing right now onto a thinking-orb state and a short label. */
+/** Drafts whose tool call has not been handled yet, i.e. still being written. */
+const writing = (live: LiveResponse) => live.drafts.filter(draft => !live.tools.some(tool => tool.id === draft.id))
+
 export function agentPhase(live: LiveResponse | null, mode: string): AgentPhase {
+  const draft = live && writing(live).at(-1)
+  if (draft) return { state: 'shaping', label: `Writing ${draft.path.split(/[\\/]/).pop() || 'a file'}…` }
   const running = live?.tools.findLast(tool => tool.status === 'running')
   if (running) {
     if (running.label.startsWith('Searched the web')) return { state: 'searching', label: 'Searching the web…' }
@@ -40,6 +51,7 @@ export function agentPhase(live: LiveResponse | null, mode: string): AgentPhase 
   }
   if (live?.text) return { state: 'composing', label: 'Composing…' }
   if (live && live.tools.length > 0) return { state: 'shaping', label: 'Shaping…' }
+  if (live && live.reasoning > 0) return { state: 'solving', label: 'Reasoning…' }
   return mode === 'plan' ? { state: 'solving', label: 'Planning…' } : { state: 'working', label: 'Thinking…' }
 }
 
@@ -118,6 +130,14 @@ function ResponseMarkdown({ content, sources, idPrefix, onCite }: { content: str
       if (cite && source) return <span onClickCapture={onCite}><Citation citationId={source.id} index={Number(cite[1])} idPrefix={idPrefix} /></span>
       return <a href={href}>{children}</a>
     },
+    // Fenced code renders like the VS Code editor; inline code keeps the prose style.
+    pre: ({ children }) => {
+      const child = Array.isArray(children) ? children[0] : children
+      if (!isValidElement(child)) return <pre>{children}</pre>
+      const props = child.props as { className?: string; children?: ReactNode }
+      const tag = /language-([\w+#.-]+)/.exec(props.className ?? '')?.[1]
+      return <CodeBlock code={String(props.children ?? '').replace(/\n$/, '')} language={languageForFence(tag)} />
+    },
   }}>{sources.length ? linkCitations(content, sources.length) : content}</ReactMarkdown>
 }
 
@@ -194,20 +214,98 @@ function ToolSteps({ tools, live }: { tools: LiveTool[]; live: boolean }) {
   </div>
 }
 
-function Message({ from, children }: { from: 'user' | 'assistant'; children: ReactNode }) {
-  return <article data-slot="message" data-from={from} className={`message ${from}`}>{children}</article>
+/** Ids of messages added while the conversation is on screen; only those get the entrance animation. */
+const FreshContext = createContext<Set<string>>(new Set())
+
+function Message({ from, id, children }: { from: 'user' | 'assistant'; id?: string; children: ReactNode }) {
+  const reduce = useReducedMotion() ?? false
+  const fresh = useContext(FreshContext)
+  const animate = !reduce && id !== undefined && fresh.has(id)
+  // A sent message rises out of the composer and settles, like Claude's.
+  const enter = from === 'user'
+    ? { initial: { opacity: 0, y: 28, scale: 0.94, filter: 'blur(4px)' }, transition: { type: 'spring' as const, duration: 0.55, bounce: 0.28 } }
+    : { initial: { opacity: 0, y: 10, filter: 'blur(2px)' }, transition: { duration: 0.4, ease: EASE_OUT } }
+  return <motion.article data-slot="message" data-from={from} className={`message ${from}`}
+    style={{ transformOrigin: from === 'user' ? '100% 100%' : '0% 0%' }}
+    initial={animate ? enter.initial : false} animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }} transition={enter.transition}>{children}</motion.article>
 }
 
-function AssistantMessage({ content, sources, tools, status, live, feedback, onFeedback, onRetry, footer }: {
-  content: string; sources: Source[]; tools: LiveTool[]; status: 'streaming' | 'complete' | 'error'; live: boolean
+/** Remembers which messages arrived after the conversation was shown (not a whole session loading at once). */
+function useFresh(ids: string[]) {
+  const seen = useRef<Set<string> | null>(null)
+  const fresh = useRef(new Set<string>())
+  if (seen.current === null) seen.current = new Set(ids)
+  const added = ids.filter(id => !seen.current!.has(id))
+  // Many new ids at once means a different session was opened, not a message sent.
+  if (added.length > 0 && added.length <= 3) added.forEach(id => fresh.current.add(id))
+  added.forEach(id => seen.current!.add(id))
+  return fresh.current
+}
+
+/** Where a written file stands, from its tool call's status (no status yet: still streaming). */
+export const draftState = (draft: LiveDraft, tools: LiveTool[]): FileWriteState => {
+  if (draft.state) return draft.state
+  const tool = tools.find(item => item.id === draft.id)
+  return !tool ? 'writing' : tool.status === 'error' ? 'error' : tool.status === 'pending' ? 'pending' : 'done'
+}
+
+/** Files written in this reply, each a Claude Code style Write/Edit row with the newest lines streaming. */
+function CodeDrafts({ drafts, tools }: { drafts: LiveDraft[]; tools: LiveTool[] }) {
+  if (drafts.length === 0) return null
+  return <div className="code-drafts">
+    {drafts.map(draft => <FileWriteCard key={draft.id} path={draft.path} content={draft.content} edit={draft.edit} state={draftState(draft, tools)} />)}
+  </div>
+}
+
+/** The model's reasoning, collapsed like Claude's "Thinking" block; open while it streams. */
+function Thinking({ text, live }: { text: string; live: boolean }) {
+  const reduce = useReducedMotion() ?? false
+  const [open, setOpen] = useState(false)
+  const body = useRef<HTMLDivElement>(null)
+  useEffect(() => { if (live && open && body.current) body.current.scrollTop = body.current.scrollHeight }, [text, live, open])
+  if (!text.trim()) return null
+  return <div className="thinking">
+    <button type="button" className="thinking-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      <span className={cn(live && 'agent-shimmer')}>{live ? 'Thinking…' : 'Thought process'}</span>
+      <motion.span aria-hidden animate={{ rotate: open ? 180 : 0 }} transition={reduce ? { duration: 0 } : SPRING_SWAP}><ChevronDown size={13} /></motion.span>
+    </button>
+    <AgentDisclosure open={open}><div ref={body} className="thinking-body">{text.trim()}</div></AgentDisclosure>
+  </div>
+}
+
+/** The agent's to-do list, pinned above the composer while there is unfinished work. */
+export function TodoPanel({ todos }: { todos: { content: string; status: string }[] }) {
+  const [open, setOpen] = useState(true)
+  if (todos.length === 0) return null
+  const done = todos.filter(todo => todo.status === 'completed').length
+  if (done === todos.length && !open) return null
+  const current = todos.find(todo => todo.status === 'in_progress')
+  return <div className="todo-panel">
+    <button type="button" className="todo-head" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      <span className="todo-progress" style={{ ['--done' as string]: `${(done / todos.length) * 100}%` }} aria-hidden />
+      <span className="todo-title">{current ? current.content : done === todos.length ? 'All tasks done' : 'To-do'}</span>
+      <span className="todo-count">{done}/{todos.length}</span>
+      <ChevronDown size={13} className={cn('todo-chevron', open && 'open')} aria-hidden />
+    </button>
+    {open && <ol className="todo-list">{todos.map((todo, index) => <li key={index} data-status={todo.status}>
+      <span className="todo-mark" aria-hidden>{todo.status === 'completed' ? <Check size={12} /> : todo.status === 'in_progress' ? <LoaderCircle size={12} className="animate-spin" /> : null}</span>
+      <span>{todo.content}</span>
+    </li>)}</ol>}
+  </div>
+}
+
+function AssistantMessage({ id, content, sources, tools, drafts = [], thinking = '', status, live, feedback, onFeedback, onRetry, footer }: {
+  id?: string; content: string; sources: Source[]; tools: LiveTool[]; drafts?: LiveDraft[]; thinking?: string; status: 'streaming' | 'complete' | 'error'; live: boolean
   feedback?: StreamingResponseFeedback; onFeedback?: (value: StreamingResponseFeedback) => void; onRetry?: () => void; footer?: ReactNode
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [idPrefix] = useState(() => `sources-${crypto.randomUUID().slice(0, 8)}`)
-  return <Message from="assistant">
-    <span className="message-avatar"><Mascot size={22} /></span>
+  return <Message from="assistant" id={id}>
+    <span className="message-avatar"><Mascot size={36} /></span>
     <div className="message-body" data-slot="message-content">
+      <Thinking text={thinking} live={live && !content && tools.length === 0} />
       <ToolSteps tools={tools} live={live} />
+      <CodeDrafts drafts={drafts} tools={tools} />
       {(content || status !== 'streaming') && <StreamingResponse status={status} copyText={content} onRetry={onRetry} sources={toCitations(sources)} sourceIdPrefix={idPrefix} sourcesOpen={sourcesOpen} onSourcesOpenChange={setSourcesOpen} feedback={feedback} onFeedbackChange={onFeedback} announce={false} contentClassName={RESPONSE_PROSE}>
         <ResponseMarkdown content={content} sources={sources} idPrefix={idPrefix} onCite={() => setSourcesOpen(true)} />
       </StreamingResponse>}
@@ -248,6 +346,35 @@ export function ApprovalCard({ pending, status, projectPath, onApprove, onAlways
     parameters={[{ id: 'command', label: 'Command', value: <ToolApprovalCode code={pending.label} language={task ? 'bash' : 'powershell'} /> }, ...(projectPath ? [{ id: 'cwd', label: 'Directory', value: projectPath }] : [])]} />
 }
 
+/** Images you sent, as thumbnails in your message (like Claude); click one to see it full size. */
+function MessageImages({ images }: { images: string[] }) {
+  const [open, setOpen] = useState<number | null>(null)
+  const reduce = useReducedMotion() ?? false
+  useEffect(() => {
+    if (open === null) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(null)
+      if (event.key === 'ArrowRight') setOpen(index => index === null ? null : (index + 1) % images.length)
+      if (event.key === 'ArrowLeft') setOpen(index => index === null ? null : (index - 1 + images.length) % images.length)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, images.length])
+  return <>
+    <div className={cn('message-images', images.length === 1 && 'single')}>
+      {images.map((src, index) => <button type="button" key={index} className="message-image" onClick={() => setOpen(index)} aria-label={`Open image ${index + 1}`}>
+        <img src={src} alt="" loading="lazy" decoding="async" />
+      </button>)}
+    </div>
+    <AnimatePresence>{open !== null && <motion.div className="image-lightbox" role="dialog" aria-label="Image" onClick={() => setOpen(null)}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reduce ? 0 : 0.18 }}>
+      <motion.img src={images[open]} alt="" onClick={event => event.stopPropagation()}
+        initial={reduce ? false : { scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={reduce ? undefined : { scale: 0.96, opacity: 0 }} transition={{ type: 'spring', duration: 0.35, bounce: 0.15 }} />
+      <button type="button" className="image-lightbox-close" aria-label="Close" onClick={() => setOpen(null)}>×</button>
+    </motion.div>}</AnimatePresence>
+  </>
+}
+
 /** Rewind control under a sent message: back to before it, optionally restoring files too. */
 function RewindMenu({ disabled, onRewind }: { disabled: boolean; onRewind: (restoreCode: boolean) => void }) {
   const [open, setOpen] = useState(false)
@@ -285,6 +412,12 @@ export interface ConversationProps {
   onApprove: () => void
   onAlwaysAllow: () => void
   onDeny: () => void
+  /** A fix offered by an error notice (open settings, compact, …). */
+  onErrorAction?: (action: ErrorAction) => void
+  /** A reply built something viewable: offer to open it in the Browser section. */
+  previewOffer?: boolean
+  onOpenPreview?: () => void
+  onDismissPreview?: () => void
   /** Rewinds to before the n-th request you sent (0-based). */
   onRewind: (userIndex: number, restoreCode: boolean) => void
 }
@@ -293,19 +426,26 @@ export function Conversation(props: ConversationProps) {
   const { messages, live, phase, busy, pending, resolved, failed } = props
   const settledAfter = (id: string | null) => resolved.filter(item => item.after === id).map(item => <div className="approval-row" key={item.id}><ApprovalCard pending={item.pending} status={item.status} projectPath={props.projectPath} /></div>)
   const known = new Set(messages.map(entry => entry.id))
+  const fresh = useFresh(messages.map(entry => entry.id))
   let userIndex = -1
-  return <MessageScroller navigation="rail" busy={busy} className="chat-scroller" viewportClassName="chat-viewport" contentClassName="chat-content">
+  return <FreshContext.Provider value={fresh}><MessageScroller navigation="rail" busy={busy} className="chat-scroller" viewportClassName="chat-viewport" contentClassName="chat-content">
     {settledAfter(null)}
     {messages.flatMap(entry => { if (entry.role === 'user') userIndex += 1; const index = userIndex; return [entry.role === 'user'
-      ? <Message from="user" key={entry.id}><div className="message-body" data-slot="message-bubble-content">
+      ? <Message from="user" id={entry.id} key={entry.id}>{entry.images && entry.images.length > 0 && <MessageImages images={entry.images} />}{(entry.content || (entry.contextPaths?.length ?? 0) > 0) && <div className="message-body" data-slot="message-bubble-content">
           {entry.contextPaths && entry.contextPaths.length > 0 && <div className="message-context">{entry.contextPaths.map(path => <span key={path}><Paperclip size={12} />{path}</span>)}</div>}
-          <p>{entry.content}</p>
-        </div><RewindMenu disabled={busy} onRewind={restoreCode => props.onRewind(index, restoreCode)} /></Message>
-      : <AssistantMessage key={entry.id} content={entry.content} sources={entry.sources ?? []} tools={(entry.steps ?? []).map((label, index) => ({ id: `${entry.id}-${index}`, label, status: label.endsWith('(failed)') ? 'error' : 'done' }))} status="complete" live={false} feedback={props.feedback[entry.id] ?? null} onFeedback={value => props.onFeedback(entry.id, value)} />, ...settledAfter(entry.id)] })}
+          {entry.content && <p>{entry.content}</p>}
+        </div>}<RewindMenu disabled={busy} onRewind={restoreCode => props.onRewind(index, restoreCode)} /></Message>
+      : <AssistantMessage key={entry.id} id={entry.id} content={entry.content} sources={entry.sources ?? []} tools={(entry.steps ?? []).map((label, index) => ({ id: `${entry.id}-${index}`, label, status: label.endsWith('(failed)') ? 'error' : 'done' }))} drafts={entry.files} thinking={entry.thinking} status="complete" live={false} feedback={props.feedback[entry.id] ?? null} onFeedback={value => props.onFeedback(entry.id, value)} />, ...settledAfter(entry.id)] })}
     {resolved.filter(item => item.after !== null && !known.has(item.after)).map(item => <div className="approval-row" key={item.id}><ApprovalCard pending={item.pending} status={item.status} projectPath={props.projectPath} /></div>)}
-    {live && <AssistantMessage content={live.text} sources={live.sources} tools={live.tools} status="streaming" live footer={phase && <AgentStatus phase={phase} />} />}
+    {live && <AssistantMessage content={live.text} sources={live.sources} tools={live.tools} drafts={live.drafts} thinking={live.thinking} status="streaming" live footer={phase && <AgentStatus phase={phase} />} />}
     {!live && busy && phase && <div className="approval-row"><AgentStatus phase={phase} /></div>}
-    {failed && !busy && <AssistantMessage content={`**The request failed.** ${failed}`} sources={[]} tools={[]} status="error" live={false} onRetry={props.onRetry} />}
+    {failed && !busy && <Message from="assistant"><span className="message-avatar"><Mascot size={36} /></span><div className="message-body"><ErrorNotice error={failed} onAction={action => action === 'retry' ? props.onRetry() : props.onErrorAction?.(action)} /></div></Message>}
+    {props.previewOffer && !pending && <div className="approval-row"><div className="preview-offer" role="status">
+      <span className="preview-offer-icon" aria-hidden><Globe size={16} /></span>
+      <span className="preview-offer-text"><strong>Your app is ready to try</strong><span>Open it in Neru's browser. The dev server starts automatically.</span></span>
+      <button type="button" className="button primary" onClick={props.onOpenPreview}><Play size={14} /> Open preview</button>
+      <button type="button" className="icon-button" aria-label="Dismiss" onClick={props.onDismissPreview}><X size={14} /></button>
+    </div></div>}
     {pending && <div className="approval-row"><ApprovalCard pending={pending} status={props.pendingStatus} projectPath={props.projectPath} onApprove={props.onApprove} onAlwaysAllow={pending.kind === 'task' ? props.onAlwaysAllow : undefined} onDeny={props.onDeny} /></div>}
-  </MessageScroller>
+  </MessageScroller></FreshContext.Provider>
 }

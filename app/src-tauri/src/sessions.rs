@@ -33,6 +33,9 @@ pub struct TranscriptEntry {
     pub steps: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_paths: Vec<String>,
+    /// Images sent with a user message, as data URLs, so the conversation shows them again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<crate::web::Source>,
     /// For user messages: where this message sits in the model conversation, so it can be rewound.
@@ -82,6 +85,11 @@ struct SessionFile {
     #[serde(default)]
     transcript: Vec<TranscriptEntry>,
     pending: Option<PendingAction>,
+    /// Tool calls from the same turn as the pending action, run once it is settled.
+    #[serde(default)]
+    queued: Vec<Value>,
+    #[serde(default)]
+    todos: Vec<crate::extras::Todo>,
     #[serde(default)]
     edits: Vec<EditRecord>,
 }
@@ -91,6 +99,13 @@ pub struct Runtime {
     pub conversation: Vec<Value>,
     pub transcript: Vec<TranscriptEntry>,
     pub pending: Option<PendingAction>,
+    /// Tool calls the model made in the same turn as `pending`; they run after it instead of
+    /// being thrown away, so a multi-file build does not regenerate every file.
+    pub queued: Vec<Value>,
+    /// The agent's visible to-do list for this session.
+    pub todos: Vec<crate::extras::Todo>,
+    /// Messages the user sent while a reply was running, handed to the agent at its next step.
+    pub steer: Vec<String>,
     pub edits: Vec<EditRecord>,
     pub running: bool,
     pub cancel: Arc<tokio::sync::Notify>,
@@ -106,6 +121,9 @@ impl Runtime {
             conversation: file.conversation,
             transcript: file.transcript,
             pending: file.pending,
+            queued: file.queued,
+            todos: file.todos,
+            steer: Vec::new(),
             edits: file.edits,
             running: false,
             cancel: Arc::new(tokio::sync::Notify::new()),
@@ -137,6 +155,7 @@ impl Runtime {
             content,
             steps,
             context_paths,
+            images: Vec::new(),
             sources,
             conversation_at,
         });
@@ -158,6 +177,8 @@ impl Runtime {
             conversation: self.conversation.clone(),
             transcript: self.transcript.clone(),
             pending: self.pending.clone(),
+            queued: self.queued.clone(),
+            todos: self.todos.clone(),
             edits: self.edits.clone(),
         };
         write(&file)
@@ -171,6 +192,7 @@ impl Runtime {
             .map(|(view, from_agent)| (Some(view), from_agent))
             .unwrap_or((None, false));
         SessionSnapshot {
+            todos: self.todos.clone(),
             session: SessionSummary {
                 running: self.running,
                 ..self.summary.clone()
@@ -189,6 +211,7 @@ pub struct SessionSnapshot {
     pub messages: Vec<TranscriptEntry>,
     pub pending: Option<PendingView>,
     pub pending_from_agent: bool,
+    pub todos: Vec<crate::extras::Todo>,
 }
 
 pub fn lock(shared: &Shared) -> Result<MutexGuard<'_, Runtime>, String> {
@@ -410,6 +433,8 @@ pub fn create_for_root(
         conversation: vec![],
         transcript: vec![],
         pending: None,
+        queued: vec![],
+        todos: vec![],
         edits: vec![],
     });
     runtime.save()?;
@@ -648,6 +673,7 @@ pub fn rewind(state: &AppState, user_index: usize, restore_code: bool) -> Result
     runtime.transcript.truncate(position);
     runtime.conversation.truncate(at);
     runtime.pending = None;
+    runtime.queued.clear();
     runtime.save()?;
     Ok(RewindResult {
         snapshot: runtime.snapshot(),

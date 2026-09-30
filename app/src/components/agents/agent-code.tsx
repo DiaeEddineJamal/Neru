@@ -6,44 +6,53 @@ import {
   useEffect,
   useState,
 } from "react";
-import { createHighlighter, type Highlighter } from "shiki";
+import {
+  type BundledLanguage,
+  bundledLanguages,
+  createHighlighter,
+  type Highlighter,
+} from "shiki";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { cn } from "@/lib/utils";
 
-export type AgentCodeLanguage =
-  | "bash"
-  | "css"
-  | "diff"
-  | "html"
-  | "javascript"
-  | "json"
-  | "jsx"
-  | "markdown"
-  | "powershell"
-  | "python"
-  | "rust"
-  | "text"
-  | "toml"
-  | "tsx"
-  | "typescript"
-  | "yaml";
+/** A Shiki language id ("tsx", "python", …) or "text" for plain output. */
+export type AgentCodeLanguage = string;
 
-const HIGHLIGHT_LANGUAGES: Exclude<AgentCodeLanguage, "text">[] = [
-  "bash", "css", "diff", "html", "javascript", "json", "jsx", "markdown",
-  "powershell", "python", "rust", "toml", "tsx", "typescript", "yaml",
-];
+// Loaded with the highlighter; anything else in Shiki's bundle loads the first time it is seen.
+const PRELOADED_LANGUAGES = ["bash", "css", "html", "javascript", "json", "tsx", "typescript"];
 
 const LANGUAGE_BY_EXTENSION: Record<string, AgentCodeLanguage> = {
-  cjs: "javascript", css: "css", diff: "diff", htm: "html", html: "html",
-  js: "javascript", json: "json", jsx: "jsx", md: "markdown", mjs: "javascript",
-  patch: "diff", ps1: "powershell", psm1: "powershell", py: "python", rs: "rust",
-  sh: "bash", toml: "toml", ts: "typescript", tsx: "tsx", yaml: "yaml", yml: "yaml",
+  astro: "astro", bat: "bat", c: "c", cc: "cpp", cjs: "javascript", cmd: "bat", cpp: "cpp",
+  cs: "csharp", css: "css", cts: "typescript", dart: "dart", diff: "diff", dockerfile: "docker",
+  ex: "elixir", exs: "elixir", go: "go", gql: "graphql", graphql: "graphql", h: "c", hpp: "cpp",
+  htm: "html", html: "html", ini: "ini", java: "java", js: "javascript", json: "json",
+  jsonc: "jsonc", jsx: "jsx", kt: "kotlin", less: "less", lua: "lua", md: "markdown",
+  mdx: "mdx", mjs: "javascript", mts: "typescript", php: "php", patch: "diff", ps1: "powershell",
+  psm1: "powershell", py: "python", r: "r", rb: "ruby", rs: "rust", sass: "sass", scss: "scss",
+  sh: "bash", sql: "sql", svelte: "svelte", svg: "xml", swift: "swift", toml: "toml",
+  ts: "typescript", tsx: "tsx", txt: "text", vue: "vue", xml: "xml", yaml: "yaml", yml: "yaml",
+  zig: "zig", zsh: "bash",
 };
 
 /** Neru addition: pick a highlight language from a file path. */
 export function languageForPath(path: string): AgentCodeLanguage {
-  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  if (name === "dockerfile") return "docker";
+  if (name === "makefile") return "make";
+  const extension = name.includes(".") ? name.split(".").pop() ?? "" : "";
   return LANGUAGE_BY_EXTENSION[extension] ?? "text";
+}
+
+/** Maps a Markdown fence tag ("js", "sh", "py", …) onto a Shiki language id. */
+export function languageForFence(tag: string | undefined): AgentCodeLanguage {
+  const value = (tag ?? "").trim().toLowerCase();
+  if (!value) return "text";
+  const alias: Record<string, string> = {
+    console: "bash", js: "javascript", node: "javascript", plaintext: "text", ps: "powershell",
+    ps1: "powershell", pwsh: "powershell", py: "python", rb: "ruby", rs: "rust", shell: "bash",
+    sh: "bash", ts: "typescript", txt: "text", yml: "yaml", zsh: "bash",
+  };
+  return alias[value] ?? LANGUAGE_BY_EXTENSION[value] ?? value;
 }
 
 export interface AgentCodeToken {
@@ -67,21 +76,49 @@ export interface AgentCodeLineProps {
   className?: string;
 }
 
-const LIGHT_THEME = "github-light-high-contrast";
-const DARK_THEME = "github-dark-high-contrast";
+// Neru: VS Code's default Light+ and Dark+ colors, so generated code reads like the editor.
+const LIGHT_THEME = "light-plus";
+const DARK_THEME = "dark-plus";
 let agentCodeHighlighter: Promise<Highlighter> | null = null;
 const tokenCache = new Map<string, AgentCodeTokenLines>();
+const TOKEN_CACHE_LIMIT = 400;
+const loadingLanguages = new Map<string, Promise<boolean>>();
 
 function getAgentCodeHighlighter() {
   if (!agentCodeHighlighter) {
     // Neru: the JavaScript regex engine avoids WebAssembly, which the desktop CSP blocks.
     agentCodeHighlighter = createHighlighter({
       themes: [LIGHT_THEME, DARK_THEME],
-      langs: HIGHLIGHT_LANGUAGES,
+      langs: PRELOADED_LANGUAGES,
       engine: createJavaScriptRegexEngine({ forgiving: true }),
     });
   }
   return agentCodeHighlighter;
+}
+
+/** Loads a language on first use; resolves false when Shiki does not know it. */
+function ensureLanguage(highlighter: Highlighter, language: AgentCodeLanguage) {
+  if (language === "text" || highlighter.getLoadedLanguages().includes(language)) {
+    return Promise.resolve(language !== "text");
+  }
+  let loading = loadingLanguages.get(language);
+  if (!loading) {
+    loading = language in bundledLanguages
+      ? highlighter.loadLanguage(language as BundledLanguage).then(() => true, () => false)
+      : Promise.resolve(false);
+    loadingLanguages.set(language, loading);
+  }
+  return loading;
+}
+
+function rememberTokens(key: string, lines: AgentCodeTokenLines) {
+  tokenCache.set(key, lines);
+  // Streaming code produces a new key per update; keep only the recent ones.
+  while (tokenCache.size > TOKEN_CACHE_LIMIT) {
+    const oldest = tokenCache.keys().next().value;
+    if (oldest === undefined) break;
+    tokenCache.delete(oldest);
+  }
 }
 
 function tokenCacheKey(code: string, language: AgentCodeLanguage) {
@@ -109,11 +146,12 @@ export function useAgentCodeTokens(
     }
 
     let cancelled = false;
-    getAgentCodeHighlighter().then((highlighter) => {
+    getAgentCodeHighlighter().then(async (highlighter) => {
+      const known = await ensureLanguage(highlighter, language);
       if (cancelled) return;
       const lines = highlighter
         .codeToTokensWithThemes(code, {
-          lang: language,
+          lang: (known ? language : "text") as BundledLanguage | "text",
           themes: {
             light: LIGHT_THEME,
             dark: DARK_THEME,
@@ -127,7 +165,7 @@ export function useAgentCodeTokens(
             dark: token.variants.dark?.color,
           })),
       );
-      tokenCache.set(key, lines);
+      rememberTokens(key, lines);
       setResult({ key, code, language, lines });
     });
     return () => {

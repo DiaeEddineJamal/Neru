@@ -1,6 +1,9 @@
 mod agent;
+mod cli;
+mod cli_ui;
 mod commands;
 mod documents;
+mod extras;
 mod fallback;
 mod git;
 mod hooks;
@@ -129,6 +132,20 @@ impl Default for AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    builder(|app| {
+        tauri::async_runtime::spawn(mcp::start_enabled(app));
+    })
+    .run(context())
+    .expect("error while building Neru");
+}
+
+/// The terminal version (`neru` on the command line): the same core with no window.
+pub fn run_cli() {
+    cli::run();
+}
+
+/// App configuration shared by the window and the CLI.
+pub(crate) fn context() -> tauri::Context<tauri::Wry> {
     let mut context = tauri::generate_context!();
     #[cfg(windows)]
     {
@@ -149,14 +166,19 @@ pub fn run() {
         }
     }
 
+    context
+}
+
+/// Everything but the window: plugins, state and commands. `ready` runs once the app is set up.
+pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
-        .setup(|app| {
-            tauri::async_runtime::spawn(mcp::start_enabled(app.handle().clone()));
+        .setup(move |app| {
+            ready(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -203,6 +225,7 @@ pub fn run() {
             git::failed_check_log,
             preview::preview_hint,
             preview::preview_start,
+            preview::preview_current,
             preview::preview_stop,
             workspace::save_file,
             workspace::open_in_editor,
@@ -219,6 +242,12 @@ pub fn run() {
             documents::inspect_documents,
             agent::stop_chat,
             agent::run_pending_task,
+            agent::steer_session,
+            agent::memory_files,
+            agent::permission_rules,
+            agent::revoke_permission,
+            extras::doctor,
+            extras::open_memory_file,
             agent::run_task_command,
             agent::allow_pending_always,
             agent::session_context,
@@ -245,6 +274,4 @@ pub fn run() {
             voice::transcribe_audio,
             web::open_url,
         ])
-        .run(context)
-        .expect("error while building Neru");
 }

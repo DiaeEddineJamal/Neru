@@ -7,7 +7,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // Pre-bundle the speech runtime so the dev server never reloads mid-download on first use.
-  optimizeDeps: { include: ['@huggingface/transformers'] },
+  optimizeDeps: { include: ['@huggingface/transformers', 'shiki', 'shiki/engine/javascript'] },
   preview: { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'credentialless' } },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   // Cross-origin isolation lets the speech runtime use every CPU core (WASM threads).

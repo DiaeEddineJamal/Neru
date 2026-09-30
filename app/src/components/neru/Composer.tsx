@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, Check, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
+import { ArrowUp, Check, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Search, Upload, X } from 'lucide-react'
 import { Liquid } from 'liquid-gooey'
 import { useReducedMotion } from 'motion/react'
 import { useMicrophone, VoiceBeam } from 'voice-glow'
@@ -135,6 +135,8 @@ export interface ComposerProps {
   onValueChange: (value: string) => void
   onSubmit: (value: string) => void
   onStop: () => void
+  /** Sends a message into the running reply. */
+  onSteer?: (value: string) => void
   loading: boolean
   disabled: boolean
   placeholder: string
@@ -287,19 +289,41 @@ export function Composer(props: ComposerProps) {
   useEffect(() => () => { recognition.current?.abort(); if (recorder.current && recorder.current.state !== 'inactive') { recorder.current.onstop = null; recorder.current.stop() } }, [])
 
   const shortName = (model: string) => model.split('/').pop() || model
+  const shortCounts = new Map<string, number>()
+  for (const model of props.models) shortCounts.set(shortName(model), (shortCounts.get(shortName(model)) ?? 0) + 1)
   const models: PromptModel[] = props.models.map(model => {
     const short = shortName(model)
-    const unique = props.models.filter(other => shortName(other) === short).length === 1
-    return { value: model, label: <span className="model-label" title={model}>{unique ? short : model}</span> }
+    return { value: model, label: <span className="model-label" title={model}>{shortCounts.get(short) === 1 ? short : model}</span> }
   })
+  // Providers like OpenRouter and NVIDIA list hundreds of models; search them instead of scrolling.
+  const [modelOpen, setModelOpen] = useState(false)
+  const [modelQuery, setModelQuery] = useState('')
+  const modelSearch = useRef<HTMLInputElement>(null)
+  const searchable = models.length > 10
+  const modelTerms = modelQuery.toLowerCase().split(/\s+/).filter(Boolean)
+  const shownModels = modelTerms.length ? models.filter(option => modelTerms.every(term => option.value.toLowerCase().includes(term))) : models
+  const openModels = (open: boolean) => {
+    setModelOpen(open)
+    if (open && searchable) window.setTimeout(() => modelSearch.current?.focus({ preventScroll: true }), 60)
+    if (!open) setModelQuery('')
+  }
   const active = voice !== 'idle'
   const recording = voice === 'listening' || voice === 'paused'
   const transcribing = voice === 'transcribing'
   const glow = neruVoiceGlow(props.light)
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashClosed, setSlashClosed] = useState('')
+  const slashMenu = useRef<HTMLDivElement>(null)
+  // Keep the highlighted command in view as the arrow keys move through a long list.
+  useEffect(() => {
+    const menu = slashMenu.current
+    const active = menu?.querySelector<HTMLElement>('.slash-item.active')
+    if (!menu || !active) return
+    if (active.offsetTop < menu.scrollTop) menu.scrollTop = active.offsetTop - 4
+    else if (active.offsetTop + active.offsetHeight > menu.scrollTop + menu.clientHeight) menu.scrollTop = active.offsetTop + active.offsetHeight - menu.clientHeight + 4
+  }, [slashIndex])
   const slashQuery = /^\/([\w-]*)$/.exec(value)?.[1]
-  const slashMatches = slashQuery === undefined || slashClosed === value ? [] : props.commands.filter(command => command.name.startsWith(slashQuery.toLowerCase())).slice(0, 8)
+  const slashMatches = slashQuery === undefined || slashClosed === value ? [] : props.commands.filter(command => command.name.startsWith(slashQuery.toLowerCase()))
   const mentionQuery = /@([^\s@]*)$/.exec(value)?.[1]
   const mentionMatches = mentionQuery === undefined ? [] : (props.projectFiles ?? []).filter(path => path.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8)
   const pickFile = (path: string) => { props.onAttachFile?.(path); onValueChange(value.replace(/@[^\s@]*$/, '')) }
@@ -321,7 +345,7 @@ export function Composer(props: ComposerProps) {
     {mentionMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label="Project files">
       {mentionMatches.map(path => <button key={path} type="button" className="slash-item" onMouseDown={event => { event.preventDefault(); pickFile(path) }}><span>{path}</span></button>)}
     </div>}
-    {slashMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label="Commands">
+    {slashMatches.length > 0 && <div ref={slashMenu} className="slash-menu" role="listbox" aria-label="Commands">
       {slashMatches.map((command, index) => <button key={command.name} type="button" role="option" aria-selected={index === Math.min(slashIndex, slashMatches.length - 1)} className={cn('slash-item', index === Math.min(slashIndex, slashMatches.length - 1) && 'active')} onMouseEnter={() => setSlashIndex(index)} onMouseDown={event => { event.preventDefault(); chooseCommand(command) }}>
         <code>/{command.name}</code><span>{command.description}</span>{command.source !== 'built-in' && <small>{command.source}</small>}
       </button>)}
@@ -335,6 +359,7 @@ export function Composer(props: ComposerProps) {
         onSubmit={prompt => submit(prompt)}
         loading={loading}
         onStop={props.onStop}
+        onSteer={props.onSteer}
         disabled={disabled || transcribing}
         placeholder={voice === 'listening' ? 'Listening…' : voice === 'paused' ? 'Paused' : transcribing ? 'Transcribing…' : props.placeholder}
         aria-label="Message Neru"
@@ -377,12 +402,17 @@ export function Composer(props: ComposerProps) {
         </Select>}
       </div>
       <div className="composer-settings">
-      {models.length > 0 && <Select value={props.model} onValueChange={props.onModelChange} disabled={disabled || loading} className="composer-model">
+      {models.length > 0 && <Select value={props.model} onValueChange={props.onModelChange} open={modelOpen} onOpenChange={openModels} disabled={disabled || loading} className="composer-model">
         <SelectTrigger className="h-8 w-auto max-w-56 rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2">
           <span className="truncate text-muted-foreground">{currentModel?.label ?? 'Choose model'}</span>
         </SelectTrigger>
-        <SelectContent className="left-auto right-0 w-56 shadow-none">
-          {models.map(option => <SelectItem key={option.value} value={option.value} className="py-2"><span className="min-w-0 truncate text-sm text-foreground">{option.label}</span></SelectItem>)}
+        <SelectContent className="left-auto right-0 w-72 shadow-none" maxHeight={340} header={searchable && <label className="model-search">
+          <Search size={13} aria-hidden />
+          <input ref={modelSearch} value={modelQuery} onChange={event => setModelQuery(event.target.value)} placeholder={`Search ${models.length} models`} aria-label="Search models" spellCheck={false}
+            onKeyDown={event => { if (event.key === 'Enter' && shownModels[0]) { event.preventDefault(); props.onModelChange(shownModels[0].value); openModels(false) } }} />
+        </label>}>
+          {shownModels.map(option => <SelectItem key={option.value} value={option.value} className="py-2"><span className="min-w-0 truncate text-sm text-foreground">{option.label}</span></SelectItem>)}
+          {shownModels.length === 0 && <p className="model-search-empty">No models match “{modelQuery}”.</p>}
         </SelectContent>
       </Select>}
       {props.effortSupported && <Select value={props.effort} onValueChange={value => props.onEffortChange(value as Effort)} disabled={disabled || loading} className="composer-effort">

@@ -8,6 +8,7 @@ import {
   type Variants,
 } from "motion/react";
 import {
+  Children,
   createContext,
   type ReactNode,
   useCallback,
@@ -274,13 +275,25 @@ export function SelectValue({ placeholder, className }: SelectValueProps) {
 
 export interface SelectContentProps {
   className?: string;
+  /**
+   * Tallest the option list may grow before it scrolls. It is also kept inside the
+   * window, so a long list (a provider with hundreds of models) never runs off screen.
+   */
+  maxHeight?: number;
+  /** Pinned above the scrolling options, e.g. a search field. */
+  header?: ReactNode;
   children: ReactNode;
 }
 
-export function SelectContent({ className, children }: SelectContentProps) {
+// Lists longer than this appear at once; staggering hundreds of rows would take seconds.
+const STAGGER_LIMIT = 12;
+
+export function SelectContent({ className, maxHeight = 320, header, children }: SelectContentProps) {
   const ctx = useSelectContext("SelectContent");
   const innerRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
+  const [room, setRoom] = useState(maxHeight);
+  const stagger = !ctx.reduce && Children.count(children) <= STAGGER_LIMIT;
   const open = ctx.open;
   const { setPlacement } = ctx;
 
@@ -304,8 +317,19 @@ export function SelectContent({ className, children }: SelectContentProps) {
     const h = node.offsetHeight;
     const below = window.innerHeight - rect.bottom;
     const above = rect.top;
-    setPlacement(below < h + 16 && above > below ? "top" : "bottom");
-  }, [open, ctx.triggerId, setPlacement]);
+    const top = below < h + 16 && above > below;
+    setPlacement(top ? "top" : "bottom");
+    // Header and padding sit outside the scrolling list; leave a margin from the window edge.
+    const chrome = node.offsetHeight - (node.querySelector<HTMLElement>("[data-select-scroll]")?.offsetHeight ?? 0);
+    setRoom(Math.max(120, Math.min(maxHeight, (top ? above : below) - chrome - 24)));
+    // Open a long list at the current choice. Only the list scrolls, never the page.
+    const list = node.querySelector<HTMLElement>("[data-select-scroll]");
+    const chosen = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (list && chosen) {
+      const offset = chosen.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+      list.scrollTop = Math.max(0, offset - list.clientHeight / 2);
+    }
+  }, [open, ctx.triggerId, setPlacement, maxHeight]);
 
   // Specify EVERY corner + both margins each render. The near edge (facing the
   // trigger) animates flat->round and the gap opens on that side; the far edge
@@ -380,15 +404,22 @@ export function SelectContent({ className, children }: SelectContentProps) {
         className,
       )}
     >
-      <motion.div
-        ref={innerRef}
-        variants={ctx.reduce ? undefined : LIST_VARIANTS}
-        initial={false}
-        animate={open ? "show" : "hidden"}
-        className="p-1"
-      >
-        {children}
-      </motion.div>
+      <div ref={innerRef} className="flex flex-col p-1">
+        {header}
+        <div
+          data-select-scroll
+          className="min-h-0 overflow-y-auto overscroll-contain"
+          style={{ maxHeight: room }}
+        >
+          <motion.div
+            variants={stagger ? LIST_VARIANTS : undefined}
+            initial={false}
+            animate={open ? "show" : "hidden"}
+          >
+            {children}
+          </motion.div>
+        </div>
+      </div>
     </motion.div>
   );
 }

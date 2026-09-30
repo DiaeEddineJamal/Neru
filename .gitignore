@@ -18,3 +18,6 @@ app/src-tauri/gen/schemas/
 *.log
 .DS_Store
 Thumbs.db
+
+# Claude Code plugin state
+.omc/

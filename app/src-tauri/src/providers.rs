@@ -164,10 +164,18 @@ fn openai_chat_payload(config: &ProviderConfig, messages: &[Value], tools: &Valu
         "messages": messages,
         "tools": tools,
         "tool_choice": "auto",
-        "parallel_tool_calls": false,
         "stream": true,
         "stream_options": {"include_usage": true}
     });
+    // NVIDIA NIM and similar hosts default to ~1k output tokens, which cuts a file write off
+    // mid-JSON. Ask for room to write whole files unless this model rejected the value before.
+    if matches!(config.provider_id.as_str(), "nvidia" | "huggingface" | "modelscope") {
+        let wanted = (context_window(&config.model) / 4).clamp(4_096, 16_384);
+        let cap = output_cap(&config.model).unwrap_or(wanted);
+        if cap > 0 && tools.as_array().is_some_and(|tools| !tools.is_empty()) {
+            payload["max_tokens"] = json!(cap.min(wanted));
+        }
+    }
     let spare = matches!(
         config.provider_id.as_str(),
         "gemini" | "groq" | "cerebras" | "mistral" | "nvidia" | "huggingface" | "xai" | "modelscope"
@@ -181,6 +189,37 @@ fn openai_chat_payload(config: &ProviderConfig, messages: &[Value], tools: &Valu
         }
     }
     payload
+}
+
+static OUTPUT_CAPS: std::sync::Mutex<Option<std::collections::HashMap<String, usize>>> = std::sync::Mutex::new(None);
+
+fn output_cap(model: &str) -> Option<usize> {
+    OUTPUT_CAPS.lock().ok()?.as_ref()?.get(model).copied()
+}
+
+/// Learns from an error that rejected `max_tokens`: keeps the limit it names, or drops the field
+/// (stored as 0). Returns true when the request should be retried.
+pub fn max_tokens_rejected(model: &str, error: &str) -> bool {
+    let lower = error.to_lowercase();
+    if !lower.contains("max_tokens") && !lower.contains("max tokens") && !lower.contains("max_completion_tokens") {
+        return false;
+    }
+    let named = lower
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|part| part.parse::<usize>().ok())
+        .filter(|n| (256..=200_000).contains(n))
+        .min();
+    let Ok(mut caps) = OUTPUT_CAPS.lock() else { return false };
+    let caps = caps.get_or_insert_with(Default::default);
+    let next = match (caps.get(model).copied(), named) {
+        (Some(0), _) => return false,
+        (Some(current), Some(n)) if n < current => n,
+        (Some(_), _) => 0,
+        (None, Some(n)) => n,
+        (None, None) => 0,
+    };
+    caps.insert(model.to_string(), next);
+    true
 }
 
 fn public_messages(messages: &[Value]) -> Vec<Value> {
@@ -350,7 +389,10 @@ fn anthropic_payload(model: &str, messages: &[Value], tools: &Value) -> Value {
     let anthropic_tools: Vec<Value> = tools.as_array().into_iter().flatten().map(|tool| {
         json!({"name":tool["function"]["name"],"description":tool["function"]["description"],"input_schema":tool["function"]["parameters"]})
     }).collect();
-    json!({"model":model,"max_tokens":4096,"system":system_text(messages),"messages":converted,"tools":anthropic_tools,"tool_choice":{"type":"auto","disable_parallel_tool_use":true},"stream":true})
+    // Whole files arrive as tool input, so leave room for them; older Claude 3 models cap lower.
+    let max_tokens = if model.contains("claude-3-5") { 8_192 } else if model.contains("claude-3-") { 4_096 } else { 16_000 };
+    let max_tokens = output_cap(model).filter(|cap| *cap > 0).map_or(max_tokens, |cap| cap.min(max_tokens));
+    json!({"model":model,"max_tokens":max_tokens,"system":system_text(messages),"messages":converted,"tools":anthropic_tools,"tool_choice":{"type":"auto"},"stream":true})
 }
 
 pub fn normalize_message(format: &str, body: &Value) -> Result<Value, String> {

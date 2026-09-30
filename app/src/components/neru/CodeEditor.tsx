@@ -21,7 +21,13 @@ loader.config({ monaco })
 
 const languageFor = (path: string) => {
   const extension = path.split('.').pop()?.toLowerCase()
-  return ({ ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', rs: 'rust', css: 'css', html: 'html', json: 'json', md: 'markdown', py: 'python', sh: 'shell', toml: 'ini' } as Record<string, string>)[extension ?? ''] ?? 'plaintext'
+  return ({
+    ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    rs: 'rust', css: 'css', scss: 'scss', less: 'less', html: 'html', htm: 'html', vue: 'html', svelte: 'html', json: 'json', jsonc: 'json', md: 'markdown', mdx: 'markdown',
+    py: 'python', sh: 'shell', bash: 'shell', zsh: 'shell', ps1: 'powershell', psm1: 'powershell', bat: 'bat', cmd: 'bat', toml: 'ini', ini: 'ini',
+    yaml: 'yaml', yml: 'yaml', xml: 'xml', svg: 'xml', sql: 'sql', go: 'go', java: 'java', kt: 'kotlin', c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
+    cs: 'csharp', php: 'php', rb: 'ruby', swift: 'swift', dart: 'dart', lua: 'lua', r: 'r', graphql: 'graphql', gql: 'graphql', dockerfile: 'dockerfile',
+  } as Record<string, string>)[extension ?? ''] ?? (path.toLowerCase().endsWith('dockerfile') ? 'dockerfile' : 'plaintext')
 }
 
 export default function CodeEditor({ path, value, onChange, light }: { path: string; value: string; onChange: (value: string) => void; light: boolean }) {
@@ -30,11 +36,11 @@ export default function CodeEditor({ path, value, onChange, light }: { path: str
     monaco.typescript.typescriptDefaults.setDiagnosticsOptions(diagnostics)
     monaco.typescript.javascriptDefaults.setDiagnosticsOptions(diagnostics)
     monaco.typescript.typescriptDefaults.setEagerModelSync(true)
+    // VS Code's Dark+ token colors as they are; only the canvas is tinted to sit in Neru's window.
     monaco.editor.defineTheme('neru-dark', {
-      base: 'vs-dark', inherit: true,
-      rules: [{ token: 'comment', foreground: '777A72' }, { token: 'string', foreground: 'A2B69E' }],
-      colors: { 'editor.background': '#111310', 'editor.foreground': '#EAE9E2', 'editorLineNumber.foreground': '#6C7068', 'editorCursor.foreground': '#8EA291', 'editor.selectionBackground': '#344A39' },
+      base: 'vs-dark', inherit: true, rules: [],
+      colors: { 'editor.background': '#1E1E1E', 'editorCursor.foreground': '#AEAFAD' },
     })
   }, [])
-  return <Editor height="100%" path={path} language={languageFor(path)} value={value} onChange={next => onChange(next ?? '')} theme={light ? 'vs' : 'neru-dark'} options={{ minimap: { enabled: false }, fontFamily: 'JetBrains Mono', fontSize: 12, lineNumbersMinChars: 3, scrollBeyondLastLine: false, padding: { top: 18 }, automaticLayout: true, tabSize: 2, renderValidationDecorations: 'on' }} />
+  return <Editor height="100%" path={path} language={languageFor(path)} value={value} onChange={next => onChange(next ?? '')} theme={light ? 'vs' : 'neru-dark'} options={{ minimap: { enabled: false }, fontFamily: "Consolas, 'JetBrains Mono', 'Courier New', monospace", fontSize: 13, lineNumbersMinChars: 3, scrollBeyondLastLine: false, padding: { top: 18 }, automaticLayout: true, tabSize: 2, renderValidationDecorations: 'on', bracketPairColorization: { enabled: true }, guides: { indentation: true } }} />
 }

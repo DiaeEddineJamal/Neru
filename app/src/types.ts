@@ -16,6 +16,9 @@ export interface FileEntry {
 export interface SearchHit {
   path: string
   line: number
+  /** Match position in `preview` (characters) and its length. */
+  column: number
+  length: number
   preview: string
 }
 
@@ -61,7 +64,7 @@ export interface AgentResponse {
   context: ContextUsage
 }
 
-export type DocumentKind = 'text' | 'image' | 'pdf' | 'docx'
+export type DocumentKind = 'text' | 'image' | 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'odt' | 'odp' | 'ods' | 'rtf'
 
 /** A document the user attached from outside the project. PDF and Word files carry extracted text; images carry a data URL. */
 export interface AttachedDocument { name: string; path: string; size: number; kind: DocumentKind; text?: string; dataUrl?: string }
@@ -98,7 +101,12 @@ export interface ChatEntry {
   content: string
   steps?: string[]
   contextPaths?: string[]
+  /** Images sent with a user message (data URLs). */
+  images?: string[]
   sources?: Source[]
+  thinking?: string
+  /** Files the agent wrote in this reply (kept in memory for the open session). */
+  files?: { id: string; path: string; content: string; edit?: boolean; state?: 'writing' | 'done' | 'pending' | 'error' }[]
 }
 
 export type ToolEventStatus = 'running' | 'done' | 'error' | 'pending'
@@ -110,7 +118,13 @@ export type AgentEvent = { sessionId: string } & (
   | { type: 'status'; running: boolean }
   | { type: 'notice'; text: string }
   | { type: 'context'; usage: ContextUsage }
-  | { type: 'provider'; providerId: string; model: string })
+  | { type: 'provider'; providerId: string; model: string }
+  | { type: 'draft'; id: string; path: string; content: string; tool: string }
+  | { type: 'reasoning'; chars: number; text: string }
+  | { type: 'todos'; todos: Todo[] }
+  | { type: 'steered'; text: string })
+
+export interface Todo { content: string; status: 'pending' | 'in_progress' | 'completed' }
 
 export interface VoiceView {
   baseUrl: string
@@ -135,6 +149,7 @@ export interface SessionSnapshot {
   messages: ChatEntry[]
   pending: PendingView | null
   pendingFromAgent: boolean
+  todos?: Todo[]
 }
 
 export interface ProviderView {

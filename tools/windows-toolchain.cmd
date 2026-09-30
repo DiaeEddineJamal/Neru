@@ -12,6 +12,7 @@ cd /d D:\Neru\app
 if "%~1"=="check" goto check
 if "%~1"=="check-online" goto check-online
 if "%~1"=="test" goto test
+if "%~1"=="cli" goto cli
 if "%~1"=="fmt" goto fmt
 if "%~1"=="build-exe" goto build-exe
 if "%~1"=="build" goto build
@@ -24,6 +25,9 @@ exit /b %errorlevel%
 :check-online
 cargo check --manifest-path "D:\Neru\app\src-tauri\Cargo.toml"
 exit /b %errorlevel%
+:cli
+cargo build --manifest-path "D:\Neru\app\src-tauri\Cargo.toml" --offline --bin neru-cli %2
+exit /b %errorlevel%
 :test
 cargo test --manifest-path "D:\Neru\app\src-tauri\Cargo.toml" --offline
 exit /b %errorlevel%
@@ -34,11 +38,11 @@ exit /b %errorlevel%
 cargo build --manifest-path "D:\Neru\app\src-tauri\Cargo.toml" --release --offline
 exit /b %errorlevel%
 :build
-npm run tauri -- build -b nsis
+npm run tauri -- build -b nsis --config src-tauri/tauri.bundle.conf.json
 exit /b %errorlevel%
 :installers
 rem Update files are signed with the key kept in .local\keys, which is never committed.
 if exist "D:\Neru\.local\keys\neru-updater.key" set /p TAURI_SIGNING_PRIVATE_KEY=<"D:\Neru\.local\keys\neru-updater.key"
 if exist "D:\Neru\.local\keys\neru-updater.password" set /p TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<"D:\Neru\.local\keys\neru-updater.password"
-npm run tauri -- build -b nsis,msi
+npm run tauri -- build -b nsis,msi --config src-tauri/tauri.bundle.conf.json
 exit /b %errorlevel%

@@ -38,6 +38,8 @@ $env:UV_CACHE_DIR = $neruPaths.Uv
 $env:CARGO_HOME = $neruPaths.Cargo
 $env:RUSTUP_HOME = $neruPaths.Rustup
 $env:CARGO_TARGET_DIR = $neruPaths.RustTarget
+# exFAT has no hard links, so Cargo's incremental cache copies every file and grows by gigabytes.
+$env:CARGO_INCREMENTAL = '0'
 $env:PLAYWRIGHT_BROWSERS_PATH = $neruPaths.Playwright
 $env:ELECTRON_CACHE = $neruPaths.Electron
 $env:PYTHONPYCACHEPREFIX = $neruPaths.PythonBytecode

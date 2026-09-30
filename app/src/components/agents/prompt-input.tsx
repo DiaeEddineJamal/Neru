@@ -60,6 +60,8 @@ export interface PromptInputProps extends Omit<
   onSubmit?: (value: string, model?: string) => void | Promise<void>;
   loading?: boolean;
   onStop?: () => void;
+  /** Neru addition: sending while `loading` hands the message to the running reply. */
+  onSteer?: (value: string) => void;
   minRows?: number;
   maxRows?: number;
   leadingAction?: ReactNode;
@@ -83,6 +85,7 @@ export function PromptInput({
   onSubmit,
   loading = false,
   onStop,
+  onSteer,
   minRows = 2,
   maxRows = 8,
   leadingAction,
@@ -109,6 +112,8 @@ export function PromptInput({
     (option) => option.value === currentModelValue,
   );
   const canSubmit = Boolean(currentValue.trim()) && !disabled && !loading;
+  // While a reply runs, typed text turns the stop button into "send to the agent".
+  const steering = loading && Boolean(onSteer) && Boolean(currentValue.trim()) && !disabled;
 
   const resizeTextarea = useCallback(() => {
     const textarea = textareaRef.current;
@@ -149,6 +154,11 @@ export function PromptInput({
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     const prompt = currentValue.trim();
+    if (steering) {
+      onSteer?.(prompt);
+      if (value === undefined) setInternalValue("");
+      return;
+    }
     if (!prompt || disabled || loading) return;
 
     onSubmit?.(prompt, currentModelValue);
@@ -316,23 +326,24 @@ export function PromptInput({
           <div className="ml-auto flex items-center gap-1">{trailingAction}</div>
         ) : null}
         <Button
-          type={loading ? "button" : "submit"}
+          type={loading && !steering ? "button" : "submit"}
           size="icon"
-          disabled={loading ? !onStop : !canSubmit}
-          aria-label={loading ? "Stop generating" : "Send prompt"}
-          onClick={loading ? onStop : undefined}
+          disabled={steering ? false : loading ? !onStop : !canSubmit}
+          aria-label={steering ? "Send to the running reply" : loading ? "Stop generating" : "Send prompt"}
+          title={steering ? "Send now; Neru reads it before its next step" : undefined}
+          onClick={loading && !steering ? onStop : undefined}
           className={cn("size-8 rounded-full", !trailingAction && "ml-auto")}
         >
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span
-              key={loading ? "stop" : "send"}
+              key={loading && !steering ? "stop" : "send"}
               initial={reduce ? { opacity: 1 } : { opacity: 0, y: 3, scale: 0.8 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={reduce ? { opacity: 0 } : { opacity: 0, y: -3, scale: 0.8 }}
               transition={reduce ? { duration: 0 } : SPRING_SWAP}
               className="grid place-items-center"
             >
-              {loading ? (
+              {loading && !steering ? (
                 <Square className="size-3 fill-current" />
               ) : (
                 <ArrowUp className="size-4" />

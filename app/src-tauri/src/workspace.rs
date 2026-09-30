@@ -34,6 +34,9 @@ pub struct FileEntry {
 pub struct SearchHit {
     pub path: String,
     pub line: usize,
+    /// Where the match starts in `preview`, in characters, and how long it is.
+    pub column: usize,
+    pub length: usize,
     pub preview: String,
 }
 
@@ -262,40 +265,64 @@ pub fn read_file(path: String, state: State<'_, AppState>) -> Result<String, Str
     read_limited(&resolve_existing(&root, &path)?)
 }
 
+/// Project search for the Search view: plain text by default, or a regex; case and whole-word
+/// options; ignores what Git ignores. Runs off the main thread so the window stays responsive.
 #[tauri::command]
-pub fn search_text(query: String, state: State<'_, AppState>) -> Result<Vec<SearchHit>, String> {
+pub async fn search_text(
+    query: String,
+    case_sensitive: Option<bool>,
+    whole_word: Option<bool>,
+    regex: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<Vec<SearchHit>, String> {
     let root = project_root(&state)?;
-    let needle = query.trim().to_lowercase();
-    if needle.len() < 2 {
-        return Err("Enter at least two characters".into());
+    let query = query.trim().to_string();
+    if query.chars().count() < 2 {
+        return Err("Type at least two characters to search".into());
     }
+    let pattern = if regex.unwrap_or(false) { query.clone() } else { regex::escape(&query) };
+    let pattern = if whole_word.unwrap_or(false) { format!(r"(?:{pattern})") } else { pattern };
+    let matcher = regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!case_sensitive.unwrap_or(false))
+        .size_limit(1 << 20)
+        .build()
+        .map_err(|e| format!("That is not a valid regular expression: {}", e.to_string().lines().last().unwrap_or("")))?;
+    tauri::async_runtime::spawn_blocking(move || search_project(&root, &matcher, 500))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub fn search_project(root: &Path, matcher: &regex::Regex, limit: usize) -> Vec<SearchHit> {
     let mut hits = Vec::new();
-    let mut builder = WalkBuilder::new(&root);
-    builder
-        .max_filesize(Some(MAX_READ))
-        .follow_links(false)
-        .hidden(false);
+    let mut builder = WalkBuilder::new(root);
+    builder.max_filesize(Some(MAX_READ)).follow_links(false).hidden(false);
+    builder.filter_entry(|entry| entry.file_name() != ".git" && entry.file_name() != "node_modules");
     for result in builder.build() {
         let Ok(entry) = result else { continue };
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        if let Ok(text) = read_limited(entry.path()) {
-            for (i, line) in text.lines().enumerate() {
-                if line.to_lowercase().contains(&needle) {
-                    hits.push(SearchHit {
-                        path: relative_path(&root, entry.path()),
-                        line: i + 1,
-                        preview: line.trim().chars().take(180).collect(),
-                    });
-                    if hits.len() >= 100 {
-                        return Ok(hits);
-                    }
-                }
+        let Ok(text) = read_limited(entry.path()) else { continue };
+        for (i, line) in text.lines().enumerate() {
+            let Some(found) = matcher.find(line) else { continue };
+            // Show the match with some context before it, even on long minified lines.
+            let start = line[..found.start()].char_indices().rev().nth(60).map_or(0, |(at, _)| at);
+            let preview: String = line[start..].trim_end().chars().take(200).collect();
+            let offset = line[start..found.start()].chars().count();
+            let trimmed = preview.len() - preview.trim_start().len();
+            hits.push(SearchHit {
+                path: relative_path(root, entry.path()),
+                line: i + 1,
+                column: offset.saturating_sub(trimmed),
+                length: line[found.start()..found.end()].chars().count(),
+                preview: preview.trim_start().to_string(),
+            });
+            if hits.len() >= limit {
+                return hits;
             }
         }
     }
-    Ok(hits)
+    hits
 }
 
 #[tauri::command]
@@ -801,6 +828,12 @@ pub fn reject_pending(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(action) = runtime.pending.take() {
         if let Some(id) = action.tool_call_id() {
             runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":"User rejected this operation"}));
+        }
+    }
+    // Later calls from the same turn never ran; answer them so the conversation stays valid.
+    for call in std::mem::take(&mut runtime.queued) {
+        if let Some(id) = call["id"].as_str() {
+            runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":"Not run: the user rejected an earlier action in this turn. Ask before trying it again."}));
         }
     }
     runtime.save()

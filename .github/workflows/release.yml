@@ -96,7 +96,8 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
-          args: ${{ matrix.args }}
+          # The bundle config also builds and ships the `neru` terminal CLI beside the app.
+          args: ${{ matrix.args }} --config src-tauri/tauri.bundle.conf.json
 
   publish:
     needs: build

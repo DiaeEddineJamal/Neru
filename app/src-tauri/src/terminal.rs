@@ -43,8 +43,21 @@ pub fn terminal_start(app: AppHandle, state: State<'_, AppState>) -> Result<Stri
     } else {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
     };
-    let mut command = CommandBuilder::new(shell);
+    let mut command = CommandBuilder::new(&shell);
+    // Neru draws its own welcome; skip the PowerShell copyright banner.
+    if cfg!(windows) {
+        command.arg("-NoLogo");
+    }
     command.cwd(root);
+    // `neru` in this terminal starts the CLI that ships next to the app.
+    if let Some(bin) = cli_shim_dir() {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        if let Ok(joined) = std::env::join_paths(paths) {
+            command.env("PATH", joined);
+        }
+    }
     let child = pair
         .slave
         .spawn_command(command)
@@ -127,4 +140,36 @@ pub fn terminal_stop(id: String, state: State<'_, AppState>) -> Result<(), Strin
         session.child.kill().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// A folder holding a `neru` launcher for the CLI binary beside this executable, created on
+/// demand in Neru's data folder. None when the CLI is not installed next to the app.
+pub fn cli_shim_dir() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let name = if cfg!(windows) { "neru-cli.exe" } else { "neru-cli" };
+    let cli = exe.parent()?.join(name);
+    if !cli.is_file() {
+        return None;
+    }
+    let dir = crate::workspace::data_dir().ok()?.join("bin");
+    std::fs::create_dir_all(&dir).ok()?;
+    if cfg!(windows) {
+        let body = format!("@echo off\r\n\"{}\" %*\r\n", cli.display());
+        let shim = dir.join("neru.cmd");
+        if std::fs::read_to_string(&shim).ok().as_deref() != Some(body.as_str()) {
+            std::fs::write(&shim, body).ok()?;
+        }
+    } else {
+        let shim = dir.join("neru");
+        let body = format!("#!/bin/sh\nexec \"{}\" \"$@\"\n", cli.display());
+        if std::fs::read_to_string(&shim).ok().as_deref() != Some(body.as_str()) {
+            std::fs::write(&shim, body).ok()?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+    }
+    Some(dir)
 }

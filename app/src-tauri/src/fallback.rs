@@ -43,6 +43,37 @@ pub fn is_rate_limited(error: &str) -> bool {
         .any(|marker| lower.contains(marker))
 }
 
+/// The model is down, overloaded, gone, or never started answering: another model may work.
+/// Key problems (401/403) and oversized requests are not included; switching would not help.
+pub fn is_unavailable(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    if lower.contains("http 401") || lower.contains("http 403") {
+        return false;
+    }
+    [
+        "http 500", "http 502", "http 503", "http 504", "http 520", "http 522", "http 524", "http 529",
+        "overloaded", "unavailable", "temporarily", "no instances", "not deployed", "degraded",
+        "model not found", "model_not_found", "does not exist", "is not a valid model", "unknown model", "no such model", "http 404",
+        "did not respond", "did not start answering", "stalled", "timed out", "connection reset", "stream failed",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+/// Why the switch happened, in words for the notice.
+pub fn reason(error: &str) -> &'static str {
+    let lower = error.to_lowercase();
+    if is_rate_limited(error) {
+        "hit its usage limit"
+    } else if lower.contains("did not start answering") || lower.contains("did not respond") || lower.contains("stalled") || lower.contains("timed out") {
+        "is not responding"
+    } else if lower.contains("not found") || lower.contains("does not exist") || lower.contains("http 404") || lower.contains("unknown model") {
+        "is not available on this provider"
+    } else {
+        "is having problems"
+    }
+}
+
 /// The limit resets daily rather than within the minute.
 fn is_daily(error: &str) -> bool {
     let lower = error.to_lowercase();
@@ -123,7 +154,16 @@ async fn best_model(config: &ProviderConfig, free_only: bool) -> Option<String> 
 /// The next model to use after `current` failed with `error`, or None when nothing else is available.
 pub async fn next_model(state: &AppState, current: &ProviderConfig, error: &str) -> Option<ProviderConfig> {
     let daily = is_daily(error);
-    rest(&current.provider_id, &current.model, if daily { Duration::from_secs(6 * 3600) } else { Duration::from_secs(90) });
+    let down = !is_rate_limited(error);
+    // A broken or unlisted model stays out longer than a busy one.
+    let pause = if daily { 6 * 3600 } else if down { 15 * 60 } else { 90 };
+    rest(&current.provider_id, &current.model, Duration::from_secs(pause));
+    if current.provider_id != "openrouter" {
+        // The same key usually offers other good models; that is the smoothest switch.
+        if let Some(model) = best_model(current, false).await.filter(|model| *model != current.model) {
+            return Some(ProviderConfig { model, ..current.clone() });
+        }
+    }
     if current.provider_id == "openrouter" && !is_openrouter_free_cap(error) {
         // One free model is busy; another may not be. Only free models, so nothing is billed.
         if let Some(model) = best_model(current, true).await {
@@ -177,6 +217,15 @@ mod tests {
         let busy = "Provider HTTP 429 Too Many Requests: qwen/qwen3-coder:free is temporarily rate-limited upstream. Please retry shortly";
         assert!(is_rate_limited(busy) && !is_openrouter_free_cap(busy));
         assert!(!is_rate_limited("Provider HTTP 401 Unauthorized: No auth credentials found"));
+    }
+
+    #[test]
+    fn spots_models_that_are_down_but_not_key_problems() {
+        assert!(is_unavailable("Provider HTTP 503 Service Unavailable: model is overloaded"));
+        assert!(is_unavailable("The model did not start answering within 75 seconds"));
+        assert!(is_unavailable("Provider HTTP 404: model_not_found"));
+        assert!(!is_unavailable("Provider HTTP 401 Unauthorized: bad key"));
+        assert_eq!(reason("The model did not start answering within 75 seconds"), "is not responding");
     }
 
     #[test]

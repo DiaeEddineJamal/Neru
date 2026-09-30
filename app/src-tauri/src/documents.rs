@@ -66,8 +66,17 @@ fn kind(path: &Path) -> &'static str {
         "image"
     } else if ext == "pdf" {
         "pdf"
-    } else if ext == "docx" {
-        "docx"
+    } else if matches!(ext.as_str(), "docx" | "pptx" | "xlsx" | "odt" | "odp" | "ods" | "rtf") {
+        // Office files are read in the window; the kind is the extension.
+        match ext.as_str() {
+            "docx" => "docx",
+            "pptx" => "pptx",
+            "xlsx" => "xlsx",
+            "odt" => "odt",
+            "odp" => "odp",
+            "ods" => "ods",
+            _ => "rtf",
+        }
     } else {
         "text"
     }
@@ -115,6 +124,10 @@ pub fn inspect_documents(paths: Vec<String>) -> Result<Vec<Document>, String> {
         .into_iter()
         .map(|path| {
             let kind = kind(Path::new(&path));
+            let ext = extension(Path::new(&path));
+            if matches!(ext.as_str(), "doc" | "ppt" | "xls") {
+                return Err(format!("{} is an old Office format Neru cannot read. Save it as .{}x and attach that instead.", Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), ext));
+            }
             let (name, size) = match kind {
                 "text" => {
                     let (name, text) = read_document(&path)?;
@@ -142,8 +155,8 @@ pub fn inspect_documents(paths: Vec<String>) -> Result<Vec<Document>, String> {
 /// The raw bytes of a PDF or Word document, for text extraction in the window.
 #[tauri::command]
 pub fn document_bytes(path: String) -> Result<tauri::ipc::Response, String> {
-    if !matches!(kind(Path::new(&path)), "pdf" | "docx") {
-        return Err("Only PDF and Word documents are read this way".into());
+    if !matches!(kind(Path::new(&path)), "pdf" | "docx" | "pptx" | "xlsx" | "odt" | "odp" | "ods" | "rtf") {
+        return Err("Only PDF and Office documents are read this way".into());
     }
     let (path, name, _) = checked(&path, MAX_BINARY_DOCUMENT)?;
     let bytes = fs::read(path).map_err(|e| format!("{name}: {e}"))?;

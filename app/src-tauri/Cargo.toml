@@ -1,18 +1,27 @@
 [package]
 name = "neru"
-version = "0.1.0"
+version = "0.2.0"
 description = "A calm, local-first coding agent"
 authors = ["Neru"]
 license = "MIT"
 repository = ""
 edition = "2024"
 rust-version = "1.90"
+default-run = "neru"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 name = "neru_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "neru"
+path = "src/main.rs"
+
+[[bin]]
+name = "neru-cli"
+path = "src/bin/neru-cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.7.0", features = [] }
@@ -26,10 +35,12 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 ignore = "0.4"
+regex = "1"
+crossterm = "0.28"
 similar = "3"
 portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["time", "process", "sync", "macros", "io-util"] }
+tokio = { version = "1", features = ["time", "process", "sync", "macros", "io-util", "net", "fs", "rt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "6"
 

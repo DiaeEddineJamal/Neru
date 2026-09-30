@@ -18,6 +18,9 @@ pub struct StreamAccumulator {
     final_body: Option<Value>,
     buffer: String,
     prompt_tokens: Option<usize>,
+    /// Characters of hidden reasoning streamed so far (DeepSeek R1, Qwen thinking, etc.).
+    pub reasoning: usize,
+    pub reasoning_text: String,
 }
 
 impl StreamAccumulator {
@@ -29,6 +32,8 @@ impl StreamAccumulator {
             final_body: None,
             buffer: String::new(),
             prompt_tokens: None,
+            reasoning: 0,
+            reasoning_text: String::new(),
         }
     }
 
@@ -125,16 +130,44 @@ impl StreamAccumulator {
                             call.id = id.to_string();
                         }
                         if let Some(name) = part["function"]["name"].as_str() {
-                            call.name.push_str(name);
+                            // Some hosts (NVIDIA NIM, several OpenRouter upstreams) repeat the full
+                            // name on every chunk; only genuinely split names are concatenated.
+                            if call.name.is_empty() || name.starts_with(call.name.as_str()) {
+                                call.name = name.to_string();
+                            } else if !call.name.ends_with(name) {
+                                call.name.push_str(name);
+                            }
                         }
                         if let Some(arguments) = part["function"]["arguments"].as_str() {
                             call.arguments.push_str(arguments);
                         }
                     }
                 }
+                if let Some(thought) = delta["reasoning_content"].as_str().or_else(|| delta["reasoning"].as_str()) {
+                    self.reasoning += thought.chars().count();
+                    self.reasoning_text.push_str(thought);
+                }
                 Ok(self.text_delta(delta["content"].as_str()))
             }
         }
+    }
+
+    /// Whether the model has produced anything yet: text, reasoning or a tool call.
+    pub fn started(&self) -> bool {
+        !self.text.is_empty() || self.reasoning > 0 || !self.calls.is_empty() || self.final_body.is_some()
+    }
+
+    /// Tool calls still streaming, as (id, name, arguments so far), so the window can show the
+    /// file a model is writing before the call completes.
+    pub fn partial_calls(&self) -> Vec<(String, &str, &str)> {
+        self.calls
+            .iter()
+            .filter(|(_, call)| !call.name.is_empty())
+            .map(|(index, call)| {
+                let id = if call.id.is_empty() { format!("call_{index}") } else { call.id.clone() };
+                (id, call.name.as_str(), call.arguments.as_str())
+            })
+            .collect()
     }
 
     fn note_usage(&mut self, event: &Value) {
@@ -199,6 +232,81 @@ impl StreamAccumulator {
     }
 }
 
+/// Reads a string field from possibly unfinished JSON (tool arguments mid-stream).
+/// Returns the decoded text so far and whether the string was closed.
+pub fn partial_string_field(json: &str, key: &str) -> Option<(String, bool)> {
+    let marker = format!("\"{key}\"");
+    let start = json.find(&marker)? + marker.len();
+    let rest = json[start..].trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
+    let mut out = String::with_capacity(rest.len());
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some((out, true)),
+            '\\' => match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('b') => out.push('\u{8}'),
+                Some('f') => out.push('\u{c}'),
+                Some('u') => {
+                    let hex: String = chars.by_ref().take(4).collect();
+                    if hex.len() < 4 {
+                        break;
+                    }
+                    // A lone surrogate half is dropped; its partner may still be streaming.
+                    if let Some(decoded) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                        out.push(decoded);
+                    }
+                }
+                Some(other) => out.push(other),
+                None => break,
+            },
+            other => out.push(other),
+        }
+    }
+    Some((out, false))
+}
+
+/// Some open models (Qwen, Hermes-style fine-tunes) answer with `<tool_call>{json}</tool_call>`
+/// text when the host does not parse tool calls. Turns those into real calls.
+pub fn recover_text_tool_calls(message: &mut Value) {
+    if message["tool_calls"].as_array().is_some_and(|calls| !calls.is_empty()) {
+        return;
+    }
+    let Some(text) = message["content"].as_str().map(str::to_string) else { return };
+    if !text.contains("<tool_call>") {
+        return;
+    }
+    let mut calls = Vec::new();
+    let mut kept = String::new();
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find("<tool_call>") {
+        kept.push_str(&rest[..open]);
+        let after = &rest[open + "<tool_call>".len()..];
+        let (body, next) = match after.find("</tool_call>") {
+            Some(close) => (&after[..close], &after[close + "</tool_call>".len()..]),
+            None => (after, ""),
+        };
+        if let Ok(call) = serde_json::from_str::<Value>(body.trim()) {
+            if let Some(name) = call["name"].as_str() {
+                let arguments = match &call["arguments"] {
+                    Value::String(text) => text.clone(),
+                    Value::Null => "{}".to_string(),
+                    other => other.to_string(),
+                };
+                calls.push(json!({"id": format!("call_text_{}", calls.len()), "type": "function", "function": {"name": name, "arguments": arguments}}));
+            }
+        }
+        rest = next;
+    }
+    kept.push_str(rest);
+    if !calls.is_empty() {
+        message["content"] = json!(kept.trim());
+        message["tool_calls"] = json!(calls);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,6 +364,35 @@ mod tests {
         let message = stream.finish().unwrap();
         assert_eq!(message["content"], "Hi");
         assert_eq!(message["tool_calls"][0]["id"], "c1");
+    }
+
+    #[test]
+    fn repeated_tool_names_are_not_doubled() {
+        let mut stream = StreamAccumulator::new(CHAT);
+        let first = json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"read_file","arguments":"{\"path\""}}]}}]});
+        let second = json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"read_file","arguments":":\"a\"}"}}]}}]});
+        let body = format!("data: {first}\ndata: {second}\n");
+        stream.push_bytes(body.as_bytes()).unwrap();
+        let message = stream.finish().unwrap();
+        assert_eq!(message["tool_calls"][0]["function"]["name"], "read_file");
+        assert_eq!(message["tool_calls"][0]["function"]["arguments"], "{\"path\":\"a\"}");
+    }
+
+    #[test]
+    fn partial_fields_decode_while_streaming() {
+        let json = r#"{"path":"index.html","content":"<h1>\"Hi\"</h1>\n<p>café"#;
+        assert_eq!(partial_string_field(json, "path"), Some(("index.html".into(), true)));
+        assert_eq!(partial_string_field(json, "content"), Some(("<h1>\"Hi\"</h1>\n<p>café".into(), false)));
+        assert_eq!(partial_string_field(r#"{"content":"ab\"#, "content"), Some(("ab".into(), false)));
+        assert_eq!(partial_string_field(r#"{"path":"a"}"#, "content"), None);
+    }
+
+    #[test]
+    fn text_tool_calls_are_recovered() {
+        let mut message = json!({"role":"assistant","content":"Creating it.\n<tool_call>{\"name\":\"propose_write_file\",\"arguments\":{\"path\":\"a.txt\",\"content\":\"x\"}}</tool_call>"});
+        recover_text_tool_calls(&mut message);
+        assert_eq!(message["content"], "Creating it.");
+        assert_eq!(message["tool_calls"][0]["function"]["name"], "propose_write_file");
     }
 
     #[test]

@@ -2,6 +2,46 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.2.0 · Faster, smarter, and in your terminal
+*2026-09-30*
+
+Coding works reliably on NVIDIA, OpenRouter and other free models, files appear as they are written, and Neru now runs in your terminal too.
+
+### Coding that finishes
+
+- Whole files no longer get cut off: Neru asks providers for room to write them, and recovers when a model sends broken or truncated tool calls instead of failing the reply.
+- Several files are written in one step, and in Review mode the rest wait in line behind your approval instead of being generated again.
+- Longer tasks (up to 40 steps), fixes for models that repeat tool names, and support for models that write tool calls as text.
+- The agent checks the app it built in a real browser and fixes the errors it finds.
+
+### Watch it work
+
+- Files appear as they are written, as compact Write and Edit rows with the newest lines streaming in VS Code colors.
+- Code in replies and in the editor uses VS Code's Dark+ and Light+ colors, with line numbers and a copy button.
+- A to-do list shows the plan for multi-step work, and a collapsible thought process shows what reasoning models are thinking.
+- Type while Neru works: it reads your message before its next step.
+
+### Smarter agent
+
+- Sub-agents research several parts of a big codebase in parallel.
+- Memory: Neru remembers your preferences and project conventions across sessions (/memory).
+- When a model is slow, down, missing or rate-limited, Neru switches to the next best model on the same provider or another one, and tells you in plain words.
+- Hooks for every step: preToolUse (can block), postToolUse, userPromptSubmit, sessionStart and stop, and AGENTS.md files in subfolders are read when the agent works there.
+
+### neru in the terminal
+
+- A full terminal agent: type neru in any terminal (the installer adds it to your PATH) or in Neru's own terminal.
+- Streaming replies with highlighted code, diffs to approve, slash commands, @ file mentions, history, and neru -p for scripts. It shares sessions and settings with the app.
+- The integrated terminal has tabs, keeps shells running in the background, and greets you with the mascot.
+
+### Everyday polish
+
+- Preview: when Neru builds something, Open preview starts the dev server and loads it in Neru's browser, for any framework or plain HTML.
+- 21 slash commands, including /model, /mode, /resume, /cost, /status, /memory, /permissions, /hooks, /export and /doctor.
+- Images you send show in the conversation, and PowerPoint, Excel, OpenDocument and RTF files can be attached alongside PDFs and Word documents.
+- A searchable, scrollable model picker, project search as you type with case, word and regex options, and a refresh icon in the file tree.
+- A redesigned onboarding, friendlier error messages with one-click fixes, a larger mascot, new message bubbles and send animation, and a new paper-cut installer.
+
 ## 0.1.0 · The first release
 *2026-09-29*
 
