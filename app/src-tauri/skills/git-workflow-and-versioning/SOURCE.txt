@@ -1,0 +1,2 @@
+From https://github.com/addyosmani/agent-skills/tree/main/skills/git-workflow-and-versioning
+By Addy Osmani. License: MIT (see LICENSE.txt).

@@ -336,6 +336,8 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
   const logEnd = useRef<HTMLDivElement>(null)
   useEffect(() => { if (drawer === 'console') logEnd.current?.scrollIntoView({ block: 'end' }) }, [logs.length, drawer])
 
+  const closeDrawer = <button type="button" className="icon-button pv-drawer-close" aria-label="Close panel" title="Close panel" onClick={() => setDrawer(null)}><X size={14} /></button>
+
   const disabledTip = !route ? 'Open a page first' : !route.bridged ? 'Page tools work on local pages. This is an external site.' : !bridgeReady ? 'Waiting for the page…' : ''
 
   const port = (() => { try { return new URL(hintUrl).port } catch { return '' } })()
@@ -438,6 +440,7 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
           <span className="pv-grow" />
           <button className="pv-link" disabled={!problems.length || !onSendToAgent} onClick={() => onSendToAgent?.(errorsMessage(problems, realUrl), [])}><Send size={12} /> Send errors to agent</button>
           <button className="pv-link" onClick={() => setLogs([])}><Trash2 size={12} /> Clear</button>
+          {closeDrawer}
         </div>
         <div className="pv-lines">
           {visibleLogs.length === 0 && <p className="pv-empty">{tools ? 'Nothing logged yet.' : 'The console fills in for local pages.'}</p>}
@@ -455,6 +458,7 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
           <label className="pv-check"><input type="checkbox" checked={failedOnly} onChange={event => setFailedOnly(event.target.checked)} /> Failed only</label>
           <span className="pv-grow" />
           <button className="pv-link" onClick={() => setRequests([])}><Trash2 size={12} /> Clear</button>
+          {closeDrawer}
         </div>
         <div className="pv-lines">
           {visibleRequests.length === 0 && <p className="pv-empty">{tools ? 'No fetch or XHR requests yet.' : 'Requests appear for local pages.'}</p>}
@@ -470,6 +474,7 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
           <label className="pv-check" title="Sends a picture of the page with your numbered markers. Needs a model that can see images."><input type="checkbox" checked={attachShot} onChange={event => setAttachShot(event.target.checked)} /> Attach screenshot</label>
           <button className="pv-link" disabled={!notes.length} onClick={() => { setNotes([]) }}><Trash2 size={12} /> Clear all</button>
           <button className="button primary pv-send" disabled={!pageNotes.length || !onSendToAgent} onClick={() => void sendNotes()}><Send size={13} /> Send {pageNotes.length || ''} to agent</button>
+          {closeDrawer}
         </div>
         <div className="pv-lines">
           {notes.length === 0 && <p className="pv-empty">No annotations yet. Turn on Annotate, click an element (or drag an area) and say what should change. Then send them all to the agent at once.</p>}
@@ -490,6 +495,7 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
           <span className="pv-grow" />
           <button className="pv-link" onClick={() => void copy('selector', picked.selector)}>{copied === 'selector' ? <Check size={12} /> : <Copy size={12} />} Copy selector</button>
           <button className="button primary pv-send" disabled={!onSendToAgent} onClick={() => onSendToAgent?.('', [], { label: elementChipLabel(picked), detail: pickedMessage(picked, realUrl).trim() })}><Send size={13} /> Add to chat</button>
+          {closeDrawer}
         </div>
         <div className="pv-lines pv-inspect">
           <dl>

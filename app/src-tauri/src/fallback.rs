@@ -107,7 +107,7 @@ pub fn reason(error: &str) -> &'static str {
 }
 
 /// The limit resets daily rather than within the minute.
-fn is_daily(error: &str) -> bool {
+pub fn is_daily(error: &str) -> bool {
     let lower = error.to_lowercase();
     ["per day", "per-day", "daily", "free-models-per-day", "rpd", "tpd", "requests per day", "tokens per day"]
         .iter()

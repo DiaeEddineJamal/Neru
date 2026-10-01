@@ -45,10 +45,13 @@ fn path() -> Option<PathBuf> {
 }
 
 fn load() -> Store {
-    path()
+    let mut store: Store = path()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Caps saved before they were kept per provider would limit the model everywhere.
+    store.request_caps.retain(|key, cap| key.contains('|') && *cap >= MIN_CAP);
+    store
 }
 
 fn save(store: &Store) {
@@ -62,14 +65,28 @@ pub fn window(model: &str) -> Option<usize> {
     STORE.lock().ok()?.windows.get(model).copied()
 }
 
-pub fn request_cap(model: &str) -> Option<usize> {
-    STORE.lock().ok()?.request_caps.get(model).copied()
+/// Caps belong to a key's plan on one provider: Groq's 8K tokens a minute for gpt-oss says nothing
+/// about the same model on another provider.
+fn cap_key(provider_id: &str, model: &str) -> String {
+    format!("{provider_id}|{model}")
 }
 
-pub fn set_request_cap(model: &str, cap: usize) {
+/// Smallest cap worth keeping. Below this a provider sent a placeholder (some report a token limit
+/// of 0), and sizing requests by it would leave no room for even one message.
+const MIN_CAP: usize = 2_000;
+
+pub fn request_cap(provider_id: &str, model: &str) -> Option<usize> {
+    STORE.lock().ok()?.request_caps.get(&cap_key(provider_id, model)).copied().filter(|cap| *cap >= MIN_CAP)
+}
+
+pub fn set_request_cap(provider_id: &str, model: &str, cap: usize) {
+    if cap < MIN_CAP {
+        return;
+    }
     if let Ok(mut store) = STORE.lock() {
-        if store.request_caps.get(model) != Some(&cap) {
-            store.request_caps.insert(model.to_string(), cap);
+        let key = cap_key(provider_id, model);
+        if store.request_caps.get(&key) != Some(&cap) {
+            store.request_caps.insert(key, cap);
             save(&store);
         }
     }
@@ -205,7 +222,7 @@ pub fn record_headers(config: &ProviderConfig, headers: &HeaderMap) {
     if let Some(cap) = per_minute_tokens {
         // Only a cap below the window matters; large paid limits leave the window in charge.
         if (cap as usize) < providers::context_window(&config.model) {
-            set_request_cap(&config.model, cap as usize);
+            set_request_cap(&config.provider_id, &config.model, cap as usize);
         }
     }
     set_quotas(&config.model, quotas);

@@ -2,6 +2,37 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.6.0 · Free models that keep going, 23 new skills, and your choice of microphone
+*2026-10-01*
+
+Free plans no longer stop after a few quick messages: Neru waits out per-minute limits instead of giving up, and a limit learned on one provider no longer shrinks the same model everywhere. Models get 23 new built-in skills, you can pick which microphone to dictate with, and the in-app browser's drawing tools fit small windows.
+
+### Free models that keep going
+
+- When a free plan's per-minute limit is hit, Neru waits as long as the provider asks (or about 20 seconds) and sends again, instead of failing with “usage limit reached”. Daily caps still switch to another model.
+- Limits Neru learns are now kept per provider. Groq's free 8K tokens a minute for gpt-oss no longer squeezes that model on Hugging Face, OpenRouter or Cerebras. Limits saved by earlier versions are cleared once.
+- A provider reporting a token limit of 0 no longer leaves a 128K model with no room for a single message.
+- The skills list sent with every request is about half the size, which leaves more of a small per-minute budget for your conversation. The full skill still loads when the model needs it.
+
+### 23 new built-in skills
+
+- From Addy Osmani's agent skills: API and interface design, performance optimization, code simplification, CI/CD, documentation and ADRs, git workflow, spec-driven development, deprecation and migration, and observability.
+- From Vercel: React and Next.js best practices, composition patterns, React Native, and the Web Interface Guidelines review.
+- From Superpowers: dispatching parallel agents, subagent-driven development and git worktrees. From Anthropic: webapp testing with Playwright and the skill creator.
+- From Trail of Bits: modern Python tooling, mutation testing and Semgrep. Cloudflare's security audit, and humanizer for prose that doesn't read as AI-written.
+- 42 skills now ship with Neru. Each keeps its license and source, listed in the skills NOTICE.
+
+### Voice
+
+- An arrow beside the microphone picks the input to dictate with. Neru remembers it and falls back to the Windows default when that device is unplugged.
+- Hold to record: hold the microphone button to dictate and let go to stop. Turn it on in the same menu.
+
+### Browser and settings
+
+- The drawing toolbar wraps onto a second row in a small window instead of cutting off Add to chat.
+- The element inspector, console, network and annotations panels have a close button.
+- The CLI section is gone from Settings. Install the neru command with npm, winget or the install scripts as before.
+
 ## 0.5.0 · The neru CLI everywhere, only models that work, and Claude Code parity
 *2026-09-30*
 

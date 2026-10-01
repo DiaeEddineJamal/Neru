@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, Check, Eye, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { ArrowUp, Check, ChevronDown, Eye, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
 import { Liquid } from 'liquid-gooey'
 import { useReducedMotion } from 'motion/react'
 import { useMicrophone, VoiceBeam } from 'voice-glow'
@@ -69,6 +69,76 @@ function PlusMenu({ items, disabled }: { items: PlusMenuItem[]; disabled: boolea
     </Liquid>
     </div>
     <button type="button" className="plus-trigger" aria-label="Add to message" aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => open ? hide() : show()}><Plus size={17} /></button>
+  </div>
+}
+
+const MIC_KEY = 'neru.voice.microphone'
+const HOLD_KEY = 'neru.voice.hold'
+const readPref = (key: string) => { try { return localStorage.getItem(key) ?? '' } catch { return '' } }
+const writePref = (key: string, value: string) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key) } catch { /* not saved */ } }
+
+/** Audio inputs, with names. Browsers hide the names until the page may use the microphone, so ask once when they are missing. */
+async function listMicrophones(): Promise<MediaDeviceInfo[]> {
+  const inputs = async () => (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'audioinput')
+  let found = await inputs()
+  if (found.length && found.every(device => !device.label)) {
+    try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach(track => track.stop()); found = await inputs() } catch { /* keep the unnamed list */ }
+  }
+  return found
+}
+
+/** The arrow beside the microphone: which input to record from, and whether the mic button records only while held. */
+function MicMenu({ device, onDevice, hold, onHold, disabled, systemEngine }: {
+  device: string
+  onDevice: (id: string) => void
+  hold: boolean
+  onHold: (hold: boolean) => void
+  disabled: boolean
+  /** The system speech engine always listens to the Windows default input. */
+  systemEngine: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
+  const root = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  // Room to the window's right edge: a narrow window gets a narrower panel (names truncate) rather
+  // than one that is cut off. Moving it left instead would slide it under the sidebar.
+  const [room, setRoom] = useState(0)
+  useLayoutEffect(() => {
+    const node = panel.current
+    if (!open || !node) return
+    setRoom(Math.max(220, document.documentElement.clientWidth - 12 - node.getBoundingClientRect().left))
+  }, [open])
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    const load = () => void listMicrophones().then(list => { if (live) setDevices(list) }).catch(() => undefined)
+    load()
+    navigator.mediaDevices.addEventListener?.('devicechange', load)
+    const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false) } }
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', escape, true)
+    return () => { live = false; navigator.mediaDevices.removeEventListener?.('devicechange', load); window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', escape, true) }
+  }, [open])
+  useEffect(() => { if (disabled) setOpen(false) }, [disabled])
+  // A saved device that is gone (headset unplugged) falls back to the system default, so show that as chosen.
+  const chosen = devices.some(item => item.deviceId === device) ? device : (devices.find(item => item.deviceId === 'default') ?? devices[0])?.deviceId ?? ''
+  return <div className="mic-menu" ref={root}>
+    <button type="button" className={cn('mic-menu-trigger', open && 'on')} aria-label="Microphone settings" aria-haspopup="menu" aria-expanded={open} title="Microphone settings" disabled={disabled} onClick={() => setOpen(value => !value)}><ChevronDown size={13} /></button>
+    {open && <div ref={panel} className="mic-menu-panel" role="menu" aria-label="Microphone" style={room ? { width: Math.min(380, room) } : undefined}>
+      <div className="mic-menu-label">Microphone</div>
+      {devices.length === 0 && <p className="mic-menu-empty">No microphone found</p>}
+      {devices.map((item, index) => <button key={item.deviceId || index} type="button" role="menuitemradio" aria-checked={item.deviceId === chosen} title={item.label || undefined}
+        onClick={() => { onDevice(item.deviceId === 'default' ? '' : item.deviceId); setOpen(false) }}>
+        <span className="truncate">{item.label || `Microphone ${index + 1}`}</span>{item.deviceId === chosen && <Check size={14} />}
+      </button>)}
+      {systemEngine && <p className="mic-menu-note">System speech always uses the Windows default input. Pick another engine in Settings → Voice to use this choice.</p>}
+      <div className="mic-menu-sep" />
+      <button type="button" role="menuitemcheckbox" aria-checked={hold} onClick={() => onHold(!hold)}>
+        <span>Hold to record</span><i className={cn('switch', hold && 'on')} aria-hidden />
+      </button>
+    </div>}
   </div>
 }
 
@@ -186,7 +256,17 @@ export interface ComposerProps {
 
 export function Composer(props: ComposerProps) {
   const { value, onValueChange, loading, disabled, mode, web } = props
-  const mic = useMicrophone()
+  const [micDevice, setMicDevice] = useState(() => readPref(MIC_KEY))
+  const [holdToRecord, setHoldToRecord] = useState(() => readPref(HOLD_KEY) === '1')
+  // Read when recording starts, so a new choice applies to the next recording. A plain deviceId is
+  // a preference: an unplugged device falls back to the default instead of failing.
+  const mic = useMicrophone({ constraints: micDevice ? { deviceId: micDevice } : undefined })
+  const chooseMic = (id: string) => { setMicDevice(id); writePref(MIC_KEY, id) }
+  const chooseHold = (hold: boolean) => { setHoldToRecord(hold); writePref(HOLD_KEY, hold ? '1' : '') }
+  // Hold to record: the pointer went down on the mic and has not come up yet.
+  const holding = useRef(false)
+  // This recording was started by a press (not the keyboard), so letting go ends it.
+  const pressed = useRef(false)
   const [voice, setVoice] = useState<VoiceState>('idle')
   const [elapsed, setElapsed] = useState(0)
   const recorder = useRef<MediaRecorder | null>(null)
@@ -287,6 +367,16 @@ export function Composer(props: ComposerProps) {
       finally { if (token === run.current) setVoice('idle') }
     }
     media.stop()
+  }
+
+  // Released while the microphone was still starting: stop as soon as recording begins.
+  useEffect(() => { if (voice === 'listening' && pressed.current && !holding.current) { pressed.current = false; finishVoice(false) } })
+
+  const pressMic = () => { if (!holdToRecord || voice !== 'idle') return; holding.current = true; pressed.current = true; void startVoice() }
+  const releaseMic = () => {
+    if (!holding.current) return
+    holding.current = false
+    if (voice === 'listening' || voice === 'paused') { pressed.current = false; finishVoice(false) }
   }
 
   const cancelVoice = () => {
@@ -415,7 +505,15 @@ export function Composer(props: ComposerProps) {
     <div className="composer-toolbar">
       <div className="composer-tools">
         <PlusMenu items={props.attachItems} disabled={disabled || loading || active} />
-        <button type="button" className={cn('prompt-toggle', recording && 'on')} onClick={() => recording ? finishVoice(false) : void startVoice()} disabled={micBusy} aria-pressed={recording} aria-label={recording ? 'Stop dictation' : 'Dictate'} title={!mic.supported ? 'Microphone not available' : recording ? 'Stop and insert text' : 'Dictate'}><Mic size={16} /></button>
+        <div className="mic-group">
+          <button type="button" className={cn('prompt-toggle', recording && 'on')} disabled={micBusy} aria-pressed={recording} aria-label={recording ? 'Stop dictation' : 'Dictate'}
+            title={!mic.supported ? 'Microphone not available' : recording ? 'Stop and insert text' : holdToRecord ? 'Hold to dictate' : 'Dictate'}
+            onPointerDown={event => { if (event.button === 0 && holdToRecord) { event.currentTarget.setPointerCapture(event.pointerId); pressMic() } }}
+            onPointerUp={releaseMic} onPointerCancel={releaseMic}
+            // Pointer clicks are handled by press and release in hold mode; Enter and Space still toggle.
+            onClick={event => { if (holdToRecord && event.detail > 0) return; pressed.current = false; if (recording) finishVoice(false); else void startVoice() }}><Mic size={16} /></button>
+          <MicMenu device={micDevice} onDevice={chooseMic} hold={holdToRecord} onHold={chooseHold} disabled={!mic.supported || recording || transcribing} systemEngine={props.voiceEngine === 'system'} />
+        </div>
         <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? 'Web search on: Neru can search and cite public pages' : 'Web search off: answers from the project only'} aria-label="Web search"><Globe size={15} /></button>
         {props.showMode !== false && <Select value={mode} onValueChange={value => props.onModeChange(value as AgentMode)} disabled={disabled || loading} className="composer-mode">
           <SelectTrigger className={cn('h-8 w-auto rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2', mode === 'bypass' && 'mode-danger')}>

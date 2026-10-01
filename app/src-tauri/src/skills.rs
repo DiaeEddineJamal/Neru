@@ -73,10 +73,26 @@ pub fn catalog(root: &Path) -> String {
     }
     let lines = skills
         .iter()
-        .map(|skill| format!("- {}: {}", skill.name, skill.description))
+        .map(|skill| format!("- {}: {}", skill.name, brief(&skill.description)))
         .collect::<Vec<_>>()
         .join("\n");
     format!("\n\nSkills: expert workflows you can load with read_skill. Before starting a task, check this list; when a skill matches (building UI, debugging, reviewing, security, planning, writing prose), load it first and follow it. Skills written for other agents may name their tools: TodoWrite means update_todos, Task or a subagent means task, Read means read_file, Edit means propose_edit, Write means propose_write_file, Bash means run_shell_command, Grep means search_text, Glob means find_files. Skip steps that need tools you do not have.\n{lines}")
+}
+
+/// Longest description the catalog carries. It goes into every request, and free plans with small
+/// per-minute token caps cannot spare kilobytes of trigger phrases; the full skill loads on demand.
+const BRIEF: usize = 200;
+
+/// A description cut to fit the catalog, at a sentence end when there is one early enough.
+fn brief(description: &str) -> String {
+    if description.chars().count() <= BRIEF {
+        return description.to_string();
+    }
+    let head: String = description.chars().take(BRIEF).collect();
+    match head.rfind(". ").filter(|at| *at >= 60) {
+        Some(at) => head[..=at].to_string(),
+        None => format!("{}…", head[..head.rfind(' ').unwrap_or(head.len())].trim_end_matches([',', ';', ':'])),
+    }
 }
 
 /// A skill's instructions, or with `file` one of its reference documents. The instructions end
@@ -383,6 +399,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn catalog_descriptions_stay_short() {
+        assert_eq!(brief("Use when debugging."), "Use when debugging.");
+        let long = format!("Use when writing React components and reviewing them for performance. {}", "Triggers on many phrases ".repeat(20));
+        assert_eq!(brief(&long), "Use when writing React components and reviewing them for performance.");
+        let run_on = "word ".repeat(80);
+        let cut = brief(&run_on);
+        assert!(cut.chars().count() <= BRIEF + 1 && cut.ends_with('…'));
+    }
+
+    #[test]
     fn reads_quoted_and_folded_descriptions() {
         assert_eq!(front_value("name: a\ndescription: \"Use it, \\\"now\\\"\"", "description").as_deref(), Some("Use it, \"now\""));
         assert_eq!(front_value("description: >\n  Use when\n  debugging\nlicense: MIT", "description").as_deref(), Some("Use when debugging"));
@@ -394,7 +420,7 @@ mod tests {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills");
         let mut skills = Vec::new();
         read_tree(&dir, "built-in", &mut skills);
-        assert!(skills.len() >= 19, "only {} bundled skills parsed", skills.len());
+        assert!(skills.len() >= 42, "only {} bundled skills parsed", skills.len());
         for skill in &skills {
             assert!(!skill.description.is_empty() && skill.description != "Project skill", "{} has no description", skill.name);
             assert!(skill.body.len() > 200, "{} has no body", skill.name);

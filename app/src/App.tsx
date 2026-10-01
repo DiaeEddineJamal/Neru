@@ -22,7 +22,6 @@ import { downloadModel, transcribeLocally } from '@/lib/speech/local'
 import { ApprovalCard, Conversation, TodoPanel, agentPhase, draftState, type LiveResponse, type ResolvedApproval } from './components/neru/Conversation'
 import { FileTree, type TreeChange } from './components/neru/FileTree'
 import { Skills } from './components/neru/Skills'
-import { CliSettings } from './components/neru/CliSettings'
 import { UpdateToast, WhatsNew } from './components/neru/WhatsNew'
 import { findUpdate, installUpdate, type Update } from './lib/updates'
 import { getVersion } from '@tauri-apps/api/app'
@@ -69,8 +68,8 @@ function trustSummary(status: TrustStatus) {
 
 /** Overrides for one send: who it goes to, what it carries, and whether the message box is left alone (a queued message). */
 interface SendOptions { mode?: AgentMode; sessionId?: string; documents?: AttachedDocument[]; contextPaths?: string[]; keepComposer?: boolean; onStarted?: () => void }
-type SettingsTab = 'general' | 'appearance' | 'model' | 'voice' | 'connectors' | 'skills' | 'cli'
-const settingsTabs: { id: SettingsTab; label: string }[] = [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }, { id: 'model', label: 'Model provider' }, { id: 'voice', label: 'Voice' }, { id: 'connectors', label: 'Connectors' }, { id: 'skills', label: 'Skills' }, { id: 'cli', label: 'CLI' }]
+type SettingsTab = 'general' | 'appearance' | 'model' | 'voice' | 'connectors' | 'skills'
+const settingsTabs: { id: SettingsTab; label: string }[] = [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }, { id: 'model', label: 'Model provider' }, { id: 'voice', label: 'Voice' }, { id: 'connectors', label: 'Connectors' }, { id: 'skills', label: 'Skills' }]
 const readStored = <T,>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }
 type Surface = 'chat' | 'code'
 const CHAT_PHRASES = ["Let's noodle", "Let's cook", "Let's knead", "Let's sketch", "Let's tinker", "Let's riff", "Let's wander", "Let's mull it over", "Let's poke at it", "Let's make a mess", "Let's chew on it", "Let's daydream"]
@@ -1455,7 +1454,6 @@ function App() {
           </section>}
           {settingsTab === 'connectors' && <Connectors onError={setError} />}
           {settingsTab === 'skills' && <Skills onError={setError} onNotice={setNotice} />}
-          {settingsTab === 'cli' && <CliSettings onError={setError} onNotice={setNotice} />}
           {settingsTab === 'model' && <section className="settings-section provider-settings"><h2>Model provider</h2><p className="settings-lede">Free keys for everyday frontend and backend work, a model on this PC, or your own API key.</p>
             <label>Provider<select value={providerId} onChange={event => selectProvider(event.target.value)}>{providerPresets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             {(() => { const preset = providerPresets.find(item => item.id === providerId); return <div className="provider-description"><p>{preset?.description}</p>{(preset?.freeLimit || preset?.keyUrl) && <p className="provider-meta">{preset.freeLimit && <span className="provider-free">Free: {preset.freeLimit}</span>}{preset.keyUrl && <a className="provider-key-link" href={preset.keyUrl} target="_blank" rel="noreferrer"><KeyRound size={13} /> Get a {preset.name} API key <ExternalLink size={12} /></a>}</p>}</div> })()}

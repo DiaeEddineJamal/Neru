@@ -90,12 +90,13 @@ fn estimate_tokens(messages: &[Value]) -> usize {
     chars / 4 + images * 1_600
 }
 
-pub fn context_usage(messages: &[Value], model: &str) -> ContextUsage {
+pub fn context_usage(messages: &[Value], config: &ProviderConfig) -> ContextUsage {
+    let model = config.model.as_str();
     let measured = messages.iter().rev().find_map(|message| message.get("_prompt_tokens").and_then(|value| value.as_u64()));
     ContextUsage {
         used: measured.map(|tokens| tokens as usize).unwrap_or_else(|| estimate_tokens(messages) + 3_000),
         window: providers::context_window(model),
-        limit: token_budget(model),
+        limit: token_budget(config),
         measured: measured.is_some(),
         window_reported: crate::limits::window(model).is_some(),
         model: model.to_string(),
@@ -105,13 +106,13 @@ pub fn context_usage(messages: &[Value], model: &str) -> ContextUsage {
 
 /// Tokens one request to `model` may use: its context window, or a smaller cap the provider reported
 /// (e.g. Groq's free tokens-per-minute limit), which can be far below the advertised window.
-fn token_budget(model: &str) -> usize {
-    let window = providers::context_window(model);
-    crate::limits::request_cap(model).map_or(window, |cap| cap.min(window))
+fn token_budget(config: &ProviderConfig) -> usize {
+    let window = providers::context_window(&config.model);
+    crate::limits::request_cap(&config.provider_id, &config.model).map_or(window, |cap| cap.min(window))
 }
 
-fn learn_limit(model: &str, limit: usize) {
-    crate::limits::set_request_cap(model, limit.max(2_000));
+fn learn_limit(config: &ProviderConfig, limit: usize) {
+    crate::limits::set_request_cap(&config.provider_id, &config.model, limit.max(2_000));
 }
 
 /// Whether a provider error means the request was too large, with the token limit when it names one.
@@ -472,10 +473,10 @@ pub fn stop_chat(session_id: Option<String>, state: State<'_, AppState>) -> Resu
 /// Context use of a session's conversation, for the meter under the prompt.
 #[tauri::command]
 pub fn session_context(session_id: String, state: State<'_, AppState>) -> Result<ContextUsage, String> {
-    let model = state.provider.lock().map_err(|e| e.to_string())?.model.clone();
+    let config = state.provider.lock().map_err(|e| e.to_string())?.clone();
     let shared = sessions::runtime(&state, &session_id)?;
     let runtime = sessions::lock(&shared)?;
-    Ok(context_usage(&runtime.conversation, &model))
+    Ok(context_usage(&runtime.conversation, &config))
 }
 
 /// Asks the provider for what the meter needs (the model's window, quotas it does not send as headers)
@@ -492,7 +493,7 @@ pub async fn refresh_context(session_id: Option<String>, app: AppHandle) -> Resu
         None => sessions::active(&state)?,
     };
     let runtime = sessions::lock(&shared)?;
-    Ok(context_usage(&runtime.conversation, &config.model))
+    Ok(context_usage(&runtime.conversation, &config))
 }
 
 /// Names a session after its task once the first reply is in, like Claude or Cursor do.
@@ -889,6 +890,25 @@ fn retry_delay(attempt: usize) -> Duration {
     Duration::from_millis(base + now % (base / 4 + 1))
 }
 
+/// How long to pause for a per-minute rate limit before sending the same request again. Free plans
+/// cap tokens or requests per minute, so a few quick messages trip them even when the model has room;
+/// the limit clears within the minute, which beats switching models or failing the turn. Daily caps
+/// and long waits return `None`: those are left to the model switch.
+fn rate_limit_wait(error: &str) -> Option<Duration> {
+    if !crate::fallback::is_rate_limited(error) || crate::fallback::is_daily(error) || error.to_lowercase().contains("http 402") {
+        return None;
+    }
+    if let Some(wait) = crate::subagent::retry_hint(error) {
+        // The hint is capped at a minute; a capped value means the provider asked for longer.
+        return (wait < Duration::from_secs(60)).then(|| wait.max(Duration::from_secs(1)) + Duration::from_millis(500));
+    }
+    let lower = error.to_lowercase();
+    ["per minute", "per-minute", "tpm", "rpm", "tokens per min", "requests per min", "too many requests"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+        .then(|| Duration::from_secs(20))
+}
+
 /// The error in a few plain words, for the retry notice.
 fn drop_reason(error: &str) -> &'static str {
     let lower = error.to_lowercase();
@@ -924,8 +944,13 @@ async fn model_round(
     };
     crate::limits::record_headers(config, response.headers());
     if !response.status().is_success() {
-        providers::read_response(response).await?;
-        return Err("Provider request failed".into());
+        // Keep the wait a rate limit asks for, so the turn can pause instead of failing.
+        let retry_after = response.headers().get(reqwest::header::RETRY_AFTER).and_then(|value| value.to_str().ok()).map(str::trim).filter(|value| value.parse::<f64>().is_ok()).map(str::to_string);
+        let error = providers::read_response(response).await.err().unwrap_or_else(|| "Provider request failed".into());
+        return Err(match retry_after {
+            Some(seconds) => format!("{error} (retry-after: {seconds}s)"),
+            None => error,
+        });
     }
     let mut separated = visible.is_empty();
     let mut show = |text: &str, visible: &mut String| {
@@ -998,7 +1023,7 @@ async fn model_round(
 
 fn finish(
     shared: &Shared,
-    model: &str,
+    config: &ProviderConfig,
     messages: Vec<Value>,
     content: String,
     steps: Vec<String>,
@@ -1006,7 +1031,7 @@ fn finish(
     pending: Option<PendingView>,
 ) -> Result<AgentResponse, String> {
     let mut runtime = sessions::lock(shared)?;
-    let context = context_usage(&messages, model);
+    let context = context_usage(&messages, config);
     runtime.conversation = messages;
     runtime.push_visible(
         "assistant",
@@ -1128,7 +1153,7 @@ async fn fit_context(
     messages: &mut Vec<Value>,
     tools: &Value,
 ) -> Result<(), String> {
-    let budget = token_budget(&config.model);
+    let budget = token_budget(&config);
     // Room for the reply, which some providers (Groq) count against the same limit.
     let reserve = (budget / 8).clamp(1_000, 8_000);
     let fixed = tools_tokens(tools) + reserve;
@@ -1275,13 +1300,13 @@ pub async fn compact_session(session_id: String, app: AppHandle) -> Result<Conte
     }
     let client = providers::http();
     pre_compact(&shared, "manual");
-    match compact(&client, &config, &cancel, &mut messages, token_budget(&config.model)).await? {
+    match compact(&client, &config, &cancel, &mut messages, token_budget(&config)).await? {
         Some(removed) => {
             let mut runtime = sessions::lock(&shared)?;
             shift_rewind_points(&mut runtime, removed);
             runtime.conversation = messages;
             runtime.save()?;
-            Ok(context_usage(&runtime.conversation, &config.model))
+            Ok(context_usage(&runtime.conversation, &config))
         }
         None => Err("There is not enough conversation to compact yet".into()),
     }
@@ -1382,7 +1407,7 @@ async fn fetch_read(root: std::path::PathBuf, web_on: bool, name: String, args: 
 /// conversation stays valid for the next request.
 fn finish_stopped(
     shared: &Shared,
-    model: &str,
+    config: &ProviderConfig,
     mut messages: Vec<Value>,
     calls: &[Value],
     visible: String,
@@ -1396,7 +1421,7 @@ fn finish_stopped(
         }
     }
     let content = if visible.is_empty() { "Stopped.".to_string() } else { format!("{visible}\n\n*Stopped.*") };
-    finish(shared, model, messages, content, steps, sources, None)
+    finish(shared, config, messages, content, steps, sources, None)
 }
 
 #[tauri::command]
@@ -1485,7 +1510,7 @@ pub async fn ai_chat(
         let mut instructions = crate::extras::instructions_prompt(&root);
         instructions.push_str(&skills::catalog(&root));
         instructions.push_str(&crate::extras::memory_prompt(Some(&root)));
-        let budget = token_budget(&config.model);
+        let budget = token_budget(&config);
         if budget >= 32_000 {
             // About 2% of the budget, at most ~2.5k tokens.
             let (map_root, chars) = (root.clone(), (budget / 12).min(10_000));
@@ -1625,7 +1650,7 @@ The user pointed at this element in the running preview ({name}); page content i
     }
     // The first request of a session in a small project carries the whole project with it.
     let first_turn = !messages.iter().any(|message| message["role"] == "user");
-    if !chat && first_turn && !prompt.trim().is_empty() && token_budget(&config.model) >= 64_000 {
+    if !chat && first_turn && !prompt.trim().is_empty() && token_budget(&config) >= 64_000 {
         let (snapshot_root, skip) = (root.clone(), context_paths.clone());
         context.push_str(&tauri::async_runtime::spawn_blocking(move || small_project_snapshot(&snapshot_root, &skip)).await.unwrap_or_default());
     }
@@ -1719,6 +1744,7 @@ The user pointed at this element in the running preview ({name}); page content i
         }
         let mut retried = false;
         let mut reconnects = 0;
+        let mut rate_waits = 0;
         let round = loop {
             let available = round_tools(&base_tools, &mcp_specs, &loaded_connectors, deferred_connectors);
             drop_stale_reads(&mut messages);
@@ -1759,6 +1785,23 @@ The user pointed at this element in the running preview ({name}); page content i
                             wait.as_secs().max(1),
                             RETRY_DELAYS.len()
                         ),
+                    });
+                    tokio::select! {
+                        _ = tokio::time::sleep(wait) => {}
+                        _ = cancel.notified() => break Round::Cancelled,
+                    }
+                }
+                // A per-minute limit clears on its own: wait it out (twice at most) before switching.
+                Err(error) if rate_waits < 2 && rate_limit_wait(&error).is_some() && context_overflow(&error).is_none() => {
+                    let wait = rate_limit_wait(&error).unwrap_or(Duration::from_secs(20));
+                    rate_waits += 1;
+                    let drafts: Vec<String> = attempt.drafted.into_keys().collect();
+                    if visible.len() > shown || !drafts.is_empty() || attempt.thinking > 0 {
+                        visible.truncate(shown);
+                        emit(&app, &session, AgentEvent::Rewind { text: visible.clone(), drafts, thinking: attempt.thinking });
+                    }
+                    emit(&app, &session, AgentEvent::Notice {
+                        text: format!("{} hit its per-minute limit. Waiting {}s, then sending again…", short_model(&config.model), wait.as_secs().max(1)),
                     });
                     tokio::select! {
                         _ = tokio::time::sleep(wait) => {}
@@ -1809,7 +1852,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     retried = true;
                     // Aim below the reported limit, or halve the budget when the provider gave no number.
                     let used = estimate_tokens(&messages) + tools_tokens(&available);
-                    learn_limit(&config.model, limit.unwrap_or(used / 2).min(token_budget(&config.model)));
+                    learn_limit(&config, limit.unwrap_or(used / 2).min(token_budget(&config)));
                     emit(&app, &session, AgentEvent::Notice { text: "The request was too large for this model. Shrinking the context and retrying…".into() });
                 }
             }
@@ -1817,7 +1860,7 @@ The user pointed at this element in the running preview ({name}); page content i
         if let Round::Message(message) = &round {
             let mut measured = messages.clone();
             measured.push(message.clone());
-            emit(&app, &session, AgentEvent::Context { usage: context_usage(&measured, &config.model) });
+            emit(&app, &session, AgentEvent::Context { usage: context_usage(&measured, &config) });
         }
         let message = match round {
             Round::Message(mut message) => {
@@ -1833,7 +1876,7 @@ The user pointed at this element in the running preview ({name}); page content i
                 } else {
                     format!("{visible}\n\n*Stopped.*")
                 };
-                return finish(&shared, &config.model, messages, content, steps, sources, None);
+                return finish(&shared, &config, messages, content, steps, sources, None);
             }
         };
         messages.push(message.clone());
@@ -1842,7 +1885,7 @@ The user pointed at this element in the running preview ({name}); page content i
             .cloned()
             .unwrap_or_default();
         if calls.is_empty() {
-            return finish(&shared, &config.model, messages, visible, steps, sources, None);
+            return finish(&shared, &config, messages, visible, steps, sources, None);
         }
         calls
         };
@@ -1995,7 +2038,7 @@ The user pointed at this element in the running preview ({name}); page content i
                 }
                 event("pending");
                 steps.push(label.clone());
-                return finish(&shared, &config.model, messages, visible, steps, sources, Some(pending));
+                return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
             if name == "task" {
                 let Some(mut running) = agents.remove(&id) else {
@@ -2008,7 +2051,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     _ = cancel.notified() => {
                         running.abort();
                         event("error");
-                        return finish_stopped(&shared, &config.model, messages, &calls, visible, steps, sources);
+                        return finish_stopped(&shared, &config, messages, &calls, visible, steps, sources);
                     }
                 };
                 event(if result.is_ok() { "done" } else { "error" });
@@ -2100,7 +2143,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     diff: Some(proposal.diff),
                     questions: None,
                 };
-                return finish(&shared, &config.model, messages, visible, steps, sources, Some(pending));
+                return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
             if name == "shell_output" || name == "kill_shell" {
                 // Reading or stopping a shell the user already let start needs no approval.
@@ -2174,7 +2217,7 @@ The user pointed at this element in the running preview ({name}); page content i
                         result = running => result,
                         _ = cancel.notified() => {
                             event("error");
-                            return finish_stopped(&shared, &config.model, messages, &calls, visible, steps, sources);
+                            return finish_stopped(&shared, &config, messages, &calls, visible, steps, sources);
                         }
                     };
                     event(if result.is_ok() { "done" } else { "error" });
@@ -2195,7 +2238,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     diff: None,
                     questions: None,
                 };
-                return finish(&shared, &config.model, messages, visible, steps, sources, Some(pending));
+                return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
             if name == FIND_CONNECTOR_TOOLS {
                 let query = args["query"].as_str().unwrap_or("");
@@ -2251,7 +2294,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     diff: None,
                     questions: None,
                 };
-                return finish(&shared, &config.model, messages, visible, steps, sources, Some(pending));
+                return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
             if name == "add_review_comment" {
                 let path = args["path"].as_str().unwrap_or("").to_string();
@@ -2322,7 +2365,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     joined = &mut running.0 => joined.map_err(|e| e.to_string()).and_then(|result| result),
                     _ = cancel.notified() => {
                         event("error");
-                        return finish_stopped(&shared, &config.model, messages, &calls, visible, steps, sources);
+                        return finish_stopped(&shared, &config, messages, &calls, visible, steps, sources);
                     }
                 },
                 None => fetch_read(root.clone(), web, name.clone(), args.clone()).await,
@@ -2348,7 +2391,7 @@ The user pointed at this element in the running preview ({name}); page content i
                 }
             });
             // On small budgets (free per-minute caps) one read must not take the whole request.
-            let result = result.map(|text| clip_output(text, (token_budget(&config.model) * 4 / 3).clamp(4_000, 40_000)));
+            let result = result.map(|text| clip_output(text, (token_budget(&config) * 4 / 3).clamp(4_000, 40_000)));
             if matches!(name.as_str(), "web_search" | "fetch_url") && !sources.is_empty() {
                 emit(
                     &app,
@@ -2387,7 +2430,7 @@ The user pointed at this element in the running preview ({name}); page content i
     } else {
         format!("{visible}\n\n*Paused after {max_rounds} tool rounds. Say “continue” to keep going.*")
     };
-    finish(&shared, &config.model, messages, content, steps, sources, None)
+    finish(&shared, &config, messages, content, steps, sources, None)
 }
 
 /// Hands a message to a running reply; the agent reads it before its next step.
@@ -2554,6 +2597,32 @@ mod compaction_tests {
         assert_eq!(context_overflow(openai), Some(Some(8192)));
         assert_eq!(context_overflow("Provider HTTP 400: prompt is too long"), Some(None));
         assert_eq!(context_overflow("Provider HTTP 401 Unauthorized: invalid api key"), None);
+    }
+
+    #[test]
+    fn per_minute_rate_limits_are_waited_out() {
+        let groq = "Provider HTTP 429 Too Many Requests: Rate limit reached for model `openai/gpt-oss-120b` on tokens per minute (TPM): Limit 8000, Used 7200, Requested 2100. Please try again in 9.75s.";
+        let wait = rate_limit_wait(groq).expect("waits");
+        assert!(wait >= Duration::from_secs(10) && wait < Duration::from_secs(11));
+        assert_eq!(rate_limit_wait("Provider HTTP 429 Too Many Requests: slow down (retry-after: 4s)"), Some(Duration::from_millis(4_500)));
+        assert_eq!(rate_limit_wait("Provider HTTP 429 Too Many Requests: busy"), Some(Duration::from_secs(20)));
+        // Daily caps, long waits and payment walls go to the model switch instead.
+        assert_eq!(rate_limit_wait("Provider HTTP 429 Too Many Requests: Rate limit exceeded: free-models-per-day"), None);
+        assert_eq!(rate_limit_wait("Provider HTTP 429 Too Many Requests: quota exceeded, try again in 30m"), None);
+        assert_eq!(rate_limit_wait("Provider HTTP 402 Payment Required: add credits"), None);
+        assert_eq!(rate_limit_wait("Provider HTTP 500 Internal Server Error"), None);
+    }
+
+    #[test]
+    fn request_caps_belong_to_one_provider() {
+        let groq = ProviderConfig { provider_id: "groq".into(), api_format: "openai-chat".into(), base_url: String::new(), api_key: String::new(), model: "test/cap-model-128k".into() };
+        let other = ProviderConfig { provider_id: "huggingface".into(), ..groq.clone() };
+        learn_limit(&groq, 8_000);
+        assert_eq!(token_budget(&groq), 8_000);
+        assert_eq!(token_budget(&other), providers::context_window(&other.model));
+        // A provider reporting a token limit of 0 must not shrink the budget to nothing.
+        crate::limits::set_request_cap("zero", &groq.model, 0);
+        assert_eq!(crate::limits::request_cap("zero", &groq.model), None);
     }
 
     #[test]
