@@ -37,6 +37,8 @@ use crate::{
 const SKIP_DIRS: &[&str] = &[
     ".git", "node_modules", "target", "dist", ".next", ".nuxt", ".svelte-kit", ".turbo", ".cache", ".gradle", ".venv", "venv",
     "__pycache__", ".pytest_cache", ".mypy_cache", "coverage", ".local", ".parcel-cache", ".angular", ".idea", ".vs",
+    // The oh-my-claudecode plugin's state for Claude Code.
+    ".omc",
 ];
 
 const BINARY_EXTS: &[&str] = &[

@@ -8,6 +8,7 @@ export const api = {
   listTeamAgents: (refresh = false) => invoke<TeamAgent[]>('list_team_agents', { refresh }),
   listTeamTasks: () => invoke<TeamTaskSummary[]>('list_team_tasks'),
   createTeamTask: (title: string, projectPath: string, members: { kind: string; model?: string; mode?: string }[], newProject = false) => invoke<TeamTask>('create_team_task', { title, projectPath, members, newProject }),
+  readProjectImage: (path: string) => invoke<string>('read_project_image', { path }),
   teamAttach: (id: string, paths: string[], data?: [string, string][]) => invoke<string[]>('team_attach', { id, paths, data: data ?? null }),
   teamSnapshot: (id: string) => invoke<TeamTask>('team_snapshot', { id }),
   addTeamMember: (id: string, member: { kind: string; model?: string; mode?: string }) => invoke<TeamTask>('add_team_member', { id, member }),

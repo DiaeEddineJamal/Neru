@@ -2,6 +2,14 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.8.1 · Images open, and no more .omc
+
+### Fixes
+
+- **Images open in the file viewer.** Clicking a picture in Files showed "stream did not contain valid UTF-8". Images now show as a preview, and other binary files (PDFs, archives, fonts, media) say they open in another app, with a button to do it.
+- **No .omc folders.** Claude Code members run without the oh-my-claudecode plugin, so they no longer write its `.omc` state folder into your projects; your own Claude Code keeps the plugin. Neru also leaves `.omc` out of the file tree, search, the project index and turn changes.
+- A project created with a new task was listed twice in the sidebar.
+
 ## 0.8.0 · Team you can watch work, with your models and your projects
 
 ### Team

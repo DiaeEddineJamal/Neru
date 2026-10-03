@@ -393,6 +393,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             team::commands::list_team_tasks,
             team::commands::create_team_task,
             team::commands::team_attach,
+            workspace::read_project_image,
             team::commands::team_snapshot,
             team::commands::add_team_member,
             team::commands::update_team_member,

@@ -326,6 +326,10 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .file-toolbar .button { margin-left: auto; font-family: Inter, sans-serif; }
 .unsaved-mark { color: var(--sage); font: var(--fs-xs) Inter, sans-serif; }
 .editor-host { flex: 1; min-height: 0; }
+/* Images and other files the text editor cannot show */
+.file-preview { display: grid; place-items: center; height: 100%; padding: 24px; overflow: auto; color: var(--muted); font-size: var(--fs-sm); background: repeating-conic-gradient(color-mix(in oklch, var(--text) 5%, transparent) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.file-preview img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 6px 24px #0004; }
+.file-preview p { padding: 10px 14px; border-radius: 8px; background: var(--surface); }
 .editor-pending { max-height: 55%; overflow: auto; padding: 12px; border-top: 1px solid var(--border); }
 .content-view { flex: 1; min-height: 0; overflow-y: auto; display: flex; }
 .content-column { width: min(850px, calc(100% - 60px)); margin: 0 auto; padding: 46px 0; }

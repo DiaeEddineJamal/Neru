@@ -418,6 +418,20 @@ fn claude_rule_path(path: &Path) -> String {
     }
 }
 
+/// `--settings` for Claude members: every installed oh-my-claudecode plugin turned off.
+fn quiet_plugins() -> String {
+    let file = dirs::home_dir().unwrap_or_default().join(".claude").join("settings.json");
+    let settings: Value = std::fs::read_to_string(file).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+    let off: serde_json::Map<String, Value> = settings["enabledPlugins"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(id, _)| id.starts_with("oh-my-claudecode@"))
+        .map(|(id, _)| (id.clone(), Value::Bool(false)))
+        .collect();
+    if off.is_empty() { String::new() } else { serde_json::json!({ "enabledPlugins": off }).to_string() }
+}
+
 pub fn args(turn: &Turn) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     let mut push = |items: &[&str]| args.extend(items.iter().map(|item| item.to_string()));
@@ -430,6 +444,12 @@ pub fn args(turn: &Turn) -> Vec<String> {
             let mcp = mcp_file(turn).to_string_lossy().into_owned();
             if turn.mcp.is_some() {
                 push(&["--mcp-config", &mcp]);
+            }
+            // Plugins that write their own state into the project (oh-my-claudecode's .omc) are
+            // off for a member's runs; the user's Claude Code keeps them.
+            let quiet = quiet_plugins();
+            if !quiet.is_empty() {
+                push(&["--settings", &quiet]);
             }
             match turn.access {
                 // Read the project, write only the task's artifacts; Neru's browser tools only look.

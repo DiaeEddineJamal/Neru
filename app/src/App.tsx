@@ -59,6 +59,10 @@ import './App.css'
 
 const CodeEditor = lazy(() => import('./components/neru/CodeEditor'))
 const uid = () => crypto.randomUUID()
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i
+const BINARY_FILE = /\.(pdf|zip|gz|tgz|7z|rar|tar|exe|dll|so|dylib|bin|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|webm|wav|ogg|flac|psd|sqlite|db|class|jar|pyc|wasm)$/i
+/** Files the text editor cannot show: images get a preview, the rest a note. */
+const fileKind = (path: string): 'image' | 'binary' | null => IMAGE_FILE.test(path) ? 'image' : BINARY_FILE.test(path) ? 'binary' : null
 const errorText = (value: unknown) => value instanceof Error ? value.message : String(value)
 
 const sectionTitles: Record<Section, string> = { home: 'Session', explorer: 'Explorer', search: 'Search', git: 'Source control', terminal: 'Terminal', preview: 'Preview', settings: 'Settings', team: 'Team' }
@@ -283,6 +287,7 @@ function App() {
   const [fileText, setFileText] = useState('')
   const [fileDraft, setFileDraft] = useState('')
   const [fileLoading, setFileLoading] = useState(false)
+  const [filePreview, setFilePreview] = useState<{ path: string; url: string; kind: 'image' | 'binary' } | null>(null)
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const [branches, setBranches] = useState<string[]>([])
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([])
@@ -647,6 +652,14 @@ function App() {
   }
   const showFile = async (path: string) => {
     setSelectedFile(path); openPane('files')
+    // Images show as images; other binary files say what they are instead of failing to decode.
+    const kind = fileKind(path)
+    if (kind) {
+      setFilePreview({ path, url: '', kind })
+      if (kind === 'image') void api.readProjectImage(path).then(url => setFilePreview(current => current?.path === path ? { path, url, kind } : current)).catch(cause => setError(errorText(cause)))
+      return
+    }
+    setFilePreview(null)
     const existing = tabs.find(tab => tab.path === path)
     if (existing) { setFileText(existing.saved); setFileDraft(existing.draft); return }
     setFileLoading(true)
@@ -1399,7 +1412,7 @@ function App() {
     { label: light ? 'Dark theme' : 'Light theme', onSelect: () => setLight(value => !value) },
     { label: 'Settings', shortcut: `${modKey} ,`, onSelect: () => setSection('settings') },
   ]
-  const filesBody = project ? <><div className="tree-panel"><div className="panel-heading">Files <span>{project.name}</span></div><FileTree key={project.path} projectKey={project.path} selected={selectedFile} version={treeVersion} changed={touched} lastChange={lastChange} onSelect={path => void showFile(path)} {...treeActions} /></div><div className="editor-panel">{selectedFile ? <><div className="editor-tabs">{tabs.map(tab => <button key={tab.path} type="button" className={tab.path === selectedFile ? 'active' : ''} onClick={() => void showFile(tab.path)} onContextMenu={event => tabMenu(event, tab.path)} onAuxClick={event => { if (event.button === 1) closeTabs(item => item.path === tab.path) }} title={tab.path}>{tab.path.split(/[/\\]/).pop()}{tab.draft !== tab.saved ? ' •' : ''}</button>)}</div><div className="file-toolbar"><FileDiffIcon size={14} /><span className="truncate">{selectedFile}</span>{fileDraft !== fileText && <span className="unsaved-mark">Edited</span>}<button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void saveDraft()}>Save</button><button className="button subtle" onClick={() => void openEditor()}>Open in editor</button><button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void proposeDraft()}>Review changes</button></div><div className="editor-host">{fileLoading ? 'Reading file…' : <Suspense fallback="Loading editor…"><CodeEditor path={selectedFile} value={fileDraft} onChange={setFileDraft} light={light} /></Suspense>}</div>{pending && !pendingFromAgent && <div className="editor-pending"><ApprovalCard pending={pending} status={pendingStatus} projectPath={project.path} onApprove={() => void approve()} onDeny={() => void reject()} /></div>}</> : <div className="empty-pane"><FileSearch size={27} /><h2>Select a file</h2><p>Browse your project from the tree.</p></div>}</div></> : null
+  const filesBody = project ? <><div className="tree-panel"><div className="panel-heading">Files <span>{project.name}</span></div><FileTree key={project.path} projectKey={project.path} selected={selectedFile} version={treeVersion} changed={touched} lastChange={lastChange} onSelect={path => void showFile(path)} {...treeActions} /></div><div className="editor-panel">{selectedFile ? <><div className="editor-tabs">{tabs.map(tab => <button key={tab.path} type="button" className={tab.path === selectedFile ? 'active' : ''} onClick={() => void showFile(tab.path)} onContextMenu={event => tabMenu(event, tab.path)} onAuxClick={event => { if (event.button === 1) closeTabs(item => item.path === tab.path) }} title={tab.path}>{tab.path.split(/[/\\]/).pop()}{tab.draft !== tab.saved ? ' •' : ''}</button>)}</div><div className="file-toolbar"><FileDiffIcon size={14} /><span className="truncate">{selectedFile}</span>{fileDraft !== fileText && <span className="unsaved-mark">Edited</span>}<button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void saveDraft()}>Save</button><button className="button subtle" onClick={() => void openEditor()}>Open in editor</button><button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void proposeDraft()}>Review changes</button></div><div className="editor-host">{filePreview?.path === selectedFile ? <div className="file-preview">{filePreview.kind === 'image' ? (filePreview.url ? <img src={filePreview.url} alt={selectedFile} /> : 'Loading image…') : <p>{selectedFile.split(/[\\/]/).pop()} is not a text file. <button className="team-link" onClick={() => void openEditor()}>Open it in another app</button></p>}</div> : fileLoading ? 'Reading file…' : <Suspense fallback="Loading editor…"><CodeEditor path={selectedFile} value={fileDraft} onChange={setFileDraft} light={light} /></Suspense>}</div>{pending && !pendingFromAgent && <div className="editor-pending"><ApprovalCard pending={pending} status={pendingStatus} projectPath={project.path} onApprove={() => void approve()} onDeny={() => void reject()} /></div>}</> : <div className="empty-pane"><FileSearch size={27} /><h2>Select a file</h2><p>Browse your project from the tree.</p></div>}</div></> : null
   const dockPanes: DockPaneSpec[] = project ? [
     { id: 'terminal', title: 'Terminal', keepAlive: true, body: terminalSeen ? <TerminalPane key={project.path} projectKey={project.path} scope={section === 'team' && teamScope ? teamScope : undefined} /> : null },
     { id: 'files', title: 'Files', body: filesBody, actions: <button type="button" className="dock-button" onClick={() => setTreeVersion(value => value + 1)} aria-label="Refresh files" title="Refresh files"><RotateCw size={14} /></button> },

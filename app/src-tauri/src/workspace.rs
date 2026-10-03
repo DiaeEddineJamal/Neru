@@ -192,7 +192,29 @@ pub fn read_limited(path: &Path) -> Result<String, String> {
     if metadata.len() > MAX_READ {
         return Err("File exceeds the 1 MB reading limit".into());
     }
-    fs::read_to_string(path).map_err(|e| e.to_string())
+    String::from_utf8(fs::read(path).map_err(|e| e.to_string())?).map_err(|_| format!("{} is not a text file, so Neru cannot show it here. Open it in another app instead.", path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()))
+}
+
+/// An image in the project as a data URL, for the file viewer.
+#[tauri::command]
+pub fn read_project_image(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let root = project_root(&state)?;
+    let file = resolve_existing(&root, &path)?;
+    let mime = match file.extension().map(|ext| ext.to_string_lossy().to_lowercase()).as_deref() {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("bmp") => "image/bmp",
+        Some("ico") => "image/x-icon",
+        Some("avif") => "image/avif",
+        _ => return Err("Not an image".into()),
+    };
+    if fs::metadata(&file).map_err(|e| e.to_string())?.len() > 20 * 1024 * 1024 {
+        return Err("The image is larger than 20 MB".into());
+    }
+    Ok(format!("data:{mime};base64,{}", crate::documents::base64(&fs::read(&file).map_err(|e| e.to_string())?)))
 }
 
 fn info(root: &Path) -> ProjectInfo {
@@ -226,6 +248,8 @@ pub fn open_project(path: String, state: State<'_, AppState>) -> Result<ProjectI
 
 /// Puts `root` first in the recent projects list.
 pub(crate) fn remember_project(root: &Path) -> Result<(), String> {
+    // The same form open_project stores, so one folder is listed once.
+    let root = &fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let recent_path = data_dir()?.join("recent-projects.json");
     let mut recent: Vec<String> = fs::read_to_string(&recent_path)
         .ok()

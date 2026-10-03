@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.8.1",
+    "date": "2026-10-03",
+    "title": "Images open, and no more .omc",
+    "summary": "Pictures open in the file viewer instead of failing, and Team members no longer leave .omc folders in your projects.",
+    "sections": [
+      {
+        "title": "Fixes",
+        "items": [
+          "Images in Files show as a preview instead of “stream did not contain valid UTF-8”. Other binary files say they open in another app, with a button to do it.",
+          "Claude Code members run without the oh-my-claudecode plugin, so no .omc folder appears in your projects. Your own Claude Code keeps the plugin, and Neru hides .omc from files, search and changes.",
+          "A project created with a new task is listed once in the sidebar, not twice."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.8.0",
     "date": "2026-10-03",
     "title": "Team you can watch work, with your models and your projects",
