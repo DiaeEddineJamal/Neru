@@ -28,6 +28,8 @@
 //! Events: preToolUse, postToolUse, userPromptSubmit, sessionStart, stop, preCompact,
 //! subagentStop, sessionEnd, notification (Claude: PreToolUse, PostToolUse, …).
 
+use crate::Hidden;
+
 use std::{fs, io::{Read, Write}, path::Path, process::Command, time::Duration};
 
 use serde_json::{Value, json};
@@ -387,19 +389,19 @@ fn run_with(root: &Path, command: &str, input: Option<&str>, timeout: u64, claud
     #[cfg(windows)]
     let mut process = match git_bash().filter(|_| claude) {
         Some(bash) => {
-            let mut process = Command::new(bash);
+            let mut process = Command::new(bash).hidden();
             process.args(["-c", command]);
             process
         }
         None => {
-            let mut process = Command::new("powershell.exe");
+            let mut process = Command::new("powershell.exe").hidden();
             process.args(["-NoProfile", "-NonInteractive", "-Command", command]);
             process
         }
     };
     #[cfg(not(windows))]
     let mut process = {
-        let mut process = Command::new("sh");
+        let mut process = Command::new("sh").hidden();
         process.args([if claude { "-c" } else { "-lc" }, command]);
         process
     };

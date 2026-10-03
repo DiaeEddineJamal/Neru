@@ -1,6 +1,8 @@
 //! Agent capabilities beyond reading and editing: persistent memory, a visible to-do list,
 //! sub-agents that explore in parallel, and instructions from nested AGENTS.md / CLAUDE.md files.
 
+use crate::Hidden;
+
 use std::{
     collections::HashSet,
     fs,
@@ -396,13 +398,13 @@ pub struct Check {
 async fn version(program: &str, args: &[&str]) -> Option<String> {
     #[cfg(windows)]
     let mut command = {
-        let mut command = tokio::process::Command::new("cmd");
+        let mut command = tokio::process::Command::new("cmd").hidden();
         command.arg("/C").arg(program).args(args);
         command
     };
     #[cfg(not(windows))]
     let mut command = {
-        let mut command = tokio::process::Command::new(program);
+        let mut command = tokio::process::Command::new(program).hidden();
         command.args(args);
         command
     };

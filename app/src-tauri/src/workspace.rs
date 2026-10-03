@@ -1,3 +1,4 @@
+use crate::Hidden;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -962,14 +963,14 @@ pub fn open_in_editor(path: String, state: State<'_, AppState>) -> Result<(), St
     let full = resolve_existing(&root, &path)?;
     let path = full.to_string_lossy().to_string();
     for program in ["cursor", "code"] {
-        if std::process::Command::new(program).args(["-g", &path]).spawn().is_ok() {
+        if std::process::Command::new(program).hidden().args(["-g", &path]).spawn().is_ok() {
             return Ok(());
         }
     }
     #[cfg(windows)]
     {
         let quoted = format!("\"{path}\"");
-        std::process::Command::new("cmd").args(["/c", "start", "", &quoted]).spawn().map_err(|e| e.to_string())?;
+        std::process::Command::new("cmd").hidden().args(["/c", "start", "", &quoted]).spawn().map_err(|e| e.to_string())?;
         return Ok(());
     }
     #[cfg(target_os = "macos")]

@@ -1,6 +1,6 @@
 {
   "name": "neru-cli",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Neru in your terminal: a local-first coding agent that proposes changes you review and never acts without asking.",
   "keywords": [
     "neru",

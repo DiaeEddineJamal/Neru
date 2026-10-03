@@ -236,6 +236,30 @@ pub(crate) fn context() -> tauri::Context<tauri::Wry> {
     context
 }
 
+/// Windows gives every console program a GUI app starts its own console window, which flashes open
+/// and shut (git, gh, PowerShell, cmd). `.hidden()` starts it without one; elsewhere it does nothing.
+pub(crate) trait Hidden {
+    fn hidden(self) -> Self;
+}
+
+impl Hidden for std::process::Command {
+    #[allow(unused_mut)]
+    fn hidden(mut self) -> Self {
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(&mut self, 0x0800_0000); // CREATE_NO_WINDOW
+        self
+    }
+}
+
+impl Hidden for tokio::process::Command {
+    #[allow(unused_mut)]
+    fn hidden(mut self) -> Self {
+        #[cfg(windows)]
+        self.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        self
+    }
+}
+
 /// Everything but the window: plugins, state and commands. `ready` runs once the app is set up.
 pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()

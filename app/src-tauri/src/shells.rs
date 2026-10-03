@@ -3,6 +3,9 @@
 //! its output; the agent reads what is new with shell_output and stops it with kill_shell.
 //! Shells belong to the session that started them and end with it, and with the app.
 
+#[allow(unused_imports)] // .hidden() is called here only on some systems
+use crate::Hidden;
+
 use std::{
     collections::{HashMap, VecDeque},
     path::Path,
@@ -152,7 +155,7 @@ pub(crate) fn command(command: &str) -> tokio::process::Command {
     }
     #[cfg(not(windows))]
     {
-        let mut process = tokio::process::Command::new("sh");
+        let mut process = tokio::process::Command::new("sh").hidden();
         process.args(["-lc", command]);
         process
     }

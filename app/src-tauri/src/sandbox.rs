@@ -15,6 +15,9 @@
 //! a trusted project's settings) or `NERU_SANDBOX=off` turns it off. A command the model asks to
 //! run outside it always needs the user's approval, except in Bypass mode.
 
+#[allow(unused_imports)] // .hidden() is called here only on some systems
+use crate::Hidden;
+
 use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -216,7 +219,7 @@ fn bubblewrap() -> Option<&'static Path> {
         .get_or_init(|| {
             let path = std::env::var_os("PATH").and_then(|paths| std::env::split_paths(&paths).map(|dir| dir.join("bwrap")).find(|path| path.is_file()))?;
             // Some systems ship bwrap but forbid unprivileged user namespaces; then it cannot help.
-            let works = std::process::Command::new(&path)
+            let works = std::process::Command::new(&path).hidden()
                 .args(["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--unshare-pid", "--die-with-parent", "true"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
@@ -486,7 +489,7 @@ mod tests {
         let (mut child, guard) = prepared.start().expect("starts");
         let _ = tokio::time::timeout(std::time::Duration::from_secs(60), child.wait()).await;
         let count = || {
-            let out = std::process::Command::new("powershell")
+            let out = std::process::Command::new("powershell").hidden()
                 .args(["-NoProfile", "-Command", &format!("@(Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{marker}*' -and $_.Name -eq 'powershell.exe' -and $_.CommandLine -notlike '*Get-CimInstance*' }}).Count")])
                 .output()
                 .expect("powershell");

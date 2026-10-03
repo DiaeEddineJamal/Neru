@@ -3,6 +3,8 @@
 //! so Vite, Next.js, Astro, CRA, SvelteKit and the rest all work without guessing ports. A plain
 //! HTML/CSS/JS folder is served by a small static server built into Neru.
 
+use crate::Hidden;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -157,13 +159,13 @@ fn strip_ansi(text: &str) -> String {
 fn shell(command: &str) -> tokio::process::Command {
     #[cfg(windows)]
     {
-        let mut process = tokio::process::Command::new("powershell.exe");
+        let mut process = tokio::process::Command::new("powershell.exe").hidden();
         process.args(["-NoProfile", "-NonInteractive", "-Command", command]);
         process
     }
     #[cfg(not(windows))]
     {
-        let mut process = tokio::process::Command::new("sh");
+        let mut process = tokio::process::Command::new("sh").hidden();
         process.args(["-lc", command]);
         process
     }
@@ -305,7 +307,7 @@ impl PreviewManager {
                 // PowerShell wraps the server; kill the whole tree so the port is freed.
                 #[cfg(windows)]
                 if let Some(pid) = child.id() {
-                    let _ = std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+                    let _ = std::process::Command::new("taskkill").hidden().args(["/PID", &pid.to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
                 }
                 let _ = child.start_kill();
             }

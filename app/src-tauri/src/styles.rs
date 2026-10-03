@@ -11,6 +11,9 @@
 //! `/output-style` and `/statusline` write the project's `.claude/settings.local.json`, where Claude
 //! Code keeps the same keys. A project's status-line command runs only once the folder is trusted.
 
+#[allow(unused_imports)] // .hidden() is called here only on some systems
+use crate::Hidden;
+
 use std::{
     fs,
     io::Write,
@@ -193,7 +196,7 @@ fn shell(command: &str) -> std::process::Command {
     }
     #[cfg(not(windows))]
     {
-        let mut process = std::process::Command::new("sh");
+        let mut process = std::process::Command::new("sh").hidden();
         process.args(["-c", command]);
         process
     }

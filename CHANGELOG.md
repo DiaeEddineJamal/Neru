@@ -2,6 +2,12 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.7.1 · No more flashing console windows
+
+### Fixes
+
+- **No more console windows flashing on Windows.** Opening the app no longer pops terminal windows open and shut. Git, GitHub CLI, PowerShell, hooks, version checks, dev servers and the other console programs Neru runs in the background now start without a window. Terminals you open yourself (a member's own terminal) still show.
+
 ## 0.7.0 · Team, a CLI that works like Claude Code's, and free models that last longer
 
 ### The neru CLI, like Claude Code's

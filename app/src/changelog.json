@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.7.1",
+    "date": "2026-10-03",
+    "title": "No more flashing console windows",
+    "summary": "On Windows, opening Neru no longer pops terminal windows open and shut.",
+    "sections": [
+      {
+        "title": "Fixes",
+        "items": [
+          "Git, GitHub CLI, PowerShell, hooks, version checks, dev servers and the other console programs Neru runs in the background now start without a window. Terminals you open yourself still show."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.7.0",
     "date": "2026-10-03",
     "title": "Team, a CLI that works like Claude Code's, and free models that last longer",

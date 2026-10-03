@@ -1,3 +1,4 @@
+use crate::Hidden;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -48,7 +49,7 @@ pub fn clone_project(
     }
     let name = target.file_name().ok_or("Invalid destination")?;
     let target = parent.join(name);
-    let output = Command::new("git")
+    let output = Command::new("git").hidden()
         .args(["clone", "--", url.trim(), target.to_string_lossy().as_ref()])
         .output()
         .map_err(|e| format!("Git unavailable: {e}"))?;
@@ -74,7 +75,7 @@ pub struct GitFile {
 }
 
 pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = Command::new("git").hidden()
         .args(args)
         .current_dir(root)
         .output()
@@ -266,7 +267,7 @@ fn base_branch(state: &AppState, root: &Path) -> String {
 }
 
 fn glab_available() -> bool {
-    Command::new("glab").arg("version").output().is_ok_and(|output| output.status.success())
+    Command::new("glab").hidden().arg("version").output().is_ok_and(|output| output.status.success())
 }
 
 fn compare_url(web: &str, base: &str, branch: &str, title: Option<&str>, body: Option<&str>) -> String {
@@ -290,7 +291,7 @@ fn compare_url(web: &str, base: &str, branch: &str, title: Option<&str>, body: O
 }
 
 fn gh_available() -> bool {
-    Command::new("gh")
+    Command::new("gh").hidden()
         .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success())
@@ -338,7 +339,7 @@ pub async fn git_push(app: tauri::AppHandle) -> Result<String, String> {
         let branch = current_branch(&root)?;
         git(&root, &["remote", "get-url", "origin"])
             .map_err(|_| "This repository has no origin remote".to_string())?;
-        let output = Command::new("git")
+        let output = Command::new("git").hidden()
             .args(["push", "--set-upstream", "origin", &branch])
             .env("GIT_TERMINAL_PROMPT", "0")
             .current_dir(&root)
@@ -380,7 +381,7 @@ pub async fn create_pull_request(
         let title = title.as_deref().map(str::trim).filter(|title| !title.is_empty()).map(str::to_string);
         let body = body.as_deref().map(str::trim).filter(|body| !body.is_empty()).map(str::to_string);
         if gh_available() {
-            let mut command = Command::new("gh");
+            let mut command = Command::new("gh").hidden();
             command.args(["pr", "create", "--head", &branch, "--base", &base]);
             match &title {
                 Some(title) => {
@@ -413,7 +414,7 @@ pub async fn create_pull_request(
             .map_err(|_| "This repository has no origin remote".to_string())?;
         let web = forge_web_url(&remote).ok_or("Pull requests from Neru support GitHub, GitLab, and Bitbucket remotes")?;
         if web.contains("://gitlab.com/") && glab_available() {
-            let mut command = Command::new("glab");
+            let mut command = Command::new("glab").hidden();
             command.args(["mr", "create", "--source-branch", &branch, "--target-branch", &base, "--yes"]);
             if let Some(title) = &title {
                 command.args(["--title", title]);
@@ -509,7 +510,7 @@ pub fn parse_pr(body: &serde_json::Value) -> PrStatus {
 }
 
 fn gh(root: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("gh")
+    let output = Command::new("gh").hidden()
         .args(args)
         .env("GH_PROMPT_DISABLED", "1")
         .current_dir(root)

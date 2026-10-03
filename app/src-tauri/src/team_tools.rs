@@ -1,6 +1,8 @@
 //! Team helpers that work on the project rather than the thread: what a turn changed and undoing
 //! it, worktree setup and teardown scripts, sweeping landed worktrees, opening a member in its own
 //! terminal, and custom CLI agents.
+
+use crate::Hidden;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -279,12 +281,12 @@ pub async fn run_custom(
     let ext = script.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase();
     let mut command = match ext.as_str() {
         "ps1" => {
-            let mut command = tokio::process::Command::new("powershell.exe");
+            let mut command = tokio::process::Command::new("powershell.exe").hidden();
             command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(script);
             command
         }
         "sh" => {
-            let mut command = tokio::process::Command::new("sh");
+            let mut command = tokio::process::Command::new("sh").hidden();
             command.arg(script);
             command
         }

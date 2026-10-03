@@ -2,6 +2,9 @@
 //! speaks JSON-RPC 2.0, one message per line. Neru lists its tools, offers them to the model as
 //! `mcp__<server>__<tool>`, and runs a call only after the user approves it (or always allows it).
 
+#[allow(unused_imports)] // .hidden() is called here only on some systems
+use crate::Hidden;
+
 use std::{
     collections::{HashMap, VecDeque},
     fs,
@@ -247,7 +250,7 @@ impl Client {
         };
         #[cfg(not(windows))]
         let mut command = {
-            let mut command = Command::new(&config.command);
+            let mut command = Command::new(&config.command).hidden();
             command.args(&config.args);
             command
         };
