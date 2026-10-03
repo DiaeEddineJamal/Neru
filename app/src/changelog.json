@@ -1,5 +1,23 @@
 [
   {
+    "version": "0.8.0",
+    "date": "2026-10-03",
+    "title": "Team you can watch work, with your models and your projects",
+    "summary": "Team members now show their work as it happens, with the thinking orb and streamed replies from Code mode. The message box gains dictation and attachments, each member gets a model and effort dropdown with the newest Claude and Codex models, and a new task can start in any project, including a brand new one.",
+    "sections": [
+      {
+        "title": "Team",
+        "items": [
+          "A member's turn shows at once: the thinking orb with what it is doing, its steps, and Claude Code's reply streaming in word by word.",
+          "The message box is Code mode's: dictation with your choice of microphone, attachments with +, and pasted screenshots. Attached files go to the task folder, where every member can read them.",
+          "Each member has a model and an effort dropdown: Claude Code's Fable, Opus, Sonnet and Haiku with low to max, and every model your Codex account offers with its own levels.",
+          "A new task can work in the open project, a recent one, another folder, a new project that Neru creates with a Git repository, or none.",
+          "Turn changes no longer list the oh-my-claudecode plugin's .omc state files."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.7.1",
     "date": "2026-10-03",
     "title": "No more flashing console windows",

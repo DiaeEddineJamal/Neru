@@ -254,7 +254,9 @@ export interface TeamLimit { label: string; used: number; resetsAt: number | nul
 export interface TeamSpend { at: number; input: number; output: number; cost: number }
 export interface TeamUsage { input: number; output: number; cost: number; turns: number; limits: TeamLimit[]; history?: TeamSpend[] }
 export type TeamMemberStatus = 'idle' | 'working' | 'failed' | 'stopped' | ''
-export interface TeamMember { handle: string; kind: string; model: string; mode: string; upstream: string | null; seen: number; status: TeamMemberStatus; error: string | null; usage: TeamUsage; worktree: { path: string; branch: string; base: string } | null; forkNext?: boolean }
+/** A model a Team member's CLI offers, with the reasoning efforts it takes. */
+export interface AgentModel { id: string; label: string; efforts: string[]; defaultEffort: string | null }
+export interface TeamMember { handle: string; kind: string; model: string; effort?: string; mode: string; upstream: string | null; seen: number; status: TeamMemberStatus; error: string | null; usage: TeamUsage; worktree: { path: string; branch: string; base: string } | null; forkNext?: boolean }
 export interface TeamChanges { root: string; before: string; after: string; files: { path: string; status: string }[]; undone: boolean }
 export interface TeamPost { id: string; author: string; to: string[]; text: string; steps: string[]; at: number; kind: 'message' | 'notice' | 'error' | 'side' | 'setup' | 'queued'; changes?: TeamChanges; status?: 'running' | 'ok' | 'failed' }
 export interface TeamQueued { id: string; text: string; to: string[]; at: number }

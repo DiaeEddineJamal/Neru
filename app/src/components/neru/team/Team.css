@@ -93,6 +93,11 @@
 .team-field { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-xs); }
 .team-field input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: var(--fs-sm); }
 .team-field input:focus { border-color: var(--sage); outline: none; }
+/* Model and effort side by side; the effort list stays narrow. */
+.team-model-row { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.team-model-row > .team-field:first-child { flex: 1 1 180px; min-width: 0; }
+.team-model-row > .team-field + .team-field { flex: 0 1 150px; }
+.team-field select:focus { border-color: var(--sage); outline: none; }
 .team-access { display: flex; }
 .team-access button { flex: 1; justify-content: center; padding: 0 4px; height: 26px; font-size: var(--fs-xs); white-space: nowrap; }
 .team-add { width: 100%; }

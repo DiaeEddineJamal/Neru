@@ -4,7 +4,6 @@ import { motion, useReducedMotion } from 'motion/react'
 import { Activity, ArrowRightLeft, BarChart3, Brush, ChevronRight, CircleAlert, CircleHelp, Copy, Download, ExternalLink, Eye, FileDiff as FileDiffIcon, FileText, FolderOpen, GitBranch, GitFork, GitPullRequest, History, ListFilter, Maximize2, MessageCircleQuestion, Minimize2, MoreHorizontal, Network, PanelRight, Pencil, Pin, Plus, Printer, RefreshCw, Search, Smile, Square, SquareTerminal, Tag, Trash2, Undo2, UserPlus, Users, X } from 'lucide-react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { MessageScroller } from '@/components/agents/message-scroller'
-import { PromptInput } from '@/components/agents/prompt-input'
 import { StreamingResponse } from '@/components/agents/streaming-response'
 import { SpinnerRing } from '@/components/primitives/TaskRows'
 import { EASE_OUT } from '@/lib/ease'
@@ -19,7 +18,9 @@ import { openTerminalTab, type TerminalScope } from '../TerminalPane'
 import { ArtifactEditor } from './ArtifactEditor'
 import { markdownToPrintHtml, printDoc } from '@/lib/printDoc'
 import { ActivityPanel, AppearanceMenu, ChangesPanel, Checklist, DeleteDialog, FilterMenu, NO_FILTER, PrPanel, QUICKSTARTS, QueueBar, Quickstart, ReplayBar, SetupCard, TaskGlyph, UsageDashboard, applyFilter, filterActive, usageReading, useAgentModels, useDragWidth, useReplay, type TaskFilter } from './TeamPanels'
-import { RESPONSE_PROSE, ResponseMarkdown, ToolSteps, type LiveTool } from '../Conversation'
+import { AgentStatus, RESPONSE_PROSE, ResponseMarkdown, ToolSteps, agentPhase, type LiveTool } from '../Conversation'
+import { Composer, attachIcons, type VoiceEngine } from '../Composer'
+import { Attachments } from '../Attachments'
 import claudeLogo from '@/assets/agents/claude.svg?raw'
 import codexLogo from '@/assets/agents/codex.svg?raw'
 import cursorLogo from '@/assets/agents/cursor.svg?raw'
@@ -178,15 +179,20 @@ function PostView({ post, member, handles, onOpenSettings, onUndo, onRerun }: { 
   </article>
 }
 
+/** A member at work, drawn like a reply in Code mode: its steps, its reply as it streams, and the
+ * thinking orb with what it is doing now. */
 function LivePost({ member, live, handles }: { member: TeamMember; live?: { text: string; steps: string[] }; handles: string[] }) {
+  const tools = stepsAsTools(live?.steps ?? [], !live?.text)
+  const phase = agentPhase({ text: live?.text ?? '', tools, sources: [], drafts: [], reasoning: 0 }, member.mode === 'plan' ? 'plan' : 'code')
   return <article className="team-post is-live" data-from="agent" aria-busy>
-    <SpinnerRing active size={34}><AgentMark kind={member.kind} size={30} /></SpinnerRing>
+    <AgentMark kind={member.kind} size={30} status="working" />
     <div className="team-post-body">
-      <header className="team-post-meta"><strong>@{member.handle}</strong><span className="agent-shimmer">{live?.steps.length ? live.steps[live.steps.length - 1] : 'Thinking…'}</span></header>
-      <ToolSteps tools={stepsAsTools(live?.steps ?? [], true)} live />
+      <header className="team-post-meta"><strong>@{member.handle}</strong><span>{agentName(member.kind)}</span></header>
+      <ToolSteps tools={tools} live />
       {live?.text && <StreamingResponse status="streaming" copyText={live.text} announce={false} showActions={false} contentClassName={RESPONSE_PROSE}>
         <ResponseMarkdown content={live.text} sources={[]} idPrefix={`live-${member.handle}`} onCite={() => undefined} mentions={handles} />
       </StreamingResponse>}
+      <AgentStatus phase={phase} />
     </div>
   </article>
 }
@@ -202,18 +208,55 @@ function RoutingCard({ routing, onCancel }: { routing: { from: string; to: strin
   </div>
 }
 
-function NewTaskDialog({ agents, project, preset, onClose, onCreate }: { agents: TeamAgent[]; project: ProjectInfo | null; preset?: string; onClose: () => void; onCreate: (title: string, kinds: string[], mode: string, quickstart?: string) => void }) {
+/** Where a new task works: the open project, a recent one, another folder, a new project or none. */
+type ProjectChoice = { path: string; create: boolean }
+
+function NewTaskDialog({ agents, project, preset, onClose, onCreate }: { agents: TeamAgent[]; project: ProjectInfo | null; preset?: string; onClose: () => void; onCreate: (title: string, kinds: string[], mode: string, where: ProjectChoice, quickstart?: string) => void }) {
   const ready = agents.filter(agent => agent.path)
+  const [recent, setRecent] = useState<string[]>([])
+  useEffect(() => { if (isTauri()) void api.recentProjects().then(setRecent).catch(() => undefined) }, [])
+  const current = project?.path.replace(/^\\\\\?\\/, '') ?? ''
+  const [where, setWhere] = useState<'current' | 'pick' | 'new' | 'none' | string>(current ? 'current' : 'none')
+  const [picked, setPicked] = useState('')
+  const [newName, setNewName] = useState('')
+  const [newParent, setNewParent] = useState(() => current ? current.replace(/[\\/][^\\/]+$/, '') : '')
+  const others = recent.map(path => path.replace(/^\\\\\?\\/, '')).filter(path => path && path !== current).slice(0, 8)
+  const sep = newParent.includes('/') && !newParent.includes('\\') ? '/' : '\\'
+  const choice: ProjectChoice | null = where === 'current' ? { path: current, create: false }
+    : where === 'none' ? { path: '', create: false }
+    : where === 'pick' ? (picked ? { path: picked, create: false } : null)
+    : where === 'new' ? (newName.trim() && newParent ? { path: `${newParent.replace(/[\\/]+$/, '')}${sep}${newName.trim()}`, create: true } : null)
+    : { path: where, create: false }
+  const browse = async (forNew: boolean) => {
+    const folder = await openDialog({ directory: true, multiple: false, title: forNew ? 'Where the new project goes' : 'Choose the project folder' }).catch(() => null)
+    if (typeof folder !== 'string') return
+    if (forNew) setNewParent(folder); else { setPicked(folder); setWhere('pick') }
+  }
   const [kinds, setKinds] = useState<string[]>(() => ready.filter(agent => agent.signedIn).slice(0, 2).map(agent => agent.kind))
   const [title, setTitle] = useState('')
   const [mode, setMode] = useState(preset === 'review' ? 'plan' : 'accept_edits')
   const quick = QUICKSTARTS.find(item => item.id === preset)
   const toggle = (kind: string) => setKinds(current => current.includes(kind) ? current.filter(item => item !== kind) : [...current, kind])
   return <div className="modal-backdrop" onMouseDown={onClose}>
-    <form className="clone-dialog team-dialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); onCreate(title || quick?.title || '', kinds, mode, preset) }}>
+    <form className="clone-dialog team-dialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); if (choice) onCreate(title || quick?.title || '', kinds, mode, choice, preset) }}>
       <h2>{quick ? `${quick.title}.` : 'Start a team task.'}</h2>
-      <p>{quick ? quick.text : project ? <>The agents work in <strong>{project.name}</strong> and share one thread.</> : 'Open a project first so the agents have code to work on, or start a planning-only task.'}</p>
+      <p>{quick ? quick.text : 'The agents share one thread and work in the project you choose.'}</p>
       <label>{preset === 'review' ? 'Anything to focus on? (optional)' : preset === 'bug' ? 'What is the bug?' : preset === 'debate' ? 'What should they debate?' : 'What are you working on?'}<input autoFocus value={title} onChange={event => setTitle(event.target.value)} placeholder={preset === 'bug' ? 'Login fails after the session expires' : preset === 'debate' ? 'REST or GraphQL for the new API' : 'Add rate limiting to the API'} /></label>
+      <label>Project
+        <select value={where === 'pick' ? 'pick' : where} onChange={event => { const value = event.target.value; if (value === 'browse') void browse(false); else setWhere(value) }}>
+          {current && <option value="current">{baseName(current)} (open now)</option>}
+          {others.map(path => <option key={path} value={path}>{baseName(path)} · {path}</option>)}
+          {picked && <option value="pick">{baseName(picked)} · {picked}</option>}
+          <option value="browse">Choose another folder…</option>
+          <option value="new">New project…</option>
+          <option value="none">No project (planning only)</option>
+        </select>
+      </label>
+      {where === 'new' && <div className="team-new-project">
+        <label>Project name<input value={newName} onChange={event => setNewName(event.target.value)} placeholder="port-website" /></label>
+        <label>Inside<span className="path-field"><input value={newParent} onChange={event => setNewParent(event.target.value)} placeholder="D:\\Projects" /><button type="button" className="icon-button" onClick={() => void browse(true)} aria-label="Choose the parent folder" title="Choose folder"><FolderOpen size={16} /></button></span></label>
+        {choice && <p className="settings-note">Neru creates <code>{choice.path}</code> and starts a Git repository there.</p>}
+      </div>}
       <fieldset className="team-pick"><legend>Agents</legend>
         {ready.map(agent => <button type="button" key={agent.kind} className={cn('team-pick-item', kinds.includes(agent.kind) && 'on')} aria-pressed={kinds.includes(agent.kind)} onClick={() => toggle(agent.kind)}>
           <AgentMark kind={agent.kind} size={26} /><span><strong>{agent.name}</strong><small>{agent.kind === 'neru' ? 'Your Neru model' : agent.signedIn ? 'Signed in' : 'Not signed in'}</small></span>
@@ -221,16 +264,37 @@ function NewTaskDialog({ agents, project, preset, onClose, onCreate }: { agents:
       </fieldset>
       {ready.length <= 1 && <p className="settings-note">No agent CLIs found. Install Claude Code, Codex, OpenCode, Gemini CLI or Cursor Agent, then refresh.</p>}
       <label>What they may do<div className="theme-toggle team-access">{ACCESS.map(item => <button type="button" key={item.mode} className={mode === item.mode ? 'active' : ''} title={item.hint} onClick={() => setMode(item.mode)}>{item.label}</button>)}</div></label>
-      <div className="clone-actions"><button type="button" className="button subtle" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={kinds.length === 0 || (preset === 'bug' && !title.trim())}>Start task</button></div>
+      <div className="clone-actions"><button type="button" className="button subtle" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={kinds.length === 0 || !choice || (preset === 'bug' && !title.trim())}>Start task</button></div>
     </form>
   </div>
 }
 
-function ModelField({ task, member, onChange }: { task: TeamTask; member: TeamMember; onChange: (model: string) => void }) {
+const EFFORT_LABELS: Record<string, string> = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' }
+
+/** The member's model and reasoning effort: dropdowns of what its CLI offers, plus your own id. */
+function ModelField({ member, onChange }: { task: TeamTask; member: TeamMember; onChange: (change: { model?: string; effort?: string }) => void }) {
   const models = useAgentModels(member.kind)
-  const list = `models-${task.id}-${member.handle}`
-  return <label className="team-field">Model<input list={list} defaultValue={member.model} key={member.model} placeholder={member.kind === 'neru' ? 'Neru’s model' : 'Agent default'} onBlur={event => { if (event.target.value.trim() !== member.model) onChange(event.target.value.trim()) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />
-    {models.length > 0 && <datalist id={list}>{models.map(model => <option key={model} value={model} />)}</datalist>}</label>
+  const [typing, setTyping] = useState(false)
+  const chosen = models.find(model => model.id === member.model)
+  // Efforts: the chosen model's, or what the CLI takes for any model when on its default.
+  const efforts = chosen?.efforts.length ? chosen.efforts : [...new Set(models.flatMap(model => model.efforts))]
+  const effort = member.effort ?? ''
+  // No list (Neru's own agent, a custom agent, or a CLI that keeps none): type the model id.
+  if (typing || models.length === 0) return <label className="team-field">Model<input autoFocus={typing} defaultValue={member.model} key={member.model} placeholder={member.kind === 'neru' ? 'Neru’s model' : 'Agent default'} onBlur={event => { setTyping(false); if (event.target.value.trim() !== member.model) onChange({ model: event.target.value.trim() }) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setTyping(false) }} /></label>
+  return <div className="team-model-row">
+    <label className="team-field">Model
+      <select value={member.model} onChange={event => { if (event.target.value === '__other__') { setTyping(true); return } const next = models.find(model => model.id === event.target.value); onChange({ model: event.target.value, ...(effort && next?.efforts.length && !next.efforts.includes(effort) ? { effort: '' } : {}) }) }}>
+        <option value="">Agent default</option>
+        {models.map(model => <option key={model.id} value={model.id}>{model.label === model.id ? model.id : `${model.label} · ${model.id}`}</option>)}
+        {member.model && !chosen && <option value={member.model}>{member.model}</option>}
+        <option value={'__other__'}>Another model…</option>
+      </select></label>
+    {efforts.length > 0 && <label className="team-field">Effort
+      <select value={effort} onChange={event => onChange({ effort: event.target.value })}>
+        <option value="">{chosen?.defaultEffort ? `Default (${EFFORT_LABELS[chosen.defaultEffort] ?? chosen.defaultEffort})` : 'Default'}</option>
+        {efforts.map(level => <option key={level} value={level}>{EFFORT_LABELS[level] ?? level}</option>)}
+      </select></label>}
+  </div>
 }
 
 function MembersPanel({ task, agents, custom, only, onOnly, onChange, onError, onTerminal }: { task: TeamTask; agents: TeamAgent[]; custom: CustomAgent[]; only: string | null; onOnly: (handle: string | null) => void; onChange: (task: TeamTask) => void; onError: (message: string) => void; onTerminal: (handle: string) => void }) {
@@ -254,7 +318,7 @@ function MembersPanel({ task, agents, custom, only, onOnly, onChange, onError, o
         <button className={cn('icon-button small', only === member.handle && 'active')} onClick={() => onOnly(only === member.handle ? null : member.handle)} aria-pressed={only === member.handle} title="Transcript: show only this member's posts" aria-label={`Show only @${member.handle}'s posts`}><Eye size={14} /></button>
       </div>
       {member.error && <p className="team-member-error">{member.error}</p>}
-      <ModelField task={task} member={member} onChange={model => act(api.updateTeamMember(task.id, member.handle, { model }))} />
+      <ModelField task={task} member={member} onChange={change => act(api.updateTeamMember(task.id, member.handle, change))} />
       {task.projectPath && <div className="team-worktree">
         <GitBranch size={13} /><span className="truncate" title={member.worktree?.path}>{member.worktree ? member.worktree.branch : 'Works in the project folder'}</span>
         <button className={cn('switch', member.worktree && 'on')} role="switch" aria-checked={Boolean(member.worktree)} aria-label={`Own worktree for @${member.handle}`} title="Own Git worktree, so parallel edits do not collide" disabled={member.status === 'working'} onClick={() => act(api.setTeamWorktree(task.id, member.handle, !member.worktree))} />
@@ -396,6 +460,8 @@ export interface TeamViewProps {
   /** The open task's terminal scope, for the terminal pane; null when no task is open. */
   onScope?: (scope: TerminalScope | null) => void
   onOpenPane?: (id: 'terminal' | 'files' | 'changes' | 'browser') => void
+  /** Dictation, as in Code mode's message box. */
+  voice: { light: boolean; engine: VoiceEngine; ready: boolean; onStart: () => void; onUnavailable: () => void; onTranscribe: (audio: Blob) => Promise<string> }
 }
 
 type PanelTab = 'members' | 'artifacts' | 'changes' | 'pr' | 'activity' | 'usage' | 'map'
@@ -407,7 +473,7 @@ const expandCommand = (body: string, args: string) => {
   return body.replace(/\$ARGUMENTS|\{\{args\}\}/g, args).replace(/\$([1-9])/g, (_, n) => parts[Number(n) - 1] ?? '').trim()
 }
 
-export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane }: TeamViewProps) {
+export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane, voice }: TeamViewProps) {
   const reduce = useReducedMotion() ?? false
   const [agents, setAgents] = useState<TeamAgent[]>([])
   const [agentsLoading, setAgentsLoading] = useState(true)
@@ -418,6 +484,9 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
   const [since, setSince] = useState<Record<string, number>>({})
   const [routing, setRouting] = useState<{ from: string; to: string; until: number } | null>(null)
   const [draft, setDraft] = useState('')
+  // Files for the next message, copied into the task folder (which every member can read).
+  const [attached, setAttached] = useState<string[]>([])
+  const [attaching, setAttaching] = useState(0)
   const [to, setTo] = useState<string[]>([])
   const [panel, setPanel] = useState<PanelTab>(() => readStored<PanelTab>('neru.team.panel', 'members'))
   const [panelOpen, setPanelOpen] = useState(() => readStored('neru.team.panelOpen', true))
@@ -477,7 +546,7 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
   }, [task])
   useEffect(() => {
     writeStored('neru.team.active', activeId)
-    setLive({}); setRouting(null); setTo([]); setQueued([]); setOnly(null); setMenu(null)
+    setLive({}); setRouting(null); setTo([]); setQueued([]); setOnly(null); setMenu(null); setAttached([])
     if (!activeId || !isTauri()) { setTask(null); return }
     void api.teamSnapshot(activeId).then(setTask).catch(() => { setTask(null); setActiveId(null) })
   }, [activeId])
@@ -545,10 +614,10 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
   const working = task?.members.filter(member => member.status === 'working') ?? []
   const handles = task?.members.map(member => member.handle) ?? []
 
-  const create = async (title: string, kinds: string[], mode: string, quickstart?: string) => {
+  const create = async (title: string, kinds: string[], mode: string, where: ProjectChoice, quickstart?: string) => {
     try {
       const quick = QUICKSTARTS.find(item => item.id === quickstart)
-      const created = await api.createTeamTask(title, project?.path ?? '', kinds.map(kind => ({ kind, mode })))
+      const created = await api.createTeamTask(title, where.path, kinds.map(kind => ({ kind, mode })), where.create)
       setCreating(false); setTask(created); setActiveId(created.id); refreshTasks()
       if (quick) pendingFirst.current = quick.message(title)
     } catch (cause) { onError(errorText(cause)) }
@@ -591,12 +660,32 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
     if (own && member && found) { text = expandCommand(found.body, own[3]?.trim() ?? ''); recipients = [member.handle] }
     const skill = !found && command && TEAM_COMMANDS.find(item => item.name === command[1].toLowerCase())
     if (skill) { text = skill.text(command?.[2]?.trim() ?? ''); if (skill.all) recipients = ['all'] }
+    if (attached.length) text = `${text || 'Look at the attached files.'}\n\nAttached files (open them from these paths):\n${attached.map(path => `- ${path}`).join('\n')}`
     if (!text) return
-    setDraft('')
+    const files = attached
+    setDraft(''); setAttached([])
     try {
       const post = await api.sendTeamMessage(task.id, text, recipients)
       if (post.kind !== 'queued') setTask(current => current && (current.posts.some(item => item.id === post.id) ? current : { ...current, posts: [...current.posts, post] }))
-    } catch (cause) { setDraft(value); onError(errorText(cause)) }
+    } catch (cause) { setDraft(value); setAttached(files); onError(errorText(cause)) }
+  }
+  const attach = async (paths: string[], data?: [string, string][]) => {
+    if (!task || (!paths.length && !data?.length)) return
+    setAttaching(count => count + 1)
+    try { const saved = await api.teamAttach(task.id, paths, data); setAttached(current => [...current, ...saved.filter(path => !current.includes(path))]) }
+    catch (cause) { onError(errorText(cause)) } finally { setAttaching(count => count - 1) }
+  }
+  const upload = async () => {
+    const picked = await openDialog({ multiple: true, title: 'Attach files for the team' }).catch(() => null)
+    const paths = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : []
+    await attach(paths)
+  }
+  // A pasted screenshot becomes an attached image.
+  const paste = (event: React.ClipboardEvent) => {
+    const images = [...event.clipboardData.files].filter(file => file.type.startsWith('image/'))
+    if (!images.length) return
+    event.preventDefault()
+    void Promise.all(images.map(file => new Promise<[string, string]>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve([file.name && file.name !== 'image.png' ? file.name : `pasted-${Date.now()}.png`, String(reader.result)]); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file) }))).then(data => attach([], data)).catch(cause => onError(errorText(cause)))
   }
   const undo = (postId: string) => { if (task) void api.undoTeamTurn(task.id, postId).then(setTask).catch(cause => onError(errorText(cause))) }
   const act = (work: Promise<TeamTask>) => void work.then(next => { setTask(next); refreshTasks() }).catch(cause => onError(errorText(cause)))
@@ -769,22 +858,31 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
             {menuItems.map((item, index) => <button key={item.key} type="button" role="option" aria-selected={index === menuAt} className={cn('slash-item', mentionItems.length > 0 && 'mention-item', index === menuAt && 'active')} onMouseEnter={() => setMenuIndex(index)} onMouseDown={event => { event.preventDefault(); item.pick() }}>{item.node}</button>)}
             <div className="menu-hint"><kbd>↑</kbd><kbd>↓</kbd> to move <kbd>Enter</kbd> to pick <kbd>Esc</kbd> to close</div>
           </div>}
-          <PromptInput inline minRows={1} maxRows={10} value={draft} onValueChange={value => { setDraft(value); setMenuIndex(0) }} onSubmit={value => void send(value)}
+          <div onPaste={paste} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault() }}>
+          <Composer value={draft} onValueChange={value => { setDraft(value); setMenuIndex(0) }} onSubmit={value => void send(value)}
             loading={working.length > 0} onStop={() => void api.stopTeam(task.id).catch(cause => onError(errorText(cause)))} onSteer={value => void send(value)}
-            header={<div className="team-to-row" aria-label="Recipients" data-tour="to">
+            sendWithoutText={attached.length > 0}
+            light={voice.light} voiceEngine={voice.engine} voiceReady={voice.ready} onVoiceStart={voice.onStart} onVoiceUnavailable={voice.onUnavailable} onTranscribe={voice.onTranscribe} onError={onError}
+            attachItems={[{ id: 'upload', label: 'Upload files', hint: 'Images, documents, anything', icon: attachIcons.upload, onSelect: () => void upload() }]}
+            mode="manual" onModeChange={() => undefined} showMode={false} web={false} onWebChange={() => undefined} showWeb={false}
+            commands={[]} onCommand={() => false} model="" models={[]} onModelChange={() => undefined}
+            effort="auto" effortSupported={false} onEffortChange={() => undefined} context={null}
+            attachments={<><div className="team-to-row" aria-label="Recipients" data-tour="to">
               <span>To</span>
               <button type="button" className={cn('team-to-chip', to.length === 0 && 'on')} onClick={() => setTo([])} title="Whoever you mention, else whoever spoke last">Auto</button>
               <button type="button" className={cn('team-to-chip', to.includes('all') && 'on')} onClick={() => setTo(['all'])} title="Every member answers in parallel"><Users size={12} />All</button>
               {to.filter(handle => handle !== 'all').map(handle => <span key={handle} className="team-to-chip on">@{handle}<button type="button" onClick={() => setTo(current => current.filter(item => item !== handle))} aria-label={`Remove @${handle}`}><X size={11} /></button></span>)}
-            </div>}
+            </div>
+            {(attached.length > 0 || attaching > 0) && <Attachments paths={attached.map(path => baseName(path))} documents={[]} reading={attaching} onRemovePath={name => setAttached(current => current.filter(path => baseName(path) !== name))} onRemoveDocument={() => undefined} />}</>}
             placeholder={task.members.length ? `Message the team… @${handles[0]} to pick, / for skills and commands` : 'Add an agent to start'}
-            disabled={task.members.length === 0} aria-label="Message the team" className="neru-prompt"
+            disabled={task.members.length === 0} ariaLabel="Message the team"
             onKeyDown={event => {
               if (menuItems.length === 0) return
               if (event.key === 'Escape') { event.preventDefault(); setClosedFor(draft); return }
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setMenuIndex(index => (index + (event.key === 'ArrowDown' ? 1 : -1) + menuItems.length) % menuItems.length) }
               if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') { event.preventDefault(); menuItems[menuAt].pick() }
             }} />
+          </div>
         </div>
       </>}
     </section>
@@ -804,7 +902,7 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
     </aside>}
     {emptyTour.open && <Tour label="Team walkthrough" steps={EMPTY_TOUR} onClose={emptyTour.close} />}
     {taskTour.open && task && <Tour label="Task walkthrough" steps={taskSteps} onClose={taskTour.close} />}
-    {creating && <NewTaskDialog agents={allAgents} project={project} preset={creating === 'blank' ? undefined : creating} onClose={() => setCreating(false)} onCreate={(title, kinds, mode, quickstart) => void create(title, kinds, mode, quickstart)} />}
+    {creating && <NewTaskDialog agents={allAgents} project={project} preset={creating === 'blank' ? undefined : creating} onClose={() => setCreating(false)} onCreate={(title, kinds, mode, where, quickstart) => void create(title, kinds, mode, where, quickstart)} />}
     {deleting && <DeleteDialog task={deleting} onError={onError} onClose={() => setDeleting(null)} onDeleted={() => { if (deleting.id === activeId) setActiveId(null); setDeleting(null); refreshTasks() }} />}
   </main>
 }

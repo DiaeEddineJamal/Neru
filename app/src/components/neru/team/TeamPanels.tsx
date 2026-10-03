@@ -6,7 +6,7 @@ import { languageForPath } from '@/components/agents/agent-code'
 import { parseUnifiedDiff } from '@/lib/diff'
 import { cn } from '@/lib/utils'
 import { api } from '../../../api'
-import type { PrStatus, TeamAgent, TeamPost, TeamQueued, TeamTask, TeamTaskFile, TeamTaskSummary, TeamTreeInfo } from '../../../types'
+import type { AgentModel, PrStatus, TeamAgent, TeamPost, TeamQueued, TeamTask, TeamTaskFile, TeamTaskSummary, TeamTreeInfo } from '../../../types'
 import './TeamPanels.css'
 
 const errorText = (value: unknown) => value instanceof Error ? value.message : String(value)
@@ -406,15 +406,16 @@ export function useDragWidth(key: string, initial: number, min: number, max: num
   return { width, dragging, handle, set: keep }
 }
 
-/** Models a member's CLI offers, loaded once per kind. */
-const modelCache = new Map<string, Promise<string[]>>()
+/** Models a member's CLI offers. Read again after a minute, so a newly released model shows up. */
+const modelCache = new Map<string, { at: number; list: Promise<AgentModel[]> }>()
 export function useAgentModels(kind: string) {
-  const [models, setModels] = useState<string[]>([])
+  const [models, setModels] = useState<AgentModel[]>([])
   useEffect(() => {
     if (kind === 'neru' || kind.startsWith('custom:')) return
-    if (!modelCache.has(kind)) modelCache.set(kind, api.listAgentModels(kind).catch(() => []))
+    const cached = modelCache.get(kind)
+    if (!cached || Date.now() - cached.at > 60_000) modelCache.set(kind, { at: Date.now(), list: api.listAgentModels(kind).catch(() => []) })
     let live = true
-    void modelCache.get(kind)!.then(list => { if (live) setModels(list) })
+    void modelCache.get(kind)!.list.then(list => { if (live) setModels(list) })
     return () => { live = false }
   }, [kind])
   return models

@@ -1,16 +1,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AgentEvent, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
+import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat } from './providerCatalog'
 import type { Route } from './lib/browser'
 
 export const api = {
   listTeamAgents: (refresh = false) => invoke<TeamAgent[]>('list_team_agents', { refresh }),
   listTeamTasks: () => invoke<TeamTaskSummary[]>('list_team_tasks'),
-  createTeamTask: (title: string, projectPath: string, members: { kind: string; model?: string; mode?: string }[]) => invoke<TeamTask>('create_team_task', { title, projectPath, members }),
+  createTeamTask: (title: string, projectPath: string, members: { kind: string; model?: string; mode?: string }[], newProject = false) => invoke<TeamTask>('create_team_task', { title, projectPath, members, newProject }),
+  teamAttach: (id: string, paths: string[], data?: [string, string][]) => invoke<string[]>('team_attach', { id, paths, data: data ?? null }),
   teamSnapshot: (id: string) => invoke<TeamTask>('team_snapshot', { id }),
   addTeamMember: (id: string, member: { kind: string; model?: string; mode?: string }) => invoke<TeamTask>('add_team_member', { id, member }),
-  updateTeamMember: (id: string, handle: string, change: { model?: string; mode?: string }) => invoke<TeamTask>('update_team_member', { id, handle, model: change.model ?? null, mode: change.mode ?? null }),
+  updateTeamMember: (id: string, handle: string, change: { model?: string; mode?: string; effort?: string }) => invoke<TeamTask>('update_team_member', { id, handle, model: change.model ?? null, mode: change.mode ?? null, effort: change.effort ?? null }),
   setTeamWorktree: (id: string, handle: string, enabled: boolean) => invoke<TeamTask>('set_team_worktree', { id, handle, enabled }),
   removeTeamMember: (id: string, handle: string) => invoke<TeamTask>('remove_team_member', { id, handle }),
   renameTeamTask: (id: string, title: string) => invoke<TeamTask>('rename_team_task', { id, title }),
@@ -25,7 +26,7 @@ export const api = {
   teamFailedLog: (id: string, handle?: string) => invoke<string>('team_failed_log', { id, handle: handle ?? null }),
   teamTaskCwd: (id: string, handle?: string) => invoke<string>('team_task_cwd', { id, handle: handle ?? null }),
   teamTerminalLaunch: (id: string, handle: string) => invoke<TerminalLaunch>('team_terminal_launch', { id, handle }),
-  listAgentModels: (kind: string) => invoke<string[]>('list_agent_models', { kind }),
+  listAgentModels: (kind: string) => invoke<AgentModel[]>('list_agent_models', { kind }),
   listAgentCommands: () => invoke<AgentCommand[]>('list_agent_commands'),
   setAgentPath: (kind: string, path: string | null) => invoke<void>('set_agent_path', { kind, path }),
   agentLatestVersion: (kind: string) => invoke<string | null>('agent_latest_version', { kind }),

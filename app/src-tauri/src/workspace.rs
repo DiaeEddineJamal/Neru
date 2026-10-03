@@ -220,6 +220,12 @@ pub fn open_project(path: String, state: State<'_, AppState>) -> Result<ProjectI
     *state.active_session.lock().map_err(|e| e.to_string())? = None;
     crate::index::start(&root);
     sessions::restore_for_root(&state, &root)?;
+    remember_project(&root)?;
+    Ok(info(&root))
+}
+
+/// Puts `root` first in the recent projects list.
+pub(crate) fn remember_project(root: &Path) -> Result<(), String> {
     let recent_path = data_dir()?.join("recent-projects.json");
     let mut recent: Vec<String> = fs::read_to_string(&recent_path)
         .ok()
@@ -232,8 +238,7 @@ pub fn open_project(path: String, state: State<'_, AppState>) -> Result<ProjectI
         recent_path,
         serde_json::to_vec_pretty(&recent).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| e.to_string())?;
-    Ok(info(&root))
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

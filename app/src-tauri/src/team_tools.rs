@@ -86,7 +86,12 @@ pub fn diff(root: &Path, before: &str, after: &str) -> Vec<FileChange> {
     command.args(["diff", "--name-status", "--no-renames", "-z", before, after]);
     let Some(text) = output(command) else { return Vec::new() };
     let parts: Vec<&str> = text.split('\0').filter(|part| !part.is_empty()).collect();
-    let mut files: Vec<FileChange> = parts.chunks(2).filter_map(|pair| Some(FileChange { status: pair.first()?.chars().next()?.to_string(), path: pair.get(1)?.to_string() })).collect();
+    let mut files: Vec<FileChange> = parts
+        .chunks(2)
+        .filter_map(|pair| Some(FileChange { status: pair.first()?.chars().next()?.to_string(), path: pair.get(1)?.to_string() }))
+        // oh-my-claudecode keeps its runtime state in .omc; it is never the turn's work.
+        .filter(|file| !file.path.starts_with(".omc/") && !file.path.contains("/.omc/"))
+        .collect();
     // The project's own files first; tool state in dot-folders (.omc, .claude) after.
     files.sort_by_key(|file| (file.path.starts_with('.') || file.path.contains("/."), file.path.clone()));
     files
@@ -391,11 +396,15 @@ mod tests {
         std::fs::write(root.join("a.txt"), "two\n").unwrap();
         std::fs::write(root.join("new.txt"), "new\n").unwrap();
         std::fs::write(root.join("dirty.txt"), "changed\n").unwrap();
+        // A plugin's state written during the turn is not the turn's work.
+        std::fs::create_dir_all(root.join(".omc/state")).unwrap();
+        std::fs::write(root.join(".omc/state/session.json"), "{}").unwrap();
         let after = snapshot(&root).unwrap();
         let files = diff(&root, &before, &after);
         let mut paths: Vec<_> = files.iter().map(|file| format!("{} {}", file.status, file.path)).collect();
         paths.sort();
         assert_eq!(paths, ["A new.txt", "M a.txt", "M dirty.txt"]);
+        std::fs::remove_dir_all(root.join(".omc")).unwrap();
         let changes = Changes { root: root.to_string_lossy().into(), before, after, files, undone: false };
         assert_eq!(undo(&changes).unwrap(), 3);
         assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "one\n");

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { ArrowUp, Check, ChevronDown, Eye, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
 import { Liquid } from 'liquid-gooey'
 import { useReducedMotion } from 'motion/react'
@@ -250,6 +250,11 @@ export interface ComposerProps {
   onAttachFile?: (path: string) => void
   /** Taller prompt card used on the empty chat page. */
   roomy?: boolean
+  /** Team: agents bring their own web tools, so there is no web toggle. */
+  showWeb?: boolean
+  /** Runs before the composer's own keys; preventDefault() stops them. */
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void
+  ariaLabel?: string
   /** Permission mode is a coding control. Chat hides it. */
   showMode?: boolean
 }
@@ -477,10 +482,12 @@ export function Composer(props: ComposerProps) {
         sendWithoutText={props.sendWithoutText}
         disabled={disabled || transcribing}
         placeholder={voice === 'listening' ? 'Listening…' : voice === 'paused' ? 'Paused' : transcribing ? 'Transcribing…' : props.placeholder}
-        aria-label="Message Neru"
+        aria-label={props.ariaLabel ?? 'Message Neru'}
         className="neru-prompt"
         maxRows={10}
         onKeyDown={event => {
+          props.onKeyDown?.(event)
+          if (event.defaultPrevented) return
           if (mentionMatches.length > 0 && event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); pickFile(mentionMatches[0]); return }
           if (slashMatches.length > 0) {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setSlashIndex(index => (index + (event.key === 'ArrowDown' ? 1 : -1) + slashMatches.length) % slashMatches.length); return }
@@ -514,7 +521,7 @@ export function Composer(props: ComposerProps) {
             onClick={event => { if (holdToRecord && event.detail > 0) return; pressed.current = false; if (recording) finishVoice(false); else void startVoice() }}><Mic size={16} /></button>
           <MicMenu device={micDevice} onDevice={chooseMic} hold={holdToRecord} onHold={chooseHold} disabled={!mic.supported || recording || transcribing} systemEngine={props.voiceEngine === 'system'} />
         </div>
-        <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? 'Web search on: Neru can search and cite public pages' : 'Web search off: answers from the project only'} aria-label="Web search"><Globe size={15} /></button>
+        {props.showWeb !== false && <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? 'Web search on: Neru can search and cite public pages' : 'Web search off: answers from the project only'} aria-label="Web search"><Globe size={15} /></button>}
         {props.showMode !== false && <Select value={mode} onValueChange={value => props.onModeChange(value as AgentMode)} disabled={disabled || loading} className="composer-mode">
           <SelectTrigger className={cn('h-8 w-auto rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2', mode === 'bypass' && 'mode-danger')}>
             <span className="truncate text-muted-foreground" title={MODES.find(item => item.value === mode)?.hint}>{MODES.find(item => item.value === mode)?.label}</span>

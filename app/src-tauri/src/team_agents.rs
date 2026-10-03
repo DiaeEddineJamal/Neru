@@ -387,6 +387,8 @@ pub fn detect() -> Vec<Agent> {
 pub struct Turn<'a> {
     pub kind: Kind,
     pub model: &'a str,
+    /// Reasoning effort ("low" … "max"), empty for the CLI's default.
+    pub effort: &'a str,
     pub access: Access,
     pub resume: Option<&'a str>,
     /// Continue a copy of `resume` instead of the session itself (side chats, forked members).
@@ -423,7 +425,8 @@ pub fn args(turn: &Turn) -> Vec<String> {
     let model = turn.model.trim();
     match turn.kind {
         Kind::Claude => {
-            push(&["-p", "--output-format", "stream-json", "--verbose", "--add-dir", &task_dir]);
+            // Partial messages stream the reply token by token instead of a block at a time.
+            push(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--add-dir", &task_dir]);
             let mcp = mcp_file(turn).to_string_lossy().into_owned();
             if turn.mcp.is_some() {
                 push(&["--mcp-config", &mcp]);
@@ -452,6 +455,9 @@ pub fn args(turn: &Turn) -> Vec<String> {
             if !model.is_empty() {
                 push(&["--model", model]);
             }
+            if !turn.effort.is_empty() {
+                push(&["--effort", turn.effort]);
+            }
         }
         Kind::Codex => {
             push(&["exec", "--json", "--skip-git-repo-check"]);
@@ -468,6 +474,10 @@ pub fn args(turn: &Turn) -> Vec<String> {
             }
             if !model.is_empty() {
                 push(&["-m", model]);
+            }
+            if !turn.effort.is_empty() {
+                let effort = format!("model_reasoning_effort=\"{}\"", turn.effort);
+                push(&["-c", &effort]);
             }
             if let Some(id) = turn.resume {
                 push(&[if turn.fork { "fork" } else { "resume" }, id]);
@@ -710,17 +720,28 @@ fn u64_at(value: &Value, key: &str) -> u64 {
 }
 
 /// Claude Code and Cursor Agent print the same stream-json shapes.
-fn parse_claude(value: &Value, events: &mut Vec<Event>) {
+/// `partial`: the CLI streams text deltas (Claude Code with --include-partial-messages), so the
+/// whole text block in the `assistant` message that follows would repeat them.
+fn parse_claude(value: &Value, events: &mut Vec<Event>, partial: bool) {
     match value["type"].as_str().unwrap_or_default() {
         "system" if value["subtype"] == "init" => {
             if let Some(id) = value["session_id"].as_str() {
                 events.push(Event::Session(id.into()));
             }
         }
+        "stream_event" => {
+            let event = &value["event"];
+            match event["type"].as_str().unwrap_or_default() {
+                // A new text block: a paragraph break from the one before.
+                "content_block_start" if event["content_block"]["type"] == "text" => events.push(Event::Text(String::new())),
+                "content_block_delta" if event["delta"]["type"] == "text_delta" => events.push(Event::Delta(text(&event["delta"]["text"]))),
+                _ => {}
+            }
+        }
         "assistant" => {
             for block in value["message"]["content"].as_array().into_iter().flatten() {
                 match block["type"].as_str().unwrap_or_default() {
-                    "text" if !text(&block["text"]).trim().is_empty() => events.push(Event::Text(text(&block["text"]))),
+                    "text" if !partial && !text(&block["text"]).trim().is_empty() => events.push(Event::Text(text(&block["text"]))),
                     "tool_use" => events.push(Event::Step(describe(block["name"].as_str().unwrap_or("tool"), &block["input"]))),
                     _ => {}
                 }
@@ -847,7 +868,7 @@ pub fn parse_line(kind: Kind, line: &str) -> Vec<Event> {
     };
     let mut events = Vec::new();
     match kind {
-        Kind::Claude | Kind::Cursor | Kind::Amp => parse_claude(&value, &mut events),
+        Kind::Claude | Kind::Cursor | Kind::Amp => parse_claude(&value, &mut events, kind == Kind::Claude),
         Kind::Codex => parse_codex(&value, &mut events),
         Kind::OpenCode => parse_opencode(&value, &mut events),
         Kind::Gemini | Kind::Qwen => parse_gemini(&value, &mut events),
@@ -975,7 +996,7 @@ pub async fn run(turn: Turn<'_>, cancel: Arc<tokio::sync::Notify>, mut on: impl 
                         match &event {
                             Event::Done => done = true,
                             Event::Error(message) => failed = Some(message.clone()),
-                            Event::Text(_) | Event::Delta(_) => said = true,
+                            Event::Text(text) | Event::Delta(text) => said = said || !text.trim().is_empty(),
                             _ => {}
                         }
                         on(event);
@@ -1020,6 +1041,9 @@ mod tests {
         let lines = [
             r#"{"type":"system","subtype":"init","cwd":"/w","session_id":"df94","tools":["Read"]}"#,
             r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Glob","input":{"pattern":"*"}}]}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DO"}}}"#,
+            r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"NE"}}}"#,
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"DONE"}]}}"#,
             r#"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.14,"resetsAt":1790971200},"seven_day":{"utilization":0.85,"resetsAt":1791284400}}}}"#,
             r#"{"type":"result","subtype":"success","is_error":false,"result":"DONE","session_id":"df94","total_cost_usd":0.36,"usage":{"input_tokens":4,"cache_creation_input_tokens":10,"cache_read_input_tokens":6,"output_tokens":54}}"#,
@@ -1028,12 +1052,15 @@ mod tests {
         let events: Vec<Event> = lines.iter().flat_map(|line| parse_line(Kind::Claude, line)).collect();
         assert_eq!(events[0], Event::Session("df94".into()));
         assert_eq!(events[1], Event::Step("Glob *".into()));
-        assert_eq!(events[2], Event::Text("DONE".into()));
-        assert!(matches!(&events[3], Event::Limit { label, used, .. } if label == "5-hour" && (*used - 14.0).abs() < 0.01));
-        assert!(matches!(&events[4], Event::Limit { label, .. } if label == "Weekly"));
-        assert_eq!(events[5], Event::Usage { input: 20, output: 54, cost: 0.36 });
-        assert_eq!(events[6], Event::Done);
-        assert_eq!(events.len(), 7);
+        // Streamed: a block start, then the deltas; the finished block is not sent again.
+        assert_eq!(events[2..5], [Event::Text(String::new()), Event::Delta("DO".into()), Event::Delta("NE".into())]);
+        assert!(matches!(&events[5], Event::Limit { label, used, .. } if label == "5-hour" && (*used - 14.0).abs() < 0.01));
+        assert!(matches!(&events[6], Event::Limit { label, .. } if label == "Weekly"));
+        assert_eq!(events[7], Event::Usage { input: 20, output: 54, cost: 0.36 });
+        assert_eq!(events[8], Event::Done);
+        // Cursor shares the format without deltas, so its finished blocks still count.
+        assert_eq!(parse_line(Kind::Cursor, lines[5]), vec![Event::Text("DONE".into())]);
+        assert_eq!(events.len(), 9);
     }
 
     #[test]
@@ -1110,7 +1137,7 @@ mod tests {
         };
         // SAFETY: no other test reads NERU_TEAM_CODEX.
         unsafe { std::env::set_var("NERU_TEAM_CODEX", &stub) };
-        let turn = Turn { kind: Kind::Codex, model: "", access: Access::ReadOnly, resume: None, fork: false, root: &dir, task_dir: &dir, prompt: "hello".into(), env: Vec::new(), mcp: None };
+        let turn = Turn { kind: Kind::Codex, model: "", effort: "", access: Access::ReadOnly, resume: None, fork: false, root: &dir, task_dir: &dir, prompt: "hello".into(), env: Vec::new(), mcp: None };
         let mut events = Vec::new();
         run(turn, Arc::new(tokio::sync::Notify::new()), |event| events.push(event)).await.unwrap();
         assert_eq!(events[0], Event::Session("t9".into()));
@@ -1123,7 +1150,7 @@ mod tests {
     fn arguments_follow_access_and_resume() {
         let root = Path::new("/w");
         let task = Path::new("/t");
-        let turn = |kind, access, resume| Turn { kind, model: "", access, resume, fork: false, root, task_dir: task, prompt: String::new(), env: Vec::new(), mcp: None };
+        let turn = |kind, access, resume| Turn { kind, model: "", effort: "", access, resume, fork: false, root, task_dir: task, prompt: String::new(), env: Vec::new(), mcp: None };
         let claude = args(&turn(Kind::Claude, Access::ReadOnly, Some("s1"))).join(" ");
         assert!(claude.contains("--permission-mode default") && claude.contains("Edit(//t/**)") && claude.contains("--resume s1") && claude.contains("--add-dir /t"));
         assert!(args(&turn(Kind::Codex, Access::ReadOnly, None)).join(" ").contains("-s workspace-write -C /t"));
@@ -1131,6 +1158,10 @@ mod tests {
         let codex = args(&turn(Kind::Codex, Access::Edits, Some("t1"))).join(" ");
         assert!(codex.contains("-s workspace-write") && codex.ends_with("resume t1 -"));
         assert!(args(&turn(Kind::Codex, Access::Full, None)).contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+        // A member's effort goes to the CLI the way it takes it.
+        let effort = |kind| args(&Turn { model: "m", effort: "high", ..turn(kind, Access::Edits, None) }).join(" ");
+        assert!(effort(Kind::Claude).contains("--model m --effort high"));
+        assert!(effort(Kind::Codex).contains("-m m -c model_reasoning_effort=\"high\""));
         let fork = |kind| args(&Turn { fork: true, ..turn(kind, Access::Edits, Some("s9")) }).join(" ");
         assert!(fork(Kind::Claude).contains("--resume s9 --fork-session"));
         assert!(fork(Kind::Codex).ends_with("fork s9 -"));
@@ -1190,7 +1221,7 @@ mod tests {
         };
         // SAFETY: no other test reads NERU_TEAM_AIDER.
         unsafe { std::env::set_var("NERU_TEAM_AIDER", &stub) };
-        let turn = Turn { kind: Kind::Aider, model: "", access: Access::Edits, resume: None, fork: false, root: &dir, task_dir: &dir, prompt: "the whole prompt".into(), env: Vec::new(), mcp: None };
+        let turn = Turn { kind: Kind::Aider, model: "", effort: "", access: Access::Edits, resume: None, fork: false, root: &dir, task_dir: &dir, prompt: "the whole prompt".into(), env: Vec::new(), mcp: None };
         let mut text = String::new();
         run(turn, Arc::new(tokio::sync::Notify::new()), |event| if let Event::Delta(delta) = event { text.push_str(&delta) }).await.unwrap();
         assert!(text.contains("plain reply") && text.contains("the whole prompt"), "{text}");

@@ -214,9 +214,47 @@ pub fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// The reverse of `base64`, for images pasted into a message.
+pub fn unbase64(text: &str) -> Result<Vec<u8>, String> {
+    let value = |c: u8| -> Result<u32, String> {
+        Ok(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return Err(format!("{:?} is not base64", c as char)),
+        } as u32)
+    };
+    let clean: Vec<u8> = text.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=').collect();
+    let mut out = Vec::with_capacity(clean.len() * 3 / 4);
+    for chunk in clean.chunks(4) {
+        let mut n = 0u32;
+        for (index, c) in chunk.iter().enumerate() {
+            n |= value(*c)? << (18 - 6 * index);
+        }
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_round_trips() {
+        for bytes in [&b""[..], b"a", b"ab", b"abc", &[0, 255, 16, 32, 105]] {
+            assert_eq!(unbase64(&base64(bytes)).unwrap(), bytes);
+        }
+        assert!(unbase64("not*base64").is_err());
+    }
 
     #[test]
     fn reads_text_and_refuses_binary() {

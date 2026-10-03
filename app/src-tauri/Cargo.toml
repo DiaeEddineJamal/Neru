@@ -1,6 +1,6 @@
 [package]
 name = "neru"
-version = "0.7.1"
+version = "0.8.0"
 description = "A calm, local-first coding agent"
 authors = ["Neru"]
 license = "MIT"

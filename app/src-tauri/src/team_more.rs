@@ -116,14 +116,72 @@ pub mod commands {
         Ok(LaunchView { cwd: cwd.to_string_lossy().trim_start_matches(r"\\?\").to_string(), program: program.to_string_lossy().into_owned(), args, env, title: format!("@{handle}") })
     }
 
+    /// A model a member can pick, with the reasoning efforts its CLI accepts for it.
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct AgentModel {
+        pub id: String,
+        pub label: String,
+        pub efforts: Vec<String>,
+        pub default_effort: Option<String>,
+    }
+
+    fn plain(ids: &[&str]) -> Vec<AgentModel> {
+        ids.iter().map(|id| AgentModel { id: id.to_string(), label: id.to_string(), efforts: Vec::new(), default_effort: None }).collect()
+    }
+
+    /// Claude Code's `--effort` levels.
+    const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
+    /// Claude models: the aliases Claude Code resolves to the newest of each family, the current
+    /// full ids, and any newer one already used in this machine's Claude Code sessions.
+    fn claude_models(home: &std::path::Path) -> Vec<AgentModel> {
+        let efforts: Vec<String> = CLAUDE_EFFORTS.map(String::from).to_vec();
+        let mut models: Vec<(String, String)> = [
+            ("fable", "Fable (newest)"),
+            ("opus", "Opus (newest)"),
+            ("sonnet", "Sonnet (newest)"),
+            ("haiku", "Haiku (newest)"),
+            ("opusplan", "Opus to plan, Sonnet to build"),
+            ("claude-fable-5-1", "Claude Fable 5.1"),
+            ("claude-opus-5-5", "Claude Opus 5.5"),
+            ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+            ("claude-haiku-4-5", "Claude Haiku 4.5"),
+        ]
+        .map(|(id, label)| (id.to_string(), label.to_string()))
+        .to_vec();
+        // A model Claude Code itself reported in a recent session (it writes "model":"claude-…").
+        let mut files: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(home.join(".claude").join("projects"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .flat_map(|dir| fs::read_dir(dir.path()).into_iter().flatten().flatten())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
+            .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+            .collect();
+        files.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, path) in files.into_iter().take(20) {
+            let Ok(bytes) = fs::read(&path) else { continue };
+            let tail = String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(200_000)..]).into_owned();
+            for part in tail.split("\"model\":\"").skip(1) {
+                let id: String = part.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.').collect();
+                if id.starts_with("claude-") && id.len() < 60 && !models.iter().any(|(known, _)| *known == id) {
+                    models.push((id.clone(), id));
+                }
+            }
+        }
+        models.into_iter().map(|(id, label)| AgentModel { id, label, efforts: efforts.clone(), default_effort: None }).collect()
+    }
+
     /// Models a member can pick: the CLI's own list where it keeps one, else its documented aliases.
     #[tauri::command]
-    pub async fn list_agent_models(kind: String) -> Result<Vec<String>, String> {
+    pub async fn list_agent_models(kind: String) -> Result<Vec<AgentModel>, String> {
         let home = dirs::home_dir().unwrap_or_default();
         Ok(match kind.as_str() {
-            "claude" => ["sonnet", "opus", "haiku", "opusplan", "sonnet[1m]"].map(String::from).to_vec(),
-            "gemini" => ["auto", "pro", "flash", "flash-lite"].map(String::from).to_vec(),
+            "claude" => tauri::async_runtime::spawn_blocking(move || claude_models(&home)).await.map_err(|e| e.to_string())?,
+            "gemini" => plain(&["auto", "pro", "flash", "flash-lite"]),
             "codex" => {
+                // Codex keeps the models of the signed-in account, with their reasoning levels.
                 let codex = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".codex"));
                 let cache: serde_json::Value = fs::read(codex.join("models_cache.json")).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
                 cache["models"]
@@ -131,7 +189,21 @@ pub mod commands {
                     .into_iter()
                     .flatten()
                     .filter(|model| model["visibility"] != "hide")
-                    .filter_map(|model| model["slug"].as_str().map(String::from))
+                    .filter_map(|model| {
+                        let id = model["slug"].as_str()?.to_string();
+                        let efforts = model["supported_reasoning_levels"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|level| level["effort"].as_str().or(level.as_str()).map(String::from))
+                            .collect();
+                        Some(AgentModel {
+                            label: model["display_name"].as_str().filter(|name| !name.is_empty()).unwrap_or(&id).to_string(),
+                            id,
+                            efforts,
+                            default_effort: model["default_reasoning_level"].as_str().map(String::from),
+                        })
+                    })
                     .collect()
             }
             "opencode" | "cursor" => {
@@ -142,11 +214,12 @@ pub mod commands {
                     command.arg("models");
                     let text = crate::cli_setup::output_within(command, std::time::Duration::from_secs(20)).unwrap_or_default();
                     // One model per line ("provider/model" or "model - Name"); keep the id.
-                    text.lines()
+                    let ids: Vec<&str> = text
+                        .lines()
                         .filter_map(|line| line.split_whitespace().next())
                         .filter(|id| id.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:[]".contains(c)) && id.chars().any(|c| c.is_ascii_alphabetic()) && id.len() > 2)
-                        .map(String::from)
-                        .collect()
+                        .collect();
+                    plain(&ids)
                 })
                 .await
                 .map_err(|e| e.to_string())?

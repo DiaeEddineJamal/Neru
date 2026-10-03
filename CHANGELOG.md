@@ -2,6 +2,16 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.8.0 · Team you can watch work, with your models and your projects
+
+### Team
+
+- **Watch members work.** A member's turn shows at once, as in Code mode: the thinking orb with what it is doing ("Thinking…", "Exploring the project…", "Composing…"), its steps as they happen, and Claude Code's reply streaming in word by word. Before, nothing showed until the whole reply arrived, because the window was never told a member had started.
+- **The same message box as Code mode.** Dictate with the microphone (and pick the microphone), attach files with **+**, or paste a screenshot. Attachments are copied into the task folder, which every member can read, and their paths go with the message.
+- **Model and effort per member.** The Members panel has a dropdown of each agent's models and one of its effort levels: Claude Code's Fable, Opus, Sonnet and Haiku (by alias or full id, plus any newer model your Claude Code has used) with low to max, and every model your Codex account offers (GPT-6 Astra, Sol and Luna, GPT-5.6 and more) with that model's own levels. The old text field hid every model but the one already typed.
+- **Pick the project when starting a task:** the one open now, a recent one, another folder, a **new project** (Neru creates the folder and starts a Git repository there), or none for planning only.
+- Turn changes leave out `.omc/`, the state folder of the oh-my-claudecode plugin, which is never the agent's work.
+
 ## 0.7.1 · No more flashing console windows
 
 ### Fixes

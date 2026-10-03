@@ -131,6 +131,9 @@ pub struct Member {
     pub kind: String,
     #[serde(default)]
     pub model: String,
+    /// Reasoning effort the CLI takes ("low" … "max"); empty for the agent's default.
+    #[serde(default)]
+    pub effort: String,
     /// Neru's permission mode: "plan" (read-only), "accept_edits" or "bypass".
     #[serde(default)]
     pub mode: String,
@@ -423,6 +426,7 @@ fn new_member(members: &[Member], spec: NewMember) -> Result<Member, String> {
         handle: new_handle(members, spec.kind.trim_start_matches("custom:")),
         kind: spec.kind,
         model: spec.model,
+        effort: String::new(),
         mode: if spec.mode.is_empty() { "accept_edits".into() } else { spec.mode },
         upstream: None,
         seen: 0,
@@ -663,6 +667,8 @@ async fn turn(app: &AppHandle, task_id: &str, handle: &str) -> Result<Vec<String
             entry.seen = seen;
         }
         save(&task)?;
+        // The thread shows the member at work (its orb, steps and streamed reply) from now on.
+        emit_member(app, &task, handle);
         let root = match (&member.worktree, task.project_path.is_empty()) {
             (Some(tree), _) => PathBuf::from(&tree.path),
             (None, true) => dir.clone(),
@@ -792,6 +798,7 @@ async fn run_cli(
     let turn = team_agents::Turn {
         kind,
         model: &member.model,
+        effort: &member.effort,
         access: if side { Access::ReadOnly } else { Access::from_mode(&member.mode) },
         resume: if kind.resumes() { member.upstream.as_deref() } else { None },
         // A side chat never moves the member's own session on.
@@ -1039,6 +1046,18 @@ fn all_tasks() -> Result<Vec<TaskSummary>, String> {
 }
 
 /// Creates a task from parts, for the UI and for history imports.
+/// A new project folder for a task: created (an empty existing folder is fine) and made a Git
+/// repository, so members can use worktrees and Undo.
+fn start_project(root: &Path) -> Result<(), String> {
+    use crate::Hidden;
+    if root.is_dir() && std::fs::read_dir(root).map_err(|e| e.to_string())?.next().is_some() {
+        return Err(format!("{} already exists and is not empty. Pick it as an existing project instead.", root.display()));
+    }
+    std::fs::create_dir_all(root).map_err(|e| format!("Could not create {}: {e}", root.display()))?;
+    let _ = std::process::Command::new("git").hidden().arg("init").arg("-q").current_dir(root).status();
+    Ok(())
+}
+
 pub fn create(title: &str, project_path: &str, specs: Vec<NewMember>, posts: Vec<Post>) -> Result<Task, String> {
     let mut members: Vec<Member> = Vec::new();
     for spec in specs {
@@ -1077,6 +1096,7 @@ pub fn adopt(task: &mut Task, kind: &str, upstream: Option<String>) -> String {
         handle: handle.clone(),
         kind: kind.into(),
         model: String::new(),
+        effort: String::new(),
         mode: "accept_edits".into(),
         upstream,
         seen: task.posts.len(),
@@ -1330,8 +1350,50 @@ pub mod commands {
     }
 
     #[tauri::command]
-    pub fn create_team_task(title: String, project_path: String, members: Vec<NewMember>) -> Result<TaskView, String> {
-        view(&create(&title, &project_path, members, Vec::new())?)
+    pub fn create_team_task(title: String, project_path: String, members: Vec<NewMember>, new_project: Option<bool>) -> Result<TaskView, String> {
+        let path = project_path.trim();
+        if !path.is_empty() {
+            let root = PathBuf::from(path);
+            if new_project == Some(true) {
+                start_project(&root)?;
+            } else if !root.is_dir() {
+                return Err(format!("{path} is not a folder on this computer"));
+            }
+            let _ = crate::workspace::remember_project(&root);
+        }
+        view(&create(&title, path, members, Vec::new())?)
+    }
+
+    /// Copies files into the task folder, which every member can read, and returns their paths
+    /// there for the message. `data` holds pasted images as (name, base64).
+    #[tauri::command]
+    pub fn team_attach(id: String, paths: Vec<String>, data: Option<Vec<(String, String)>>) -> Result<Vec<String>, String> {
+        let dir = folder(&id)?.join("attachments");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let mut saved = Vec::new();
+        let place = |name: &str| {
+            let name: String = name.chars().map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '-' }).collect();
+            let name = if name.trim_matches(['-', '.']).is_empty() { "file".to_string() } else { name };
+            // A file of the same name from an earlier message stays as it was.
+            let (stem, ext) = name.rsplit_once('.').map_or((name.clone(), String::new()), |(stem, ext)| (stem.to_string(), format!(".{ext}")));
+            (0..).map(|n| dir.join(if n == 0 { name.clone() } else { format!("{stem}-{n}{ext}") })).find(|path| !path.exists()).unwrap_or_else(|| dir.join(&name))
+        };
+        for path in &paths {
+            let source = PathBuf::from(path);
+            if !source.is_file() {
+                return Err(format!("{path} is not a file"));
+            }
+            let target = place(&source.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default());
+            std::fs::copy(&source, &target).map_err(|e| format!("Could not attach {path}: {e}"))?;
+            saved.push(target.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+        }
+        for (name, encoded) in data.unwrap_or_default() {
+            let bytes = crate::documents::unbase64(encoded.split_once(',').map_or(encoded.as_str(), |(_, body)| body)).map_err(|e| format!("Could not read {name}: {e}"))?;
+            let target = place(&name);
+            std::fs::write(&target, bytes).map_err(|e| e.to_string())?;
+            saved.push(target.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+        }
+        Ok(saved)
     }
 
     #[tauri::command]
@@ -1357,12 +1419,15 @@ pub mod commands {
     }
 
     #[tauri::command]
-    pub fn update_team_member(id: String, handle: String, model: Option<String>, mode: Option<String>) -> Result<TaskView, String> {
+    pub fn update_team_member(id: String, handle: String, model: Option<String>, mode: Option<String>, effort: Option<String>) -> Result<TaskView, String> {
         let shared = load(&id)?;
         let mut task = lock(&shared)?;
         let member = task.members.iter_mut().find(|m| m.handle == handle).ok_or("No such member")?;
         if let Some(model) = model {
             member.model = model;
+        }
+        if let Some(effort) = effort {
+            member.effort = effort;
         }
         if let Some(mode) = mode {
             member.mode = mode;
