@@ -33,7 +33,8 @@ struct Store {
 }
 
 static STORE: LazyLock<Mutex<Store>> = LazyLock::new(|| Mutex::new(load()));
-static QUOTAS: LazyLock<Mutex<HashMap<String, Vec<Quota>>>> = LazyLock::new(Default::default);
+/// The quotas each model's last response reported, and when.
+static QUOTAS: LazyLock<Mutex<HashMap<String, (std::time::Instant, Vec<Quota>)>>> = LazyLock::new(Default::default);
 
 /// Unit tests keep the store in memory: they must neither read what this machine's providers
 /// reported nor overwrite it.
@@ -93,13 +94,55 @@ pub fn set_request_cap(provider_id: &str, model: &str, cap: usize) {
 }
 
 pub fn quotas(model: &str) -> Vec<Quota> {
-    QUOTAS.lock().ok().and_then(|quotas| quotas.get(model).cloned()).unwrap_or_default()
+    QUOTAS.lock().ok().and_then(|quotas| quotas.get(model).map(|(_, list)| list.clone())).unwrap_or_default()
 }
 
-fn set_quotas(model: &str, list: Vec<Quota>) {
+pub(crate) fn set_quotas(model: &str, list: Vec<Quota>) {
     if let Ok(mut quotas) = QUOTAS.lock() {
-        quotas.insert(model.to_string(), list);
+        quotas.insert(model.to_string(), (std::time::Instant::now(), list));
     }
+}
+
+/// A reset time as providers write it: "7.66s", "2m59.56s", "1h2m", "20ms", or plain seconds.
+pub fn parse_reset(text: &str) -> Option<std::time::Duration> {
+    let text = text.trim();
+    if let Ok(seconds) = text.parse::<f64>() {
+        return Some(std::time::Duration::from_secs_f64(seconds.max(0.0)));
+    }
+    let (mut total, mut number, mut rest) = (0.0, String::new(), text);
+    while let Some(c) = rest.chars().next() {
+        if c.is_ascii_digit() || c == '.' {
+            number.push(c);
+            rest = &rest[1..];
+            continue;
+        }
+        let value: f64 = number.parse().ok()?;
+        number.clear();
+        let (unit, len) = if rest.starts_with("ms") { (0.001, 2) } else if rest.starts_with('h') { (3600.0, 1) } else if rest.starts_with('m') { (60.0, 1) } else if rest.starts_with('s') { (1.0, 1) } else { return None };
+        total += value * unit;
+        rest = &rest[len..];
+    }
+    number.is_empty().then(|| std::time::Duration::from_secs_f64(total))
+}
+
+/// How long to wait before sending `tokens` more to `model` so a per-minute limit has reset: the
+/// last response said no requests are left, or fewer tokens than this request needs. None to send
+/// now; waits longer than a minute are left to the model switch.
+pub fn wait_before(model: &str, tokens: usize) -> Option<std::time::Duration> {
+    let (at, list) = QUOTAS.lock().ok()?.get(model).cloned()?;
+    let elapsed = at.elapsed();
+    let wait = list
+        .iter()
+        .filter(|quota| quota.label.ends_with("per minute"))
+        .filter(|quota| match quota.remaining {
+            Some(0) => true,
+            Some(left) => quota.label.starts_with("Tokens") && (left as usize) < tokens && quota.limit.is_none_or(|limit| tokens as u64 <= limit),
+            None => false,
+        })
+        .filter_map(|quota| quota.resets_in.as_deref().and_then(parse_reset))
+        .map(|reset| reset.saturating_sub(elapsed))
+        .max()?;
+    (wait > std::time::Duration::from_millis(200) && wait <= std::time::Duration::from_secs(60)).then(|| wait + std::time::Duration::from_millis(300))
 }
 
 /// Context window of one entry in a `/models` list, in the field each provider uses.
@@ -278,6 +321,31 @@ pub async fn refresh(config: &ProviderConfig) {
 mod tests {
     use super::*;
     use reqwest::header::{HeaderName, HeaderValue};
+
+    #[test]
+    fn reset_times_read_in_every_provider_format() {
+        use std::time::Duration;
+        assert_eq!(parse_reset("7.5s"), Some(Duration::from_millis(7_500)));
+        assert_eq!(parse_reset("2m30s"), Some(Duration::from_secs(150)));
+        assert_eq!(parse_reset("20ms"), Some(Duration::from_millis(20)));
+        assert_eq!(parse_reset("1h"), Some(Duration::from_secs(3600)));
+        assert_eq!(parse_reset("12"), Some(Duration::from_secs(12)));
+        assert_eq!(parse_reset("soon"), None);
+    }
+
+    #[test]
+    fn requests_wait_for_a_spent_minute_but_not_a_spent_day() {
+        let quota = |label: &str, remaining, reset: &str| Quota { label: label.into(), limit: Some(30), remaining: Some(remaining), resets_in: Some(reset.into()) };
+        set_quotas("pace/minute", vec![quota("Requests per minute", 0, "12s")]);
+        let wait = wait_before("pace/minute", 1_000).unwrap();
+        assert!(wait > std::time::Duration::from_secs(11) && wait <= std::time::Duration::from_secs(13));
+        set_quotas("pace/tokens", vec![Quota { label: "Tokens per minute".into(), limit: Some(6_000), remaining: Some(500), resets_in: Some("5s".into()) }]);
+        assert!(wait_before("pace/tokens", 2_000).is_some(), "not enough tokens left this minute");
+        assert!(wait_before("pace/tokens", 400).is_none(), "enough left");
+        set_quotas("pace/day", vec![quota("Requests per day", 0, "5h")]);
+        assert!(wait_before("pace/day", 10).is_none(), "a daily cap is the model switch's job");
+        assert!(wait_before("pace/unknown", 10).is_none());
+    }
     use serde_json::json;
 
     fn headers(pairs: &[(&str, &str)]) -> HeaderMap {

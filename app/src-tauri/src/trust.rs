@@ -105,6 +105,22 @@ pub fn trust_project(root: &Path) -> Result<(), String> {
     fs::write(&path, text).map_err(|e| e.to_string())
 }
 
+/// Forgets that `root` is trusted. A folder that contains it and is trusted itself keeps it
+/// trusted; the error names that folder.
+pub fn untrust_project(root: &Path) -> Result<(), String> {
+    let _guard = LOCK.lock().map_err(|e| e.to_string())?;
+    let path = store_path()?;
+    let mut store = read_store(&path);
+    let entry = canonical(root);
+    store.retain(|item| !same(item.trim_end_matches(['/', '\\']), entry.trim_end_matches(['/', '\\'])));
+    let text = serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?;
+    fs::write(&path, text).map_err(|e| e.to_string())?;
+    if let Some(parent) = store.iter().find(|item| trusted_in(std::slice::from_ref(*item), root)) {
+        return Err(format!("{parent} is trusted, and this folder is inside it. Stop trusting {parent} to stop trusting this one."));
+    }
+    Ok(())
+}
+
 /// Whether `root` is trusted, and what trusting it would turn on.
 pub fn project_trust(root: &Path) -> TrustStatus {
     let mcp_servers = crate::mcp::read_project_config(root).into_iter().filter(|server| server.config.enabled).map(|server| server.config.name).collect();
@@ -127,6 +143,15 @@ pub mod commands {
     #[tauri::command]
     pub fn project_trust_status(app: AppHandle) -> Result<TrustStatus, String> {
         Ok(super::project_trust(&open_root(&app)?))
+    }
+
+    /// Stops trusting the open project, then stops its `.mcp.json` connectors.
+    #[tauri::command]
+    pub async fn untrust_project(app: AppHandle) -> Result<TrustStatus, String> {
+        let root = open_root(&app)?;
+        let result = super::untrust_project(&root);
+        app.state::<AppState>().mcp.sync_project(Some(&root)).await;
+        result.map(|()| super::project_trust(&root))
     }
 
     /// Trusts the open project, then starts its `.mcp.json` connectors.
@@ -166,6 +191,13 @@ mod tests {
         fs::create_dir_all(&tree).unwrap();
         fs::write(tree.join(".git"), format!("gitdir: {}\n", project.join(".git").join("worktrees").join("tree").display())).unwrap();
         assert!(is_trusted(&tree));
+
+        untrust_project(&project).unwrap();
+        assert!(!is_trusted(&project) && !is_trusted(&inner) && !is_trusted(&tree));
+        trust_project(&base).unwrap();
+        assert!(untrust_project(&project).unwrap_err().contains("is trusted, and this folder is inside it"));
+        untrust_project(&base).unwrap();
+        assert!(!is_trusted(&project));
         let _ = fs::remove_dir_all(base);
     }
 }

@@ -109,6 +109,20 @@ pub struct Runtime {
     pub edits: Vec<EditRecord>,
     pub running: bool,
     pub cancel: Arc<tokio::sync::Notify>,
+    /// The custom command that started the current request: its model and allowed tools apply
+    /// until the user sends another prompt.
+    pub command_run: Option<CommandRun>,
+}
+
+/// What a custom command brings to the request it starts (commands.rs).
+#[derive(Clone, Debug, Default)]
+pub struct CommandRun {
+    /// The prompt the command sent; another prompt ends the command's request.
+    pub prompt: String,
+    /// Front matter `model`, used when the provider offers it.
+    pub model: String,
+    /// Front matter `allowed-tools`, as permission rules.
+    pub allowed_tools: Vec<String>,
 }
 
 pub type Shared = Arc<Mutex<Runtime>>;
@@ -124,6 +138,7 @@ impl Runtime {
             queued: file.queued,
             todos: file.todos,
             steer: Vec::new(),
+            command_run: None,
             edits: file.edits,
             running: false,
             cancel: Arc::new(tokio::sync::Notify::new()),
@@ -159,6 +174,12 @@ impl Runtime {
             sources,
             conversation_at,
         });
+    }
+
+    /// A line about the session itself (a model switch, a compaction), shown in the thread where it
+    /// happened. It is not part of what the model reads.
+    pub fn push_note(&mut self, text: String) {
+        self.push_visible("note", text, vec![], vec![], vec![], None);
     }
 
     /// Writes the session to disk, naming it after its first request.
@@ -321,11 +342,17 @@ pub(crate) fn pending_view(action: &PendingAction) -> (PendingView, bool) {
             command,
             tool_call_id,
             background,
+            outside_sandbox,
             ..
         } => (
             PendingView {
                 kind: "task".into(),
-                label: if *background { format!("{command} (in the background)") } else { command.clone() },
+                label: match (*background, *outside_sandbox) {
+                    (true, true) => format!("{command} (in the background, outside the sandbox)"),
+                    (true, false) => format!("{command} (in the background)"),
+                    (false, true) => format!("{command} (outside the sandbox)"),
+                    (false, false) => command.clone(),
+                },
                 diff: None,
                 questions: None,
             },
@@ -400,7 +427,7 @@ fn activate(state: &AppState, shared: &Shared) -> Result<SessionSnapshot, String
     Ok(runtime.snapshot())
 }
 
-fn create_worktree(root: &Path, id: &str) -> Result<Worktree, String> {
+pub(crate) fn create_worktree(root: &Path, id: &str) -> Result<Worktree, String> {
     if !root.join(".git").exists() {
         return Err("Worktree sessions need a Git repository".into());
     }
@@ -434,7 +461,20 @@ pub fn create_for_root(
     root: &Path,
     worktree: bool,
 ) -> Result<SessionSnapshot, String> {
-    let id = Uuid::new_v4().to_string();
+    create_with_id(state, root, worktree, Uuid::new_v4().to_string())
+}
+
+/// A new session with an id the caller chose (`neru --session-id`), which must be a UUID not in use.
+pub fn create_with_id(
+    state: &AppState,
+    root: &Path,
+    worktree: bool,
+    id: String,
+) -> Result<SessionSnapshot, String> {
+    let id = Uuid::parse_str(id.trim()).map_err(|_| format!("{id} is not a valid session id (a UUID)"))?.to_string();
+    if read(&id).is_ok() {
+        return Err(format!("A session with id {id} already exists"));
+    }
     let worktree = if worktree {
         Some(create_worktree(root, &id)?)
     } else {
@@ -465,6 +505,31 @@ pub fn create_for_root(
         .map_err(|e| e.to_string())?
         .insert(id, shared.clone());
     activate(state, &shared)
+}
+
+/// A session that runs in the background for a Team member; the active session stays as it is.
+pub fn create_detached(state: &AppState, root: &Path, title: &str) -> Result<String, String> {
+    let id = Uuid::new_v4().to_string();
+    let mut runtime = Runtime::from_file(SessionFile {
+        summary: SessionSummary {
+            id: id.clone(),
+            title: title.into(),
+            project_path: root.to_string_lossy().to_string(),
+            updated_at: now(),
+            worktree: None,
+            running: false,
+            titled: true,
+        },
+        conversation: vec![],
+        transcript: vec![],
+        pending: None,
+        queued: vec![],
+        todos: vec![],
+        edits: vec![],
+    });
+    runtime.save()?;
+    state.sessions.lock().map_err(|e| e.to_string())?.insert(id.clone(), Arc::new(Mutex::new(runtime)));
+    Ok(id)
 }
 
 pub fn restore_for_root(state: &AppState, root: &Path) -> Result<SessionSnapshot, String> {
@@ -766,6 +831,7 @@ mod tests {
         {
             let shared = active(&state).unwrap();
             let mut runtime = shared.lock().unwrap();
+            runtime.push_note("Plan mode".into());
             runtime.push_visible("user", "Inspect this project".into(), vec![], vec![], vec![], Some(2));
             runtime.pending = Some(PendingAction::Task {
                 task: "test".into(),
@@ -776,8 +842,9 @@ mod tests {
 
         let restored = read(&created.session.id).unwrap();
         assert_eq!(restored.summary.title, "Inspect this project");
-        assert_eq!(restored.transcript.len(), 1);
-        assert_eq!(restored.transcript[0].conversation_at, Some(2));
+        assert_eq!(restored.transcript.len(), 2);
+        assert_eq!(restored.transcript[0].role, "note");
+        assert_eq!(restored.transcript[1].conversation_at, Some(2));
         assert!(matches!(restored.pending, Some(PendingAction::Task { .. })));
 
         fs::remove_file(path(&created.session.id).unwrap()).unwrap();
@@ -819,6 +886,8 @@ mod tests {
             runtime.push_visible("user", "first".into(), vec![], vec![], vec![], Some(2));
             runtime.conversation.push(json_msg("user"));
             runtime.push_visible("assistant", "ok".into(), vec![], vec![], vec![], None);
+            // A session event between turns: kept in place, and invisible to rewind's counting.
+            runtime.push_note("Compacted conversation · saved 1.2k tokens".into());
             runtime.push_visible("user", "change notes".into(), vec![], vec!["notes.txt".into()], vec![], Some(3));
             runtime.conversation.push(json_msg("user"));
             let checkpoint = crate::workspace::write_checkpoint(&root, "notes.txt", "before", true).unwrap();
@@ -829,7 +898,8 @@ mod tests {
         let result = rewind(&state, 1, true).unwrap();
         assert_eq!(result.prompt, "change notes");
         assert_eq!(result.restored, vec!["notes.txt".to_string()]);
-        assert_eq!(result.snapshot.messages.len(), 2);
+        assert_eq!(result.snapshot.messages.len(), 3);
+        assert_eq!((result.snapshot.messages[2].role.as_str(), result.snapshot.messages[2].conversation_at), ("note", None));
         assert_eq!(fs::read_to_string(&file).unwrap(), "before");
         assert_eq!(active(&state).unwrap().lock().unwrap().conversation.len(), 3);
         assert!(rewind(&state, 5, false).is_err());

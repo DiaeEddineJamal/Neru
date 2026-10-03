@@ -23,7 +23,7 @@ Neru updates itself: it checks this repository's releases when it starts and eve
 The desktop app already puts `neru` on your PATH. To install only the terminal CLI:
 
 ```sh
-# macOS, Linux
+# macOS (Apple silicon and Intel), Linux (x64 and arm64)
 curl -fsSL https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.sh | bash
 
 # Windows (PowerShell)
@@ -31,27 +31,25 @@ irm https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.ps1 | ie
 
 # Any platform with Node.js 18+
 npm install -g neru-cli
-
-# Windows
-winget install Luziv.Neru.CLI
 ```
 
-Then run `neru` in any project folder. It shares settings, keys and sessions with the app.
+Then run `neru login` once (or set `NERU_API_KEY`, with `NERU_PROVIDER` and `NERU_MODEL`, for CI and scripts) and `neru` in any project folder. It shares settings, keys and sessions with the app, and takes Claude Code's flags: `-p`, `-c`, `-r`, `--output-format json|stream-json`, `--permission-mode`, `--allowedTools`, `--append-system-prompt`, `neru mcp add --transport http …` and the rest. `neru --help` lists them, and the app shows them in Settings → CLI.
 
 The scripts download the release archive for your platform, check its SHA256, and install to `~/.neru/cli` (linked from `~/.local/bin/neru`) or `%LOCALAPPDATA%\Neru\cli` (added to your user PATH). Pin a version with `bash -s -- 0.4.0`, or `$env:NERU_VERSION = '0.4.0'` on Windows.
 
-On Linux, `neru` needs WebKitGTK 4.1, the same library the app uses. The script tells you if it is missing: `sudo apt install libwebkit2gtk-4.1-0`, `sudo dnf install webkit2gtk4.1`, or `sudo pacman -S webkit2gtk-4.1`.
+On Linux, `neru` needs glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) and WebKitGTK 4.1, the same library the app uses. The script tells you if it is missing: `sudo apt install libwebkit2gtk-4.1-0`, `sudo dnf install webkit2gtk4.1`, or `sudo pacman -S webkit2gtk-4.1`. Over SSH, in CI or in a container there is no display: install `xvfb` (`sudo apt install xvfb`) and `neru` runs itself inside it.
 
-**Update:** `neru update`, or `npm install -g neru-cli@latest`, or `winget upgrade Luziv.Neru.CLI`. Running the install script again also updates.
+**WSL:** inside a WSL distribution (Ubuntu, Debian, ...), install the Linux CLI with the `install.sh` line or npm, then `sudo apt install libwebkit2gtk-4.1-0`. Run `neru` from a project under the Linux file system (`~/code/...`) rather than `/mnt/c/...`, which is much slower. The WSL CLI keeps its own settings, keys and sessions under your Linux home, separate from the Windows app.
+
+**Update:** `neru update`, or `npm install -g neru-cli@latest`. Running the install script again also updates.
 
 **Uninstall:**
 
 | Installed with | Remove with |
 | --- | --- |
-| `install.sh` | `rm -rf ~/.neru/cli ~/.local/bin/neru` |
-| `install.ps1` | `Remove-Item -Recurse "$env:LOCALAPPDATA\Neru\cli"`, then remove that folder from your user PATH |
+| `install.sh` | `curl -fsSL https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.sh \| bash -s -- --uninstall` |
+| `install.ps1` | `$env:NERU_UNINSTALL='1'; irm https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.ps1 \| iex` |
 | npm | `npm uninstall -g neru-cli` |
-| winget | `winget uninstall Luziv.Neru.CLI` |
 
 Settings and sessions stay in place, so the app keeps them.
 
@@ -79,7 +77,7 @@ npm run tauri -- build               # installers for this platform, in src-taur
 1. Bump the version in `app/package.json`, `app/src-tauri/tauri.conf.json` and `app/src-tauri/Cargo.toml`.
 2. Add the release to `app/src/changelog.json`. It feeds the in-app *What's new*, the GitHub release notes, and `CHANGELOG.md` (`node app/scripts/release-notes.mjs --changelog`).
 3. Push a tag such as `v0.2.0`. The release workflow builds every platform, signs the update files with the `TAURI_SIGNING_PRIVATE_KEY` secret, and publishes the release, which installed copies then pick up.
-4. The same run uploads the standalone CLI archives, publishes `neru-cli` to npm (with the `NPM_TOKEN` secret) and opens winget update PRs (with `WINGET_TOKEN`). The first winget submission is manual: see [packaging/winget](packaging/winget/README.md).
+4. The same run uploads the standalone CLI archives, publishes `neru-cli` to npm (with the `NPM_TOKEN` secret), and attaches filled-in Homebrew files for a tap ([packaging/homebrew](packaging/homebrew)). winget updates need a first manual submission and the `WINGET_TOKEN` secret ([packaging/winget](packaging/winget/README.md)).
 
 The installer artwork is generated from the app's design tokens: `python tools/build_installer_art.py`.
 

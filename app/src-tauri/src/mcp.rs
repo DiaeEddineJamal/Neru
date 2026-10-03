@@ -135,7 +135,7 @@ pub fn read_config() -> Vec<ServerConfig> {
     servers
 }
 
-fn write_config(servers: &[ServerConfig]) -> Result<(), String> {
+pub(crate) fn write_config(servers: &[ServerConfig]) -> Result<(), String> {
     let stored: Vec<ServerConfig> = servers
         .iter()
         .cloned()
@@ -179,7 +179,7 @@ fn expand_env(text: &str) -> String {
 
 /// Reads Claude Code's project format: `{"mcpServers": {name: {command, args, env}` or
 /// `{type: "http" | "sse", url, headers}}}`.
-fn parse_project_config(value: &Value) -> Vec<ProjectServer> {
+pub(crate) fn parse_project_config(value: &Value) -> Vec<ProjectServer> {
     let Some(servers) = value["mcpServers"].as_object() else { return Vec::new() };
     let strings = |value: &Value| -> HashMap<String, String> {
         value
@@ -684,7 +684,7 @@ impl McpManager {
         }
     }
 
-    async fn start(&self, config: &ServerConfig) {
+    pub(crate) async fn start(&self, config: &ServerConfig) {
         self.stop(&config.name);
         if let Ok(mut starting) = self.starting.lock() {
             starting.push(config.name.clone());

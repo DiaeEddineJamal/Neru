@@ -17,10 +17,13 @@ import { EASE_OUT, SPRING_PANEL, SPRING_SWAP } from '@/lib/ease'
 import TaskRows, { SpinnerRing, TaskBadge, type TaskRow } from '@/components/primitives/TaskRows'
 import { diffCounts, parseUnifiedDiff } from '@/lib/diff'
 import { cn } from '@/lib/utils'
+import { remarkMentions } from '@/lib/mentions'
+import { api } from '../../api'
 import { Mascot } from './Mascot'
+import { MermaidBlock, WireframeBlock } from './Diagrams'
 import { ErrorNotice } from './ErrorNotice'
 import type { ErrorAction } from '@/lib/friendlyError'
-import type { AgentMode, ChatEntry, PendingView, Source, SubagentProgress, ToolEventStatus } from '../../types'
+import type { AgentMode, ChatEntry, PendingView, Source, SubagentApproval, SubagentProgress, ToolEventStatus } from '../../types'
 
 /** A step of the reply. `agent` carries a sub-agent's live progress; `since` is when it started, for a ticking clock. */
 export interface LiveTool { id: string; label: string; status: ToolEventStatus; agent?: SubagentProgress & { since: number } }
@@ -29,10 +32,14 @@ export interface LiveDraft { id: string; path: string; content: string; edit?: b
 export interface LiveResponse { text: string; tools: LiveTool[]; sources: Source[]; drafts: LiveDraft[]; reasoning: number; thinking?: string }
 /** A settled approval, shown after the message that was last when it was decided. */
 export interface ResolvedApproval { id: string; after: string | null; pending: PendingView; status: ToolApprovalStatus }
+/** A line in the thread for something that happened to the session: a model switch, a compaction. */
+function NoteLine({ text, working }: { text: string; working?: boolean }) {
+  return <div className="session-note" role="status">{working && <LoaderCircle size={12} className="animate-spin" aria-hidden />}<span>{text}</span></div>
+}
 export interface AgentPhase { state: OrbState; label: string }
 
 /** Response typography: Claude-like 16px reading size on top of StreamingResponse's own prose styles. */
-const RESPONSE_PROSE = 'text-base leading-7 text-foreground [&_a]:text-[var(--sage)] [&_h1]:mb-2 [&_h1]:mt-6 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-1.5 [&_h3]:mt-4 [&_h3]:text-base [&_h3]:font-semibold [&_pre]:text-[13px] [&_pre]:leading-6 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_table]:my-3 [&_table]:w-full [&_table]:text-sm [&_td]:border-b [&_td]:border-border [&_td]:px-2 [&_td]:py-1.5 [&_th]:border-b [&_th]:border-border [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-medium [&_li>p]:my-0 [&>:first-child]:mt-0'
+export const RESPONSE_PROSE = 'neru-prose text-base leading-7 text-foreground [&_h1]:mb-2 [&_h1]:mt-6 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-1.5 [&_h3]:mt-4 [&_h3]:text-base [&_h3]:font-semibold [&_pre]:text-[13px] [&_pre]:leading-6 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground [&_table]:my-3 [&_table]:w-full [&_table]:text-sm [&_td]:border-b [&_td]:border-border [&_td]:px-2 [&_td]:py-1.5 [&_th]:border-b [&_th]:border-border [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-medium [&_li>p]:my-0 [&>:first-child]:mt-0'
 
 const WEB_TOOL = /^(Searched the web|Read [a-z0-9.-]+\.[a-z]{2,}$)/i
 
@@ -126,8 +133,9 @@ function linkCitations(content: string, count: number) {
   })).join('')
 }
 
-function ResponseMarkdown({ content, sources, idPrefix, onCite }: { content: string; sources: Source[]; idPrefix: string; onCite: () => void }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+/** `mentions`: handles to highlight as @mentions (Team members). */
+export function ResponseMarkdown({ content, sources, idPrefix, onCite, mentions }: { content: string; sources: Source[]; idPrefix: string; onCite: () => void; mentions?: string[] }) {
+  return <ReactMarkdown remarkPlugins={mentions ? [remarkGfm, [remarkMentions, { handles: mentions }]] : [remarkGfm]} components={{
     a: ({ href, children }) => {
       const cite = href?.match(/^#cite-(\d+)$/)
       const source = cite ? sources[Number(cite[1]) - 1] : undefined
@@ -140,7 +148,10 @@ function ResponseMarkdown({ content, sources, idPrefix, onCite }: { content: str
       if (!isValidElement(child)) return <pre>{children}</pre>
       const props = child.props as { className?: string; children?: ReactNode }
       const tag = /language-([\w+#.-]+)/.exec(props.className ?? '')?.[1]
-      return <CodeBlock code={String(props.children ?? '').replace(/\n$/, '')} language={languageForFence(tag)} />
+      const source = String(props.children ?? '').replace(/\n$/, '')
+      if (tag === 'mermaid') return <MermaidBlock code={source} />
+      if (tag === 'wireframe') return <WireframeBlock html={source} />
+      return <CodeBlock code={source} language={languageForFence(tag)} />
     },
   }}>{sources.length ? linkCitations(content, sources.length) : content}</ReactMarkdown>
 }
@@ -206,6 +217,26 @@ function useAgentClock(agent: NonNullable<LiveTool['agent']>, running: boolean) 
   return running ? Math.max(0, Math.floor((now - agent.since) / 1000)) : Math.floor(agent.elapsedMs / 1000)
 }
 
+/** An edit or command a sub-agent is waiting on, under the same mode and rules as the main agent. */
+function SubagentApprovalCard({ approval, agent }: { approval: SubagentApproval; agent: string }) {
+  const [answer, setAnswer] = useState<'pending' | 'sending' | 'error'>('pending')
+  const reply = (approve: boolean) => {
+    setAnswer('sending')
+    void api.answerSubagentApproval(approval.requestId, approve).catch(() => setAnswer('error'))
+  }
+  const command = approval.kind === 'task'
+  const verb = command ? 'run' : approval.kind === 'delete' ? 'delete' : approval.kind === 'move' ? 'move' : approval.kind === 'mkdir' ? 'create' : 'change'
+  return <div className="subagent-approval" role="group" aria-label={`Approve a sub-agent's request to ${verb} ${approval.label}`}>
+    <p><ShieldCheck size={13} aria-hidden /> <strong>{agent}</strong> wants to {verb} {command ? '' : <code>{approval.label}</code>}</p>
+    {command ? <ToolApprovalCode code={approval.label} /> : approval.diff ? <FileDiff file={approval.label} lines={parseUnifiedDiff(approval.diff)} status="complete" collapseOnComplete={false} defaultOpen maxHeight={280} language={languageForPath(approval.label)} copyText={approval.diff} /> : null}
+    <div className="subagent-approval-actions">
+      <button type="button" className="button primary" disabled={answer === 'sending'} onClick={() => reply(true)}><Check size={13} /> Allow</button>
+      <button type="button" className="button subtle" disabled={answer === 'sending'} onClick={() => reply(false)}><X size={13} /> Deny</button>
+      {answer === 'error' && <span className="subagent-approval-note">The agent stopped before this was answered.</span>}
+    </div>
+  </div>
+}
+
 /** A sub-agent's activity, nested under its task: role, what it is doing now, tool count, time, and its steps. */
 function SubagentRow({ tool }: { tool: LiveTool & { agent: NonNullable<LiveTool['agent']> } }) {
   const reduce = useReducedMotion() ?? false
@@ -222,6 +253,7 @@ function SubagentRow({ tool }: { tool: LiveTool & { agent: NonNullable<LiveTool[
       {agent.steps.length > 0 && <motion.span aria-hidden animate={{ rotate: shown ? 180 : 0 }} transition={reduce ? { duration: 0 } : SPRING_SWAP}><ChevronDown size={12} /></motion.span>}
     </button>
     {running && agent.current && <div className="subagent-current truncate" title={agent.current}>{agent.current}</div>}
+    {running && agent.approval && <SubagentApprovalCard key={agent.approval.requestId} approval={agent.approval} agent={agent.description} />}
     <AgentDisclosure open={shown}>
       <ol className="subagent-steps">
         {agent.steps.map((label, index) => <li key={`${index}-${label}`}><span className="truncate" title={label}>{label}</span></li>)}
@@ -230,7 +262,7 @@ function SubagentRow({ tool }: { tool: LiveTool & { agent: NonNullable<LiveTool[
   </div>
 }
 
-function ToolSteps({ tools, live }: { tools: LiveTool[]; live: boolean }) {
+export function ToolSteps({ tools, live }: { tools: LiveTool[]; live: boolean }) {
   const reduce = useReducedMotion() ?? false
   const [open, setOpen] = useState(false)
   if (tools.length === 0) return null
@@ -531,6 +563,8 @@ export interface ConversationProps {
   pending: PendingView | null
   pendingStatus: ToolApprovalStatus
   resolved: ResolvedApproval[]
+  /** A session event still in progress (“Compacting conversation…”), shown below the thread. */
+  progressNote?: string | null
   failed: string | null
   projectPath?: string
   feedback: Record<string, StreamingResponseFeedback>
@@ -553,19 +587,20 @@ export interface ConversationProps {
 
 export function Conversation(props: ConversationProps) {
   const { messages, live, phase, busy, pending, resolved, failed } = props
-  const settledAfter = (id: string | null) => resolved.filter(item => item.after === id).map(item => <div className="approval-row" key={item.id}><ApprovalCard pending={item.pending} status={item.status} projectPath={props.projectPath} /></div>)
   const known = new Set(messages.map(entry => entry.id))
+  const settledAfter = (id: string | null) => resolved.filter(item => item.after === id).map(item => <div className="approval-row" key={item.id}><ApprovalCard pending={item.pending} status={item.status} projectPath={props.projectPath} /></div>)
   const fresh = useFresh(messages.map(entry => entry.id))
   let userIndex = -1
   return <FreshContext.Provider value={fresh}><MessageScroller navigation="rail" busy={busy} className="chat-scroller" viewportClassName="chat-viewport" contentClassName="chat-content">
     {settledAfter(null)}
-    {messages.flatMap(entry => { if (entry.role === 'user') userIndex += 1; const index = userIndex; return [entry.role === 'user'
+    {messages.flatMap(entry => { if (entry.role === 'note') return [<NoteLine key={entry.id} text={entry.content} />, ...settledAfter(entry.id)]; if (entry.role === 'user') userIndex += 1; const index = userIndex; return [entry.role === 'user'
       ? <Message from="user" id={entry.id} key={entry.id}>{entry.images && entry.images.length > 0 && <MessageImages images={entry.images} />}{(entry.content || (entry.contextPaths?.length ?? 0) > 0) && <div className="message-body" data-slot="message-bubble-content">
           {entry.contextPaths && entry.contextPaths.length > 0 && <div className="message-context">{entry.contextPaths.map(path => <span key={path}><Paperclip size={12} />{path}</span>)}</div>}
           {entry.content && <p>{entry.content}</p>}
         </div>}<RewindMenu disabled={busy} onRewind={restoreCode => props.onRewind(index, restoreCode)} /></Message>
       : <AssistantMessage key={entry.id} id={entry.id} content={entry.content} sources={entry.sources ?? []} tools={(entry.steps ?? []).map((label, index) => ({ id: `${entry.id}-${index}`, label, status: label.endsWith('(failed)') ? 'error' : 'done' }))} drafts={entry.files} thinking={entry.thinking} status="complete" live={false} feedback={props.feedback[entry.id] ?? null} onFeedback={value => props.onFeedback(entry.id, value)} />, ...settledAfter(entry.id)] })}
     {resolved.filter(item => item.after !== null && !known.has(item.after)).map(item => <div className="approval-row" key={item.id}><ApprovalCard pending={item.pending} status={item.status} projectPath={props.projectPath} /></div>)}
+    {props.progressNote && <NoteLine text={props.progressNote} working />}
     {live && <AssistantMessage content={live.text} sources={live.sources} tools={live.tools} drafts={live.drafts} thinking={live.thinking} status="streaming" live footer={phase && <AgentStatus phase={phase} />} />}
     {!live && busy && phase && <div className="approval-row"><AgentStatus phase={phase} /></div>}
     {failed && !busy && <Message from="assistant"><span className="message-avatar"><Mascot size={36} /></span><div className="message-body"><ErrorNotice error={failed} onAction={action => action === 'retry' ? props.onRetry() : props.onErrorAction?.(action)} /></div></Message>}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { LISTING_IS_AUTHORITATIVE } from './ModelPicker'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { ArrowLeft, ArrowRight, ArrowUp, AudioLines, Bell, Brain, Check, ChevronDown, CircleAlert, FileText, Folder, FolderOpen, GitPullRequest, Globe, History, KeyRound, Layers, ListChecks, LoaderCircle, Moon, MonitorPlay, Network, Paperclip, Pause, PenLine, Plug, Rocket, Search, Shuffle, ShieldCheck, Slash, Sparkles, SquareTerminal, Sun, Webhook, X, CornerDownRight, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUp, AudioLines, Bell, Brain, Check, ChevronDown, CircleAlert, FileText, Folder, FolderOpen, GitFork, GitPullRequest, Globe, History, KeyRound, Layers, ListChecks, LoaderCircle, Moon, MonitorPlay, Network, Paperclip, Pause, PenLine, Plug, Rocket, Search, Shuffle, ShieldCheck, Slash, Sparkles, SquareTerminal, Sun, Users, Webhook, ArrowRightLeft, Download, Undo2, X, CornerDownRight, type LucideIcon } from 'lucide-react'
 import { VoiceBeam } from 'voice-glow'
 import { ToolApproval, ToolApprovalCode } from '@/components/agents/tool-approval'
 import { dictationLanguages } from '@/lib/speech/catalog'
@@ -11,10 +11,11 @@ import { cn } from '@/lib/utils'
 import { api } from '../../api'
 import { author } from '../../credits'
 import { formatForModel, providerPresets, type ApiFormat } from '../../providerCatalog'
-import type { ProjectInfo, ProviderView } from '../../types'
+import type { ProjectInfo, ProviderView, TeamAgent } from '../../types'
 import { Mascot } from './Mascot'
 import { WindowControls } from './TitleBar'
 import { SpeechModelCatalog, useSpeechModels } from './SpeechModels'
+import { AgentMark } from './team/TeamView'
 import './Onboarding.css'
 
 type OnboardingProps = {
@@ -35,11 +36,12 @@ const steps = [
   { id: 'project', label: 'Project' },
   { id: 'model', label: 'Model' },
   { id: 'voice', label: 'Voice' },
+  { id: 'team', label: 'Team' },
   { id: 'toolkit', label: 'Toolkit' },
   { id: 'decide', label: 'You decide' },
 ] as const
 
-const STEP = { welcome: 0, project: 1, model: 2, voice: 3, toolkit: 4, decide: 5 } as const
+const STEP = { welcome: 0, project: 1, model: 2, voice: 3, team: 4, toolkit: 5, decide: 6 } as const
 
 const highlights = [
   { icon: FolderOpen, title: 'Reads your codebase', text: 'Explores files, Git history, and the web, and cites its sources.' },
@@ -50,7 +52,21 @@ const highlights = [
 type Feature = { icon: LucideIcon; title: string; text: string; tag?: string }
 type FeatureGroup = { id: string; label: string; blurb: string; items: Feature[] }
 
+const teamPoints = [
+  { icon: Users, title: 'One thread, many agents', text: 'Claude Code, Codex, Cursor, OpenCode and Gemini read each other’s replies and keep their own sessions.' },
+  { icon: ArrowRightLeft, title: 'They hand work over', text: 'An agent writes @codex to pass the next step on. When a subscription hits its limit, a teammate picks it up.' },
+  { icon: Download, title: 'Bring your history', text: 'Import chats, skills, MCP servers and rules from Claude Code, Codex, Cursor, VS Code and more.' },
+]
+
 const featureGroups: FeatureGroup[] = [
+  { id: 'team', label: 'Team', blurb: 'Your subscriptions, working together.', items: [
+    { icon: Users, title: 'Shared thread', text: 'Every member sees what the others said since its last turn, and resumes its own session.', tag: 'New' },
+    { icon: Slash, title: 'Team skills', text: '/plan, /tickets, /execute, /review, /verify, /debate and more write specs and tickets every agent can read.', tag: 'New' },
+    { icon: Undo2, title: 'Undo a turn', text: 'Each turn that changes files gets a card with the files and one-click undo.', tag: 'New' },
+    { icon: GitFork, title: 'Fork and side chats', text: 'Fork a member to try another approach, or ask /btw on the side without moving the thread.', tag: 'New' },
+    { icon: Layers, title: 'Worktree per agent', text: 'Give a member its own Git worktree, with your setup and teardown scripts.', tag: 'New' },
+    { icon: Download, title: 'Imports', text: 'Past chats become tasks the agent can continue. Skills, MCP servers and rules come across too.', tag: 'New' },
+  ] },
   { id: 'work', label: 'While it works', blurb: 'Watch progress, steer, and never get stuck.', items: [
     { icon: PenLine, title: 'Live code writing', text: 'Files appear as they are written, in VS Code colors, as compact Write and Edit rows you can expand.', tag: 'New' },
     { icon: ListChecks, title: 'To-do list', text: 'For multi-step work, Neru keeps a visible checklist and ticks it off as it goes.', tag: 'New' },
@@ -135,6 +151,8 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
   const [group, setGroup] = useState(featureGroups[0].id)
   const [demo, setDemo] = useState<'listening' | 'processing'>('listening')
   const speech = useSpeechModels()
+  const [agents, setAgents] = useState<TeamAgent[] | null>(null)
+  useEffect(() => { if (step === STEP.team && isDesktop && agents === null) void api.listTeamAgents().then(setAgents).catch(() => setAgents([])) }, [step, isDesktop, agents])
   const level = useDemoLevel(step === STEP.voice && demo === 'listening')
   const preset = providerPresets.find(item => item.id === providerId)
   const [touched, setTouched] = useState(false)
@@ -148,7 +166,11 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
   const stepLabel = steps[step].label
   const last = step === steps.length - 1
   const hasKeyInput = apiKey.trim().length > 0
-  const canSave = ((local && touched) || hasKeyInput || (provider.hasKey && !saved))
+  // A key saved earlier for this provider is reused, so switching between providers never asks twice.
+  const [savedKeys, setSavedKeys] = useState<string[]>([])
+  useEffect(() => { if (isDesktop) void api.savedKeyProviders().then(setSavedKeys).catch(() => undefined) }, [isDesktop])
+  const keySaved = savedKeys.includes(providerId) || (provider.hasKey && provider.providerId === providerId)
+  const canSave = ((local && touched) || hasKeyInput || (keySaved && !saved))
 
   useEffect(() => {
     if (step !== STEP.voice || reduce) return
@@ -187,7 +209,7 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
 
   const saveProvider = async (): Promise<boolean> => {
     if (!isDesktop) { setProblem({ title: 'Connecting a model needs the desktop app.', help: 'Open the Neru desktop window to save a provider. You can skip this step for now.' }); return false }
-    if (!local && !hasKeyInput && !(saved || provider.hasKey)) { setProblem({ title: 'Paste an API key first.', help: `Get a free key from ${preset?.name ?? 'your provider'} with the link below, paste it here, then connect.` }); return false }
+    if (!local && !hasKeyInput && !(saved || keySaved)) { setProblem({ title: 'Paste an API key first.', help: `Get a free key from ${preset?.name ?? 'your provider'} with the link below, paste it here, then connect.` }); return false }
     setSaving(true); setProblem(null)
     try {
       if (model && !LISTING_IS_AUTHORITATIVE.has(providerId)) {
@@ -196,7 +218,7 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
         if (check?.status === 'unavailable') { setProblem({ title: `${model} is not available with this key.`, help: `${check.reason}. Open the details and pick another model.` }); setDetailsOpen(true); return false }
       }
       onProviderSaved(await api.configureProvider(providerId, apiFormat, baseUrl, apiKey, model))
-      setApiKey(''); setSaved(true)
+      setApiKey(''); setSaved(true); setSavedKeys(current => current.includes(providerId) ? current : [...current, providerId])
       return true
     } catch (cause) {
       setProblem(explainProviderError(cause, preset?.name ?? 'The provider', local)); setDetailsOpen(true)
@@ -211,13 +233,14 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
     if (step === STEP.model && !saved && canSave) { if (await saveProvider()) moveTo(step + 1); return }
     moveTo(step + 1)
   }
-  const skippable = step === STEP.project || step === STEP.model || step === STEP.voice
+  const skippable = step === STEP.project || step === STEP.model || step === STEP.voice || step === STEP.team
   const busy = saving || opening
   const primaryLabel = last ? 'Open workspace'
     : step === STEP.welcome ? 'Get started'
     : step === STEP.project ? (project ? 'Continue' : 'Choose a folder')
     : step === STEP.model ? (saving ? 'Connecting…' : saved ? 'Continue' : canSave ? 'Connect and continue' : 'Continue')
     : step === STEP.voice ? (speech.active ? 'Continue' : 'Continue without voice')
+    : step === STEP.team ? 'Continue'
     : 'Continue'
   const skipLabel = step === STEP.project ? 'I’ll do this later' : step === STEP.model ? 'Skip for now' : 'Skip'
 
@@ -325,7 +348,7 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
               </div>
               <button type="button" className="ob-link" onClick={() => setAllProviders(value => !value)}>{allProviders ? 'Show only free coding providers' : `More providers (${providerPresets.length - freePresets.length}): local models, OpenAI, Anthropic, DeepSeek…`}</button>
               <form className="ob-connection" onSubmit={event => { event.preventDefault(); void (async () => { if (await saveProvider()) moveTo(step + 1) })() }}>
-                {!local && <label className="ob-field"><span><KeyRound size={13} /> API key <small>encrypted on this PC</small></span><input type="password" value={apiKey} onChange={event => { setApiKey(event.target.value); setSaved(false); setProblem(null) }} placeholder={saved && provider.hasKey ? 'Key connected. Paste a new one to replace it.' : `Paste your ${preset?.name ?? ''} key`} autoComplete="off" spellCheck={false} aria-invalid={problem ? true : undefined} /></label>}
+                {!local && <label className="ob-field"><span><KeyRound size={13} /> API key <small>encrypted on this PC</small></span><input type="password" value={apiKey} onChange={event => { setApiKey(event.target.value); setSaved(false); setProblem(null) }} placeholder={keySaved ? 'Key saved on this PC. Paste a new one to replace it.' : `Paste your ${preset?.name ?? ''} key`} autoComplete="off" spellCheck={false} aria-invalid={problem ? true : undefined} /></label>}
                 {preset?.keyUrl && !local && <p className="ob-key-link">{preset.freeLimit && <span>Free: {preset.freeLimit}. </span>}<a href={preset.keyUrl} target="_blank" rel="noreferrer">Get a {preset.name} API key ↗</a></p>}
                 <button type="button" className="ob-disclosure" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(value => !value)}>Connection details <motion.span animate={{ rotate: detailsOpen ? 180 : 0 }} transition={{ duration: reduce ? 0 : 0.2 }}><ChevronDown size={14} /></motion.span></button>
                 <AnimatePresence initial={false}>{detailsOpen && <motion.div className="ob-details" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: reduce ? 0 : 0.25, ease: EASE_OUT }}>
@@ -361,6 +384,22 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
               <label className="ob-field ob-language"><span><Globe size={13} /> Dictation language</span><select value={language} onChange={event => onLanguageChange(event.target.value)}>{dictationLanguages.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
               <SpeechModelCatalog compact />
               <p className="ob-note">{speech.active ? 'Your model is ready. Change it any time in Settings, Voice.' : 'Whisper Base is a good start for English, French, and Spanish. Small or Turbo handle Arabic best. You can also add one later.'}</p>
+            </>}
+
+            {step === STEP.team && <>
+              <h1 ref={headingRef} tabIndex={-1}>Your agents, <em>one thread</em>. <span className="ob-optional">Optional</span></h1>
+              <p className="ob-lede">Already pay for Claude, ChatGPT or Cursor? Team puts their coding agents in one conversation, where they share context and hand work to each other. Neru uses each one’s own sign-in and never sees your tokens.</p>
+              <div className="ob-agents" aria-live="polite">
+                {!isDesktop ? <p className="ob-note">Agent detection works in the desktop app.</p>
+                  : agents === null ? <p className="ob-note"><LoaderCircle size={14} className="animate-spin" /> Looking for agents on this computer…</p>
+                  : agents.map(agent => <div key={agent.kind} className={cn('ob-agent', !agent.path && 'missing')}>
+                    <AgentMark kind={agent.kind} size={30} />
+                    <span><strong>{agent.name}</strong><small>{!agent.path ? 'Not installed' : agent.signedIn ? 'Ready' : 'Installed, sign in from Team'}</small></span>
+                    {agent.path && agent.signedIn && <Check size={15} className="ob-agent-ok" aria-label="Ready" />}
+                  </div>)}
+              </div>
+              <ul className="ob-highlights">{teamPoints.map(item => <li key={item.title}><span className="ob-icon"><item.icon size={17} /></span><div><strong>{item.title}</strong><small>{item.text}</small></div></li>)}</ul>
+              <p className="ob-note">Find it under <strong>Team</strong> in the sidebar. A short walkthrough plays the first time you open it.</p>
             </>}
 
             {step === STEP.toolkit && <>

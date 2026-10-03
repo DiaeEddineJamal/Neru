@@ -1,0 +1,30 @@
+/* Spotlight walkthrough (Tour.tsx). The hole is a rounded box whose huge shadow is the scrim. */
+.tour { position: fixed; inset: 0; z-index: 1000; --tour-scrim: rgb(8 9 8 / .62); }
+:root[data-theme='light'] .tour { --tour-scrim: rgb(25 26 24 / .42); }
+.tour-scrim { position: absolute; inset: 0; background: var(--tour-scrim); }
+.tour-spot { position: absolute; border-radius: 12px; box-shadow: 0 0 0 9999px var(--tour-scrim), 0 0 0 2px var(--sage); pointer-events: none; }
+.tour-spot::after { content: ''; position: absolute; inset: -2px; border-radius: inherit; box-shadow: 0 0 0 0 color-mix(in oklch, var(--sage) 55%, transparent); animation: tour-pulse 2s cubic-bezier(.16, 1, .3, 1) infinite; }
+@keyframes tour-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--sage) 50%, transparent); } 70%, 100% { box-shadow: 0 0 0 10px transparent; } }
+
+.tour-card { position: absolute; padding: 18px 18px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--menu-bg); color: var(--text); box-shadow: 0 24px 60px -20px rgb(0 0 0 / .55), 0 2px 8px rgb(0 0 0 / .18); }
+.tour-eyebrow { margin: 0 0 6px; color: var(--sage); font-size: var(--fs-xs); font-weight: 500; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+.tour-title { margin: 0 24px 8px 0; font: 400 var(--fs-xl)/1.2 'Instrument Serif', Georgia, serif; }
+.tour-body { color: var(--secondary); font-size: var(--fs-sm); line-height: 1.55; }
+.tour-body p { margin: 0 0 8px; }
+.tour-body p:last-child { margin-bottom: 0; }
+.tour-body code { font: var(--fs-xs) 'JetBrains Mono', monospace; color: var(--code-chip); background: var(--code-chip-bg); padding: 1px 5px; border-radius: 5px; }
+.tour-body kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; color: var(--text); text-align: center; }
+.tour-body ul { margin: 6px 0 0; padding-left: 18px; }
+.tour-body li { margin: 3px 0; }
+.tour-progress { display: flex; gap: 4px; margin: 14px 0 12px; }
+.tour-progress i { height: 3px; flex: 1; border-radius: 3px; background: var(--surface-3); transition: background .25s ease-out; }
+.tour-progress i.done { background: var(--moss); }
+.tour-progress i.on { background: var(--sage); }
+.tour-actions { display: flex; align-items: center; gap: 6px; }
+.tour-actions .button { gap: 6px; }
+.tour-spacer { flex: 1; }
+.tour-skip { padding: 4px 2px; border: 0; background: transparent; color: var(--muted); font-size: var(--fs-sm); }
+.tour-skip:hover { color: var(--text); }
+.tour-close { position: absolute; top: 12px; right: 12px; display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.tour-close:hover { background: var(--surface-3); color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .tour-spot::after { animation: none; } }

@@ -20,8 +20,21 @@ export function pushAgentOutput(command: string, output: string, phase: string) 
   listeners.forEach(listener => listener(text))
 }
 
+export interface TerminalLaunchSpec { program: string; args: string[]; env: [string, string][] }
+/** A tab to open: a shell in `cwd`, or a program such as a Team member's own CLI. */
+export interface TerminalTabSpec { title: string; cwd?: string; launch?: TerminalLaunchSpec; scope?: string }
+
+const openers = new Set<(spec: TerminalTabSpec) => void>()
+/** Tabs asked for before the pane mounted; it opens them when it does. */
+const pending: TerminalTabSpec[] = []
+/** Opens a tab in the terminal pane (the caller also opens the pane). */
+export function openTerminalTab(spec: TerminalTabSpec) {
+  if (openers.size === 0) pending.push(spec)
+  else openers.forEach(open => open(spec))
+}
+
 /** One shell. The first tab plays the welcome and mirrors the agent's commands; later tabs are plain shells. */
-function TerminalSession({ projectKey, first, active, onTitle }: { projectKey: string; first: boolean; active: boolean; onTitle: (title: string) => void }) {
+function TerminalSession({ projectKey, first, active, onTitle, cwd, launch }: { projectKey: string; first: boolean; active: boolean; onTitle: (title: string) => void; cwd?: string; launch?: TerminalLaunchSpec }) {
   const host = useRef<HTMLDivElement>(null)
   const [error, setError] = useState('')
   const focus = useRef<() => void>(() => undefined)
@@ -69,7 +82,7 @@ function TerminalSession({ projectKey, first, active, onTitle }: { projectKey: s
         const stopExit = await listen<string>('terminal-exit', event => { if (event.payload === id) out('\r\n\x1b[2m[session ended — close this tab or open a new one]\x1b[0m\r\n') })
         stops.push(stopExit)
         if (disposed) return
-        id = await api.terminalStart()
+        id = await api.terminalStart(cwd, launch)
         await api.terminalResize(id, terminal.cols, terminal.rows)
         terminal.onData(data => { if (id) void api.terminalWrite(id, data) })
       } catch (cause) { setError(`The shell could not start: ${String(cause)}. Check that PowerShell is installed, then open a new tab.`) }
@@ -82,19 +95,61 @@ function TerminalSession({ projectKey, first, active, onTitle }: { projectKey: s
   return <div className="terminal-session" hidden={!active}>{error && <div className="inline-error">{error}</div>}<div ref={host} className="terminal-host" /></div>
 }
 
-interface Tab { id: number; title: string }
+interface Tab { id: number; title: string; scope: string; cwd?: string; launch?: TerminalLaunchSpec }
 
-/** The integrated terminal with tabs. Shells keep running while you switch tabs or leave the view. */
-export function TerminalPane({ projectKey }: { projectKey: string }) {
+/** Which tabs show: the project's, or one Team task's (opened in its folder). */
+export interface TerminalScope { key: string; cwd?: string; label?: string }
+
+const SAVED = 'neru.terminals.v1'
+type SavedTab = { title: string; cwd?: string; launch?: TerminalLaunchSpec }
+const readSaved = (): Record<string, SavedTab[]> => { try { return JSON.parse(localStorage.getItem(SAVED) ?? '{}') as Record<string, SavedTab[]> } catch { return {} } }
+
+/** The integrated terminal with tabs. Shells keep running while you switch tabs or leave the view.
+ * A Team task has its own tabs, opened in its folder and reopened with it after a restart. */
+export function TerminalPane({ projectKey, scope = { key: projectKey } }: { projectKey: string; scope?: TerminalScope }) {
   const next = useRef(2)
-  const [tabs, setTabs] = useState<Tab[]>([{ id: 1, title: 'PowerShell' }])
-  const [active, setActive] = useState(1)
-  const add = () => { const id = next.current++; setTabs(current => [...current, { id, title: 'PowerShell' }]); setActive(id) }
+  const shell = 'PowerShell'
+  const [tabs, setTabs] = useState<Tab[]>([])
+  const [activeFor, setActiveFor] = useState<Record<string, number>>({})
+  const mirrorId = tabs.find(tab => tab.scope === projectKey)?.id
+  const shown = tabs.filter(tab => tab.scope === scope.key)
+  const active = activeFor[scope.key] ?? shown[0]?.id ?? 0
+  const setActive = (id: number, key = scope.key) => setActiveFor(current => ({ ...current, [key]: id }))
+  const add = (spec?: TerminalTabSpec) => {
+    const id = next.current++
+    const key = spec?.scope ?? scope.key
+    setTabs(current => [...current, { id, title: spec?.title ?? shell, scope: key, cwd: spec?.cwd ?? (key === scope.key ? scope.cwd : undefined), launch: spec?.launch }])
+    setActive(id, key)
+  }
   const close = (id: number) => setTabs(current => {
     const left = current.filter(tab => tab.id !== id)
-    if (left.length === 0) { const fresh = next.current++; setActive(fresh); return [{ id: fresh, title: 'PowerShell' }] }
-    if (id === active) setActive(left[Math.max(0, current.findIndex(tab => tab.id === id) - 1)].id)
+    if (!left.some(tab => tab.scope === scope.key)) { const fresh = next.current++; setActive(fresh); return [...left, { id: fresh, title: shell, scope: scope.key, cwd: scope.cwd }] }
+    if (id === active) { const mine = current.filter(tab => tab.scope === scope.key); setActive(mine[Math.max(0, mine.findIndex(tab => tab.id === id) - 1)].id) }
     return left
+  })
+  // A scope seen for the first time gets its saved tabs back, or one shell in its folder.
+  const restoredScopes = useRef(new Set<string>())
+  useEffect(() => {
+    // Once per scope, even when React runs effects twice in development.
+    if (restoredScopes.current.has(scope.key)) return
+    restoredScopes.current.add(scope.key)
+    const saved = scope.key === projectKey ? [] : readSaved()[scope.key] ?? []
+    const restored = (saved.length ? saved : [{ title: shell, cwd: scope.cwd }]).map(item => ({ ...item, id: next.current++, scope: scope.key }))
+    setTabs(current => current.some(tab => tab.scope === scope.key) ? current : [...current, ...restored])
+    setActiveFor(current => current[scope.key] ? current : { ...current, [scope.key]: restored[0].id })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope.key])
+  // Task tabs are remembered so the task reopens with them.
+  useEffect(() => {
+    const saved = readSaved()
+    for (const key of new Set(tabs.map(tab => tab.scope))) if (key !== projectKey) saved[key] = tabs.filter(tab => tab.scope === key).map(({ title, cwd, launch }) => ({ title, cwd, launch }))
+    try { localStorage.setItem(SAVED, JSON.stringify(saved)) } catch { /* storage unavailable */ }
+  }, [tabs, projectKey])
+  useEffect(() => {
+    const open = (spec: TerminalTabSpec) => add(spec)
+    openers.add(open)
+    pending.splice(0).forEach(open)
+    return () => { openers.delete(open) }
   })
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -104,13 +159,14 @@ export function TerminalPane({ projectKey }: { projectKey: string }) {
     return () => window.removeEventListener('keydown', onKey)
   })
   return <div className="terminal-shell">
-    <div className="terminal-tabs" role="tablist" aria-label="Terminals">
-      {tabs.map((tab, index) => <div key={tab.id} className={`terminal-tab${tab.id === active ? ' active' : ''}`} role="tab" aria-selected={tab.id === active}>
-        <button type="button" className="terminal-tab-label" onClick={() => setActive(tab.id)} title={index === 0 ? 'Project shell; Neru\'s commands appear here' : tab.title}><SquareTerminal size={13} aria-hidden /><span className="truncate">{index === 0 ? `${tab.title} · Neru` : tab.title}</span></button>
+    <div className="terminal-tabs" role="tablist" aria-label={scope.label ? `Terminals for ${scope.label}` : 'Terminals'}>
+      {scope.label && <span className="terminal-scope" title={scope.cwd}>{scope.label}</span>}
+      {shown.map(tab => { const mirror = tab.id === mirrorId; return <div key={tab.id} className={`terminal-tab${tab.id === active ? ' active' : ''}`} role="tab" aria-selected={tab.id === active}>
+        <button type="button" className="terminal-tab-label" onClick={() => setActive(tab.id)} title={mirror ? 'Project shell; Neru\'s commands appear here' : tab.cwd ?? tab.title}><SquareTerminal size={13} aria-hidden /><span className="truncate">{mirror ? `${tab.title} · Neru` : tab.title}</span></button>
         <button type="button" className="terminal-tab-close" aria-label={`Close ${tab.title}`} onClick={() => close(tab.id)}><X size={12} /></button>
-      </div>)}
-      <button type="button" className="terminal-tab-add" aria-label="New terminal" title="New terminal (Ctrl+Shift+T)" onClick={add}><Plus size={14} /></button>
+      </div> })}
+      <button type="button" className="terminal-tab-add" aria-label="New terminal" title="New terminal (Ctrl+Shift+T)" onClick={() => add()}><Plus size={14} /></button>
     </div>
-    {tabs.map((tab, index) => <TerminalSession key={tab.id} projectKey={projectKey} first={index === 0 && tab.id === tabs[0].id} active={tab.id === active} onTitle={title => setTabs(current => current.map(item => item.id === tab.id ? { ...item, title } : item))} />)}
+    {tabs.map(tab => <TerminalSession key={tab.id} projectKey={projectKey} cwd={tab.cwd} launch={tab.launch} first={tab.id === mirrorId} active={tab.id === active && tab.scope === scope.key} onTitle={title => setTabs(current => current.map(item => item.id === tab.id && !item.launch ? { ...item, title } : item))} />)}
   </div>
 }

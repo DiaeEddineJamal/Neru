@@ -26,9 +26,25 @@ struct TerminalEvent {
     data: String,
 }
 
+/// A program a terminal tab runs instead of the shell, e.g. a Team member's own CLI.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Launch {
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+}
+
+/// Starts a terminal in `cwd` (default: the project), running the shell or `launch`.
 #[tauri::command]
-pub fn terminal_start(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    let root = project_root(&state)?;
+pub fn terminal_start(app: AppHandle, state: State<'_, AppState>, cwd: Option<String>, launch: Option<Launch>) -> Result<String, String> {
+    let root = match cwd.filter(|dir| !dir.trim().is_empty()) {
+        Some(dir) if std::path::Path::new(&dir).is_dir() => std::path::PathBuf::from(dir),
+        Some(dir) => return Err(format!("{dir} is not a folder")),
+        None => project_root(&state)?,
+    };
     let pty = NativePtySystem::default();
     let pair = pty
         .openpty(PtySize {
@@ -43,10 +59,27 @@ pub fn terminal_start(app: AppHandle, state: State<'_, AppState>) -> Result<Stri
     } else {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
     };
-    let mut command = CommandBuilder::new(&shell);
+    let mut command = match &launch {
+        // npm shims (.cmd) need cmd to run them; the tab closes with the program.
+        Some(launch) if cfg!(windows) => {
+            let mut command = CommandBuilder::new("cmd.exe");
+            command.args(["/C", &launch.program]);
+            command.args(&launch.args);
+            command
+        }
+        Some(launch) => {
+            let mut command = CommandBuilder::new(&launch.program);
+            command.args(&launch.args);
+            command
+        }
+        None => CommandBuilder::new(&shell),
+    };
     // Neru draws its own welcome; skip the PowerShell copyright banner.
-    if cfg!(windows) {
+    if cfg!(windows) && launch.is_none() {
         command.arg("-NoLogo");
+    }
+    for (key, value) in launch.iter().flat_map(|launch| launch.env.iter()) {
+        command.env(key, value);
     }
     command.cwd(root);
     // `neru` in this terminal starts the CLI that ships next to the app.

@@ -20,6 +20,14 @@ export function describeError(value: unknown): FriendlyError {
   const text = raw.toLowerCase()
   const withDetail = (error: Omit<FriendlyError, 'detail'>): FriendlyError => ({ ...error, detail: raw === error.title ? '' : raw })
 
+  // OpenCode Zen: "Free tier can only be used from within OpenCode" (HTTP 403). The key is fine.
+  const locked = /http 403|forbidden/.test(text) && /only (be used|available|works) (from within|within|in|with|through) ([^.,;"\n]{1,40})/.exec(raw)
+  if (locked)
+    return withDetail({ title: `This free model only works inside ${locked[3].trim()}.`, hint: 'The provider keeps its free tier to its own app. Pick a paid model this key has credits for, or add a key for another provider so Neru can switch on its own.', action: 'model-settings' })
+  if (has(text, 'http 402', 'payment required', 'insufficient credit', 'insufficient balance', 'insufficient funds', 'insufficient_quota', 'credit balance is too low'))
+    return withDetail({ title: 'This account has no credits for the model.', hint: 'Add credits with the provider, pick a free model, or add a key for another provider so Neru can switch on its own.', action: 'model-settings' })
+  if (has(text, 'http 403') && !has(text, 'api key', 'api_key', 'token', 'authentication', 'unauthenticated', 'expired'))
+    return withDetail({ title: 'This key may not use that model.', hint: 'Pick another model in Settings → Model provider, or check the plan the key belongs to.', action: 'model-settings' })
   if (has(text, 'http 401', 'http 403', 'unauthorized', 'invalid api key', 'incorrect api key', 'invalid_api_key', 'authentication', 'no auth credentials', 'forbidden'))
     return withDetail({ title: 'The provider rejected your API key.', hint: 'Check or replace the key in Settings → Model provider. Keys sometimes expire or lose access to a model.', action: 'model-settings' })
   if (has(text, 'configure an api key', 'configure a provider', 'no model is set up', 'configure a provider in settings'))

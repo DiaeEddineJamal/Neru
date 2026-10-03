@@ -35,7 +35,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 macro_rules! say {
     ($($arg:tt)*) => {{
         let text = format!($($arg)*);
-        if std::io::stdout().is_terminal() { println!("{text}") } else { println!("{}", cli_ui::strip(&text)) }
+        if std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() { println!("{text}") } else { println!("{}", cli_ui::strip(&text)) }
     }};
 }
 
@@ -43,7 +43,7 @@ macro_rules! say {
 macro_rules! esay {
     ($($arg:tt)*) => {{
         let text = format!($($arg)*);
-        if std::io::stderr().is_terminal() { eprintln!("{text}") } else { eprintln!("{}", cli_ui::strip(&text)) }
+        if std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none() { eprintln!("{text}") } else { eprintln!("{}", cli_ui::strip(&text)) }
     }};
 }
 
@@ -77,12 +77,13 @@ struct Options {
     model: Option<String>,
     effort: Option<String>,
     output: Output,
-    append: Option<String>,
     web: bool,
     verbose: bool,
     sub: Option<Sub>,
-    /// --allowedTools / --disallowedTools / --max-turns.
+    /// --allowedTools / --disallowedTools / --max-turns / --fallback-model / --system-prompt / --add-dir.
     run: crate::run_options::RunOptions,
+    /// --session-id: resume the session with this id, or start one with it.
+    session_id: Option<String>,
 }
 
 fn usage() -> String {
@@ -99,22 +100,27 @@ fn usage() -> String {
   neru login                    Connect a model provider (several are free)
   neru logout                   Forget the saved API keys
   neru models [search]          List the models your key can use
-  neru mcp list|get|add|remove  Manage MCP connectors (neru mcp help)
+  neru mcp list|get|add|remove  Manage MCP connectors, as claude mcp does (neru mcp help)
   neru sessions                 List this folder's sessions
   neru doctor                   Check the model, tools and setup
   neru config                   Show where settings live and what is set
   neru update                   Update neru to the latest release
 
 {BOLD}Options{RESET}
-  --mode, --permission-mode <review|plan|edits|auto|bypass>
-                                How much Neru may do without asking (default: review)
+  --permission-mode <default|plan|acceptEdits|auto|bypassPermissions>
+                                How much Neru may do without asking (also --mode review|edits|bypass)
   --dangerously-skip-permissions
                                 Same as --mode bypass
-  --model <name>                Use this model (part of a name is enough)
+  --model <name>                Use this model for this run (part of a name is enough)
+  --fallback-model <names>      Switch to these models first (comma-separated) when the model
+                                is rate limited, out of credits or unavailable
   --effort <low|medium|high>    Reasoning effort, for models that support it
   --output-format <text|json|stream-json>
                                 Print mode output (default: text)
   --append-system-prompt <text> Extra instructions for this run
+  --system-prompt <text>        Use this system prompt instead of Neru's own
+  --add-dir <dir>               Let Neru also read and edit this folder (repeatable)
+  --session-id <uuid>           Resume this session, or start a new one with this id
   --cwd <dir>                   Work in this folder instead of the current one
   --allowedTools <rules>        Tools that run without asking, e.g. \"Bash(npm test:*) Edit\"
   --disallowedTools <rules>     Tools Neru may not use, e.g. \"Bash WebFetch\"
@@ -123,35 +129,78 @@ fn usage() -> String {
   --verbose                     Show timings and extra detail
   -v, --version                 Show the version
   -h, --help                    Show this help
+  Options also take --name=value, and may follow the prompt.
+
+{BOLD}Environment{RESET}
+  NERU_API_KEY                  Connect a model without neru login (CI, scripts); with
+                                NERU_PROVIDER, NERU_MODEL and NERU_BASE_URL. Nothing is saved.
+  NO_COLOR                      Plain output
 
 In a session: / commands · @ mention files · ! run a shell command · # remember something
 shift+tab switches the permission mode · esc interrupts · esc esc rewinds · ? shows shortcuts"
     )
 }
 
-fn value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
-    args.next().ok_or_else(|| format!("{flag} needs a value"))
+/// Why parsing stopped: help or the version (stdout, exit 0), or a mistake (stderr, exit 1).
+#[derive(Debug)]
+enum Stop {
+    Info(String),
+    Usage(String),
 }
 
-fn parse_args(raw: Vec<String>) -> Result<Options, String> {
-    let mut options = Options { prompt: None, print: false, resume_latest: false, resume: None, mode: "manual".into(), model: None, effort: None, output: Output::Text, append: None, web: true, verbose: false, sub: None, run: Default::default() };
-    let mut args = raw.into_iter().peekable();
-    let mut words = Vec::new();
-    while let Some(arg) = args.next() {
-        // After the first word, everything belongs to the prompt or the subcommand.
-        if !words.is_empty() && !arg.starts_with('-') {
+impl From<String> for Stop {
+    fn from(message: String) -> Self {
+        Stop::Usage(message)
+    }
+}
+
+impl From<&str> for Stop {
+    fn from(message: &str) -> Self {
+        Stop::Usage(message.to_string())
+    }
+}
+
+fn value(args: &mut std::collections::VecDeque<String>, flag: &str) -> Result<String, String> {
+    args.pop_front().ok_or_else(|| format!("{flag} needs a value"))
+}
+
+/// Subcommands that take their own flags, such as `neru mcp add x --transport http …`.
+const RAW_SUBCOMMANDS: [&str; 1] = ["mcp"];
+
+fn parse_args(raw: Vec<String>) -> Result<Options, Stop> {
+    let mut options = Options { prompt: None, print: false, resume_latest: false, resume: None, mode: "manual".into(), model: None, effort: None, output: Output::Text, web: true, verbose: false, sub: None, run: Default::default(), session_id: None };
+    let mut args: std::collections::VecDeque<String> = raw.into();
+    let mut words: Vec<String> = Vec::new();
+    while let Some(mut arg) = args.pop_front() {
+        if words.first().is_some_and(|first| RAW_SUBCOMMANDS.contains(&first.as_str())) {
             words.push(arg);
             continue;
         }
+        // Options may come anywhere, as in Claude Code; after `--`, everything is the prompt.
+        if arg == "--" {
+            words.extend(args.drain(..));
+            break;
+        }
+        if !arg.starts_with('-') || arg.len() == 1 {
+            words.push(arg);
+            continue;
+        }
+        // --flag=value is the same as --flag value.
+        if arg.starts_with("--") {
+            if let Some((flag, rest)) = arg.clone().split_once('=') {
+                args.push_front(rest.to_string());
+                arg = flag.to_string();
+            }
+        }
         match arg.as_str() {
-            "-h" | "--help" => return Err(usage()),
-            "-v" | "--version" => return Err(format!("neru {VERSION}")),
+            "-h" | "--help" => return Err(Stop::Info(usage())),
+            "-v" | "--version" => return Err(Stop::Info(format!("{VERSION} (Neru)"))),
             "-p" | "--print" => options.print = true,
             "-c" | "--continue" => options.resume_latest = true,
             "-r" | "--resume" => {
-                let search = args.peek().filter(|next| !next.starts_with('-')).cloned();
+                let search = args.front().filter(|next| !next.starts_with('-')).cloned();
                 if search.is_some() {
-                    args.next();
+                    args.pop_front();
                 }
                 options.resume = Some(search);
             }
@@ -164,7 +213,7 @@ fn parse_args(raw: Vec<String>) -> Result<Options, String> {
             "--effort" => {
                 let effort = value(&mut args, &arg)?.to_lowercase();
                 if !matches!(effort.as_str(), "low" | "medium" | "high") {
-                    return Err("--effort is low, medium or high".into());
+                    return Err(Stop::Usage("--effort is low, medium or high".into()));
                 }
                 options.effort = Some(effort);
             }
@@ -173,10 +222,20 @@ fn parse_args(raw: Vec<String>) -> Result<Options, String> {
                     "text" => Output::Text,
                     "json" => Output::Json,
                     "stream-json" => Output::StreamJson,
-                    _ => return Err("--output-format is text, json or stream-json".into()),
+                    _ => return Err(Stop::Usage("--output-format is text, json or stream-json".into())),
                 };
             }
-            "--append-system-prompt" => options.append = Some(value(&mut args, &arg)?),
+            "--append-system-prompt" => options.run.append_system_prompt = Some(value(&mut args, &arg)?),
+            "--system-prompt" => options.run.system_prompt = Some(value(&mut args, &arg)?),
+            "--session-id" => options.session_id = Some(value(&mut args, &arg)?),
+            "--add-dir" => {
+                let dir = value(&mut args, &arg)?;
+                let path = std::path::Path::new(&dir).canonicalize().map_err(|e| format!("--add-dir {dir}: {e}"))?;
+                if !path.is_dir() {
+                    return Err(format!("--add-dir {dir} is not a folder").into());
+                }
+                options.run.add_dirs.push(path);
+            }
             "--cwd" => {
                 let dir = value(&mut args, &arg)?;
                 std::env::set_current_dir(&dir).map_err(|e| format!("Could not open {dir}: {e}"))?;
@@ -184,10 +243,10 @@ fn parse_args(raw: Vec<String>) -> Result<Options, String> {
             "--no-web" => options.web = false,
             "--allowedTools" | "--allowed-tools" => options.run.allow.extend(crate::run_options::split_rules(&value(&mut args, &arg)?)),
             "--disallowedTools" | "--disallowed-tools" => options.run.deny.extend(crate::run_options::split_rules(&value(&mut args, &arg)?)),
-            "--max-turns" => options.run.max_rounds = Some(value(&mut args, &arg)?.parse().map_err(|_| "--max-turns needs a number")?),
+            "--max-turns" => options.run.max_rounds = Some(value(&mut args, &arg)?.parse().ok().filter(|turns: &usize| *turns > 0).ok_or("--max-turns needs a number of 1 or more")?),
+            "--fallback-model" => options.run.fallback_models.extend(value(&mut args, &arg)?.split(',').map(str::trim).filter(|model| !model.is_empty()).map(str::to_string)),
             "--verbose" | "--debug" => options.verbose = true,
-            other if other.starts_with('-') && other.len() > 1 && words.is_empty() => return Err(format!("Unknown option {other}\n\n{}", usage())),
-            other => words.push(other.to_string()),
+            other => return Err(Stop::Usage(format!("error: unknown option '{other}'\nRun neru --help for the options."))),
         }
     }
     // `neru update` is a command; `neru update the readme` is a request.
@@ -211,6 +270,23 @@ fn parse_args(raw: Vec<String>) -> Result<Options, String> {
         unsafe { std::env::set_var("NERU_DEBUG", "1") };
     }
     Ok(options)
+}
+
+/// Writes one JSON line and flushes, for --output-format json and stream-json.
+fn emit_json(out: &mut std::io::Stdout, value: Value) {
+    let _ = writeln!(out, "{value}");
+    let _ = out.flush();
+}
+
+/// Claude Code's names for the permission modes, used in machine-readable output.
+fn claude_mode(id: &str) -> &'static str {
+    match id {
+        "plan" => "plan",
+        "accept_edits" => "acceptEdits",
+        "auto" => "auto",
+        "bypass" => "bypassPermissions",
+        _ => "default",
+    }
 }
 
 fn mode_id(name: &str) -> Option<&'static str> {
@@ -249,18 +325,37 @@ fn mode_badge(id: &str) -> String {
 pub fn run() {
     let options = match parse_args(std::env::args().skip(1).collect()) {
         Ok(options) => options,
-        Err(message) => {
-            say!("{message}");
+        Err(Stop::Info(text)) => {
+            say!("{text}");
             return;
         }
+        Err(Stop::Usage(message)) => {
+            esay!("{message}");
+            std::process::exit(1);
+        }
     };
-    // A self-update on Windows leaves the previous executable beside the new one.
+    // A self-update on Windows leaves the previous executable beside the new one (neru.exe.old
+    // from install.ps1, neru.old from neru update).
     if let Ok(exe) = std::env::current_exe() {
         let _ = std::fs::remove_file(exe.with_extension("old"));
+        let _ = std::fs::remove_file(exe.with_extension("exe.old"));
     }
     // Updating needs no project, settings or window.
     if matches!(options.sub, Some(Sub::Update)) {
         std::process::exit(update::run());
+    }
+    // The core starts GTK, which needs a display. Over SSH, in CI or in a container there is none,
+    // so run again inside a virtual one (Xvfb), which needs no setup beyond installing it.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("NERU_XVFB").is_none() {
+        let exe = std::env::current_exe().unwrap_or_else(|_| "neru".into());
+        match std::process::Command::new("xvfb-run").arg("-a").arg(exe).args(std::env::args().skip(1)).env("NERU_XVFB", "1").status() {
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+            Err(_) => {
+                esay!("neru needs a display on Linux, and this terminal has none (SSH, CI or a container). Install Xvfb and neru uses it by itself:\n  sudo apt install xvfb                    (Debian, Ubuntu)\n  sudo dnf install xorg-x11-server-Xvfb    (Fedora, RHEL)");
+                std::process::exit(1);
+            }
+        }
     }
     let mut context = crate::context();
     // No window: the terminal is the interface.
@@ -277,7 +372,13 @@ pub fn run() {
     })
     .build(context);
     match app {
-        Ok(app) => app.run(|_, _| {}),
+        #[allow(unused_mut)]
+        Ok(mut app) => {
+            // A terminal program: no Dock icon or menu bar on macOS.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Prohibited);
+            app.run(|_, _| {})
+        }
         Err(error) => {
             eprintln!("Neru could not start: {error}");
             if cfg!(target_os = "linux") {
@@ -285,6 +386,31 @@ pub fn run() {
             }
         }
     }
+}
+
+/// Ctrl-C when the terminal is not in raw mode (print mode, a command running after approval,
+/// /compact): stops the reply if one is running, as Claude Code does; otherwise, or pressed again,
+/// leaves cleanly, with the session's background commands stopped and its end hooks run.
+fn interrupt_on_ctrl_c(app: &tauri::AppHandle, session: &str) {
+    let (app, session) = (app.clone(), session.to_string());
+    tauri::async_runtime::spawn(async move {
+        let mut stopped: Option<Instant> = None;
+        while tokio::signal::ctrl_c().await.is_ok() {
+            let running = sessions::runtime(&app.state(), &session).ok().and_then(|shared| sessions::lock(&shared).ok().map(|runtime| runtime.running)).unwrap_or(false);
+            if running && stopped.is_none_or(|at| at.elapsed() > Duration::from_secs(2)) {
+                let _ = agent::stop_chat(Some(session.clone()), app.state());
+                stopped = Some(Instant::now());
+                continue;
+            }
+            let _ = terminal::disable_raw_mode();
+            let _ = crossterm::execute!(std::io::stdout(), event::DisableBracketedPaste);
+            crate::shells::kill_session(&session);
+            if let Ok(root) = workspace::project_root(&app.state()) {
+                crate::hooks::session_end(&root, &session, "interrupt");
+            }
+            std::process::exit(130);
+        }
+    });
 }
 
 // ---------- shared state for one CLI session ----------
@@ -299,7 +425,6 @@ struct Cli<'a> {
     /// The mode was bypass at start, so shift+tab may cycle back to it.
     bypass_allowed: bool,
     effort: Option<String>,
-    append: Option<String>,
     /// Shell commands run with `!` since the last request: sent along with the next one.
     shell_notes: Vec<String>,
     web: bool,
@@ -317,13 +442,13 @@ fn session(app: &tauri::AppHandle, options: Options) -> i32 {
     let interactive = !options.print && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let cwd = std::env::current_dir().map(|dir| dir.display().to_string()).unwrap_or_default();
     if let Err(error) = workspace::open_project(cwd.clone(), app.state()) {
-        eprintln!("{RED}Could not open {cwd}: {error}{RESET}");
+        esay!("{RED}Could not open {cwd}: {error}{RESET}");
         return 1;
     }
     if let Some(sub) = &options.sub {
         return subcommand(app, sub);
     }
-    crate::run_options::set(options.run.clone());
+    crate::run_options::set(crate::run_options::RunOptions { keep_saved_model: true, ..options.run.clone() });
     let (sender, events) = mpsc::channel();
     app.listen("agent://event", move |event| {
         if let Ok(value) = serde_json::from_str::<Value>(event.payload()) {
@@ -332,9 +457,13 @@ fn session(app: &tauri::AppHandle, options: Options) -> i32 {
     });
     tauri::async_runtime::spawn(crate::mcp::start_enabled(app.clone()));
 
+    if let Err(error) = provider_from_env(app) {
+        esay!("{RED}{error}{RESET}");
+        return 1;
+    }
     if let Some(model) = &options.model {
         if let Err(error) = switch_model(app, model) {
-            eprintln!("{RED}{error}{RESET}");
+            esay!("{RED}{error}{RESET}");
             return 1;
         }
     }
@@ -350,7 +479,6 @@ fn session(app: &tauri::AppHandle, options: Options) -> i32 {
         mode: options.mode.clone(),
         bypass_allowed: options.mode == "bypass",
         effort: options.effort.clone(),
-        append: options.append.clone(),
         shell_notes: Vec::new(),
         web: options.web,
         commands: commands::list_commands(app.state()),
@@ -360,21 +488,42 @@ fn session(app: &tauri::AppHandle, options: Options) -> i32 {
         output: options.output,
     };
     let opened = match (chosen, &options.resume) {
+        _ if options.session_id.is_some() => {
+            let id = options.session_id.clone().unwrap_or_default();
+            if earlier.iter().any(|item| item.id == id) {
+                sessions::select_session(id, app.state())
+            } else {
+                workspace::project_root(&app.state()).and_then(|root| sessions::create_with_id(&app.state(), &root, false, id))
+            }
+        }
         (Some(id), _) => sessions::select_session(id, app.state()),
         (None, Some(Some(search))) if earlier.iter().any(|item| item.id == *search) => sessions::select_session(search.clone(), app.state()),
         (None, Some(search)) if interactive => match cli.choose_session(search.as_deref()) {
             Some(id) => sessions::select_session(id, app.state()),
             None => sessions::create_session(Some(false), app.state()),
         },
+        (None, Some(search)) => {
+            let terms = search.as_deref().unwrap_or("").to_lowercase();
+            let mut found: Vec<&sessions::SessionSummary> = earlier.iter().filter(|item| !item.title.trim().is_empty() && (terms.is_empty() || item.title.to_lowercase().contains(&terms) || item.id.starts_with(&terms))).collect();
+            found.sort_by_key(|item| std::cmp::Reverse(item.updated_at));
+            match found.first() {
+                Some(item) => sessions::select_session(item.id.clone(), app.state()),
+                None => {
+                    esay!("No conversation found to resume{}.", search.as_deref().map(|search| format!(" matching “{search}”")).unwrap_or_default());
+                    return 1;
+                }
+            }
+        }
         _ => sessions::create_session(Some(false), app.state()),
     };
     match opened {
         Ok(snapshot) => cli.session = snapshot.session.id.clone(),
         Err(error) => {
-            eprintln!("{RED}Could not start a session: {error}{RESET}");
+            esay!("{RED}Could not start a session: {error}{RESET}");
             return 1;
         }
     }
+    interrupt_on_ctrl_c(app, &cli.session);
 
     if !interactive {
         let mut prompt = options.prompt.clone().unwrap_or_default();
@@ -401,7 +550,7 @@ fn session(app: &tauri::AppHandle, options: Options) -> i32 {
     if let Ok(snapshot) = sessions::session_snapshot(cli.session.clone(), app.state()) {
         if !snapshot.messages.is_empty() {
             cli.screen.print(&format!(" {DIM}Resumed “{}” ({} messages){RESET}\n", snapshot.session.title, snapshot.messages.len()));
-            for entry in snapshot.messages.iter().rev().take(2).collect::<Vec<_>>().into_iter().rev() {
+            for entry in snapshot.messages.iter().filter(|entry| entry.role != "note").rev().take(2).collect::<Vec<_>>().into_iter().rev() {
                 let who = if entry.role == "user" { format!("{DIM}❯{RESET}") } else { format!("{CREAM}⏺{RESET}") };
                 let first = entry.content.lines().next().unwrap_or("");
                 cli.screen.print(&format!(" {who} {DIM}{}{RESET}", first.chars().take(cli_ui::width() - 6).collect::<String>()));
@@ -412,6 +561,21 @@ fn session(app: &tauri::AppHandle, options: Options) -> i32 {
     cli.ask_trust();
     if !configured(app) {
         cli.screen.print(&format!(" {YELLOW}⚠{RESET} No model is connected yet. Run {CYAN}/login{RESET} to pick a provider (several are free).\n"));
+    } else if let Ok(config) = app.state::<AppState>().provider.lock().map(|config| config.clone()) {
+        // A check from the last day answers at once; otherwise one runs in the background for next
+        // time, and a failure in this session switches models with a notice.
+        match crate::models::cached_health(&config) {
+            Some(health) if health.status == "unavailable" => cli.screen.print(&format!(
+                " {YELLOW}⚠{RESET} {} does not work with this key: {}.\n   {DIM}Neru will switch to another model when it fails; pick one yourself with{RESET} /model{DIM}.{RESET}\n",
+                config.model, health.reason
+            )),
+            Some(_) => {}
+            None => {
+                tauri::async_runtime::spawn(async move {
+                    crate::models::health(&config, false).await;
+                });
+            }
+        }
     }
     if let Some(prompt) = options.prompt.clone() {
         cli.screen.print(&format!("{DIM}❯{RESET} {prompt}\n"));
@@ -491,6 +655,8 @@ fn save_history(history: &[String]) {
     }
 }
 
+/// Uses `wanted` (or the model whose id contains it). For --model it lasts this run, as in Claude
+/// Code; /model also makes it the default, as choosing a model in the app does.
 fn switch_model(app: &tauri::AppHandle, wanted: &str) -> Result<String, String> {
     let view = agent::provider_status(app.state())?;
     let config = app.state::<AppState>().provider.lock().map_err(|e| e.to_string())?.clone();
@@ -500,11 +666,41 @@ fn switch_model(app: &tauri::AppHandle, wanted: &str) -> Result<String, String> 
         .iter()
         .find(|model| model.eq_ignore_ascii_case(wanted))
         .or_else(|| models.iter().find(|model| terms.iter().all(|term| model.to_lowercase().contains(term))))
-        .cloned()
-        .unwrap_or_else(|| wanted.to_string());
+        .cloned();
+    if chosen.is_none() && !models.is_empty() {
+        esay!("{YELLOW}warning:{RESET} {} does not list a model called “{wanted}”; trying it anyway. See neru models.", view.provider_id);
+    }
+    let chosen = chosen.unwrap_or_else(|| wanted.to_string());
     let format = login::format_for(&config.provider_id, &chosen, &config.base_url, &config.api_format);
     agent::configure_provider(config.provider_id, format, config.base_url, String::new(), chosen.clone(), app.state())?;
     Ok(chosen)
+}
+
+/// NERU_API_KEY, with NERU_PROVIDER, NERU_BASE_URL and NERU_MODEL, connects a model for this run
+/// without `neru login`, for CI and scripts, the way ANTHROPIC_API_KEY works for Claude Code.
+/// Nothing is saved.
+fn provider_from_env(app: &tauri::AppHandle) -> Result<(), String> {
+    let Some(key) = std::env::var("NERU_API_KEY").ok().filter(|key| !key.trim().is_empty()) else { return Ok(()) };
+    let var = |name: &str| std::env::var(name).ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+    let mut config = app.state::<AppState>().provider.lock().map_err(|e| e.to_string())?.clone();
+    let provider_id = var("NERU_PROVIDER").or_else(|| (!config.provider_id.is_empty()).then(|| config.provider_id.clone())).ok_or("NERU_API_KEY is set: also set NERU_PROVIDER (for example groq, openrouter or openai). neru login lists them.")?;
+    let preset = login::PRESETS.iter().find(|preset| preset.id == provider_id);
+    let same = provider_id == config.provider_id;
+    let base_url = var("NERU_BASE_URL").or_else(|| preset.map(|preset| preset.base_url.to_string())).or_else(|| same.then(|| config.base_url.clone())).ok_or(format!("Unknown provider {provider_id}: set NERU_BASE_URL to its OpenAI-compatible endpoint."))?;
+    let model = var("NERU_MODEL").or_else(|| (same && !config.model.is_empty()).then(|| config.model.clone())).or_else(|| preset.map(|preset| preset.model.to_string())).unwrap_or_default();
+    config.api_format = login::format_for(&provider_id, &model, &base_url, &config.api_format);
+    config.provider_id = provider_id;
+    config.base_url = base_url;
+    config.model = model;
+    config.api_key = key.trim().to_string();
+    *app.state::<AppState>().provider.lock().map_err(|e| e.to_string())? = config;
+    Ok(())
+}
+
+/// /model: the choice becomes the default, like picking a model in the app.
+fn choose_model(app: &tauri::AppHandle, wanted: &str) -> Result<String, String> {
+    crate::run_options::update(|run| run.keep_saved_model = false);
+    switch_model(app, wanted)
 }
 
 /// How long ago a session was updated; its timestamps are milliseconds since 1970.
@@ -682,13 +878,107 @@ fn print_checks(checks: &[crate::extras::Check]) {
 }
 
 const MCP_HELP: &str = "Usage:
-  neru mcp list                              Connectors and their status
-  neru mcp get <name>                        One connector's settings and tools
-  neru mcp add <name> -- <command> [args…]   A local server started with a command
-  neru mcp add <name> --url <https://…>      A hosted (Streamable HTTP) server
-      -e KEY=value                           Environment variable (repeatable)
-      -H \"Header: value\"                     Request header for hosted servers (repeatable)
-  neru mcp remove <name>                     Remove a connector";
+  neru mcp list                                  Connectors and their status
+  neru mcp get <name>                            One connector's settings and tools
+  neru mcp add [options] <name> <command> [args…] A local server started with a command
+  neru mcp add [options] <name> -- <command> [args…]
+  neru mcp add --transport http <name> <url>     A hosted (Streamable HTTP) server
+  neru mcp add-json <name> '<json>'              From JSON, as in .mcp.json
+  neru mcp remove <name>                         Remove a connector
+
+Options:
+  -t, --transport <stdio|http>   How Neru talks to it (default: stdio, or http for a URL)
+  -s, --scope <user|project>     user: every project (default); project: this project's .mcp.json
+  -e, --env KEY=value            Environment variable (repeatable)
+  -H, --header \"Name: value\"     Request header for hosted servers (repeatable)";
+
+fn take(rest: &mut impl Iterator<Item = String>, inline: &Option<String>, name: &str) -> Result<String, String> {
+    inline.clone().or_else(|| rest.next()).ok_or(format!("{name} needs a value"))
+}
+
+/// Reads `neru mcp add`'s arguments the way `claude mcp add` takes them. Returns the server and
+/// whether it goes in the project's .mcp.json.
+fn mcp_add_args(args: &[String]) -> Result<(crate::mcp::ServerConfig, bool), String> {
+    let mut server = crate::mcp::ServerConfig { name: String::new(), command: String::new(), url: None, headers: HashMap::new(), args: Vec::new(), env: HashMap::new(), enabled: true };
+    let mut transport = None;
+    let mut project = false;
+    let mut positional: Vec<String> = Vec::new();
+    let mut rest = args.iter().cloned();
+    while let Some(arg) = rest.next() {
+        // After the name and a command, everything belongs to the command (its own flags too);
+        // after a URL, options still follow (claude mcp add --transport http x <url> --header …).
+        if positional.len() >= 2 && !positional[1].starts_with("http") {
+            positional.push(arg);
+            continue;
+        }
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if arg.starts_with("--") => (flag.to_string(), Some(value.to_string())),
+            _ => (arg.clone(), None),
+        };
+        match flag.as_str() {
+            "-t" | "--transport" => transport = Some(take(&mut rest, &inline, "--transport")?.to_lowercase()),
+            "-s" | "--scope" => {
+                project = match take(&mut rest, &inline, "--scope")?.to_lowercase().as_str() {
+                    "project" => true,
+                    // Neru's saved connectors serve every project, so local and user are the same.
+                    "user" | "local" => false,
+                    other => return Err(format!("Unknown scope {other}: use user or project")),
+                }
+            }
+            "-e" | "--env" => {
+                let pair = take(&mut rest, &inline, "--env")?;
+                let (key, value) = pair.split_once('=').ok_or(format!("--env takes KEY=value, not {pair}"))?;
+                server.env.insert(key.to_string(), value.to_string());
+            }
+            "-H" | "--header" => {
+                let pair = take(&mut rest, &inline, "--header")?;
+                let (key, value) = pair.split_once(':').ok_or(format!("--header takes \"Name: value\", not {pair}"))?;
+                server.headers.insert(key.trim().to_string(), value.trim().to_string());
+            }
+            "--url" => {
+                server.url = Some(take(&mut rest, &inline, "--url")?);
+                transport.get_or_insert_with(|| "http".into());
+            }
+            "--" => positional.extend(rest.by_ref()),
+            other if other.starts_with('-') && positional.is_empty() => return Err(format!("Unknown option {other}")),
+            _ => positional.push(arg),
+        }
+    }
+    let mut positional = positional.into_iter();
+    server.name = positional.next().ok_or("Give the connector a name")?;
+    let target: Vec<String> = positional.collect();
+    let transport = transport.unwrap_or_else(|| if server.url.is_some() || target.first().is_some_and(|first| first.starts_with("http://") || first.starts_with("https://")) { "http".into() } else { "stdio".into() });
+    match transport.as_str() {
+        "http" => {
+            if server.url.is_none() {
+                server.url = Some(target.first().cloned().ok_or("Give the server's URL")?);
+            }
+        }
+        "stdio" => {
+            let mut target = target.into_iter();
+            server.command = target.next().ok_or("Give the command that starts the server")?;
+            server.args = target.collect();
+        }
+        "sse" => return Err("Neru speaks Streamable HTTP, not the older SSE transport. Most servers offer it at /mcp: use --transport http.".into()),
+        other => return Err(format!("Unknown transport {other}: use stdio or http")),
+    }
+    Ok((server, project))
+}
+
+/// Adds a connector to the project's .mcp.json, the file Claude Code reads too.
+fn add_to_project(app: &tauri::AppHandle, server: &crate::mcp::ServerConfig) -> Result<std::path::PathBuf, String> {
+    let file = workspace::project_root(&app.state())?.join(".mcp.json");
+    let mut config: Value = std::fs::read_to_string(&file).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_else(|| json!({}));
+    if !config["mcpServers"].is_object() {
+        config["mcpServers"] = json!({});
+    }
+    config["mcpServers"][&server.name] = match &server.url {
+        Some(url) => json!({"type": "http", "url": url, "headers": server.headers}),
+        None => json!({"command": server.command, "args": server.args, "env": server.env}),
+    };
+    std::fs::write(&file, serde_json::to_string_pretty(&config).map_err(|e| e.to_string())? + "\n").map_err(|e| format!("Could not write {}: {e}", file.display()))?;
+    Ok(file)
+}
 
 fn mcp(app: &tauri::AppHandle, args: &[String]) -> i32 {
     let print_view = |view: &crate::mcp::ServerView, full: bool| {
@@ -740,38 +1030,45 @@ fn mcp(app: &tauri::AppHandle, args: &[String]) -> i32 {
                 }
             }
         }
-        Some("add") => {
-            let Some(name) = args.get(1).cloned() else {
-                esay!("{MCP_HELP}");
-                return 2;
-            };
-            let mut server = crate::mcp::ServerConfig { name, command: String::new(), url: None, headers: HashMap::new(), args: Vec::new(), env: HashMap::new(), enabled: true };
-            let mut rest = args[2..].iter();
-            while let Some(arg) = rest.next() {
-                match arg.as_str() {
-                    "--url" | "--transport-url" => server.url = rest.next().cloned(),
-                    "-e" | "--env" => {
-                        if let Some((key, value)) = rest.next().and_then(|pair| pair.split_once('=')) {
-                            server.env.insert(key.to_string(), value.to_string());
-                        }
-                    }
-                    "-H" | "--header" => {
-                        if let Some((key, value)) = rest.next().and_then(|pair| pair.split_once(':')) {
-                            server.headers.insert(key.trim().to_string(), value.trim().to_string());
-                        }
-                    }
-                    "--" => {
-                        let mut command = rest.by_ref().cloned();
-                        server.command = command.next().unwrap_or_default();
-                        server.args = command.collect();
-                    }
-                    other if server.command.is_empty() && server.url.is_none() && (other.starts_with("http://") || other.starts_with("https://")) => server.url = Some(other.to_string()),
-                    other if server.command.is_empty() && server.url.is_none() => {
-                        server.command = other.to_string();
-                        server.args = rest.by_ref().cloned().collect();
-                    }
-                    _ => {}
+        Some(verb @ ("add" | "add-json")) => {
+            let parsed = if verb == "add" {
+                mcp_add_args(&args[1..])
+            } else {
+                match (args.get(1), args.get(2)) {
+                    (Some(name), Some(text)) => serde_json::from_str::<Value>(text).map_err(|e| format!("That is not valid JSON: {e}")).and_then(|config| {
+                        let strings = |value: &Value| value.as_object().map(|map| map.iter().map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_string())).collect()).unwrap_or_default();
+                        let server = crate::mcp::ServerConfig {
+                            name: name.clone(),
+                            command: config["command"].as_str().unwrap_or_default().to_string(),
+                            url: config["url"].as_str().map(str::to_string),
+                            headers: strings(&config["headers"]),
+                            args: config["args"].as_array().map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+                            env: strings(&config["env"]),
+                            enabled: true,
+                        };
+                        if server.command.is_empty() && server.url.is_none() { Err("The JSON needs a \"command\" or a \"url\".".to_string()) } else { Ok((server, args.iter().any(|arg| arg == "--scope=project") || args.windows(2).any(|pair| matches!(pair[0].as_str(), "-s" | "--scope") && pair[1] == "project"))) }
+                    }),
+                    _ => Err("Usage: neru mcp add-json <name> '<json>'".into()),
                 }
+            };
+            let (server, project) = match parsed {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    esay!("{RED}✗{RESET} {error}\n\n{MCP_HELP}");
+                    return 2;
+                }
+            };
+            if project {
+                return match add_to_project(app, &server) {
+                    Ok(file) => {
+                        say!("{GREEN}✓{RESET} Added {BOLD}{}{RESET} to {}. It starts once you trust this project.", server.name, workspace::shown(&file));
+                        0
+                    }
+                    Err(error) => {
+                        esay!("{RED}✗{RESET} {error}");
+                        1
+                    }
+                };
             }
             match tauri::async_runtime::block_on(crate::mcp::mcp_save_server(server.clone(), None, app.clone())) {
                 Ok(views) => {
@@ -792,6 +1089,10 @@ fn mcp(app: &tauri::AppHandle, args: &[String]) -> i32 {
                 esay!("{MCP_HELP}");
                 return 2;
             };
+            if !crate::mcp::mcp_servers(app.clone()).iter().any(|view| &view.config.name == name) {
+                esay!("There is no connector named {name}. See neru mcp list.");
+                return 1;
+            }
             match crate::mcp::mcp_remove_server(name.clone(), app.clone()) {
                 Ok(_) => {
                     say!("{GREEN}✓{RESET} Removed {name}.");
@@ -803,9 +1104,13 @@ fn mcp(app: &tauri::AppHandle, args: &[String]) -> i32 {
                 }
             }
         }
-        _ => {
+        Some("help" | "--help" | "-h") => {
             say!("{MCP_HELP}");
             0
+        }
+        Some(other) => {
+            esay!("Unknown command neru mcp {other}.\n\n{MCP_HELP}");
+            2
         }
     }
 }
@@ -883,7 +1188,25 @@ impl<'a> Cli<'a> {
             _ if !model.is_empty() => format!("{DIM}{model}{RESET}"),
             _ => String::new(),
         };
+        let right = self.custom_status(&model).unwrap_or(right);
         cli_ui::Prompt { hint, left: mode_badge(&self.mode), right }
+    }
+
+    /// The first line of the user's status-line command (styles.rs), given the session as JSON.
+    fn custom_status(&self, model: &str) -> Option<String> {
+        let root = workspace::project_root(&self.state()).ok()?;
+        let command = crate::styles::status_command(&root)?;
+        let input = json!({
+            "session_id": self.session,
+            "cwd": self.cwd(),
+            "model": {"id": model, "display_name": model},
+            "workspace": {"current_dir": self.cwd(), "project_dir": root.display().to_string()},
+            "permission_mode": self.mode,
+            "output_style": {"name": crate::styles::current(&root).name},
+            "version": VERSION,
+            "context": self.context.as_ref().map(|usage| json!({"used": usage.used, "limit": usage.limit})),
+        });
+        crate::styles::run_status_line(&root, &command, &input).map(|line| format!("{DIM}{line}{RESET}"))
     }
 
     /// A project's own .mcp.json servers and settings hooks run only once its folder is trusted.
@@ -1058,10 +1381,7 @@ impl<'a> Cli<'a> {
     }
 
     fn notes(&mut self) -> Option<String> {
-        let mut parts: Vec<String> = self.shell_notes.drain(..).collect();
-        if let Some(append) = &self.append {
-            parts.insert(0, format!("(Instructions for this session: {append})"));
-        }
+        let parts: Vec<String> = self.shell_notes.drain(..).collect();
         (!parts.is_empty()).then(|| parts.join("\n\n"))
     }
 
@@ -1290,6 +1610,15 @@ impl<'a> Cli<'a> {
             "provider" => {
                 self.screen.print(&format!("  {FAINT}⎿{RESET}  {DIM}Now using {} on {}{RESET}", event["model"].as_str().unwrap_or(""), event["providerId"].as_str().unwrap_or("")));
             }
+            "subagent" => {
+                if let Some(request) = event["approval"]["requestId"].as_str() {
+                    self.flush_text(live);
+                    live.started_block = false;
+                    let approve = self.approve_subagent(event["description"].as_str().unwrap_or("A sub-agent"), &event["approval"]);
+                    let _ = crate::subagent::answer_subagent_approval(request.to_string(), approve);
+                    self.screen.print(&if approve { format!("{GREEN}⏺{RESET} {DIM}Allowed{RESET}") } else { format!("{RED}⏺{RESET} {DIM}Declined{RESET}") });
+                }
+            }
             "context" => {
                 if let Ok(usage) = agent::session_context(self.session.clone(), self.state()) {
                     self.context = Some(usage);
@@ -1300,6 +1629,31 @@ impl<'a> Cli<'a> {
     }
 
     // ---------- approvals ----------
+
+    /// A sub-agent's edit or command, asked while the turn keeps running.
+    fn approve_subagent(&mut self, agent: &str, approval: &Value) -> bool {
+        let label = approval["label"].as_str().unwrap_or("");
+        let (title, body) = match approval["kind"].as_str().unwrap_or("") {
+            "task" => (format!("{agent} wants to run a command"), format!("   {CYAN}{label}{RESET}")),
+            "delete" => (format!("{agent} wants to delete {label}"), cli_ui::diff(approval["diff"].as_str().unwrap_or(""), 20)),
+            "move" => (format!("{agent} wants to move {label}"), String::new()),
+            "mkdir" => (format!("{agent} wants to create folder {label}"), String::new()),
+            _ => (format!("{agent} wants to edit {label}"), cli_ui::diff(approval["diff"].as_str().unwrap_or(""), 60)),
+        };
+        let _ = terminal::disable_raw_mode();
+        let width = cli_ui::width().saturating_sub(2);
+        self.screen.clear();
+        self.screen.print(&format!("{YELLOW}╭{}╮{RESET}", "─".repeat(width)));
+        self.screen.print(&format!("{YELLOW}│{RESET} {BOLD}{title}{RESET}"));
+        if !body.is_empty() {
+            self.screen.print(&body);
+        }
+        self.screen.print(&format!("{YELLOW}╰{}╯{RESET}", "─".repeat(width)));
+        let options = vec![("Yes".to_string(), String::new()), ("No".to_string(), "esc".to_string())];
+        let choice = cli_ui::pick(&mut self.screen, "Allow the sub-agent to do this?", &options, Some(0));
+        let _ = terminal::enable_raw_mode();
+        choice == Some(0)
+    }
 
     fn approve(&mut self, pending: &agent::PendingView) -> Approval {
         match pending.kind.as_str() {
@@ -1495,10 +1849,94 @@ impl<'a> Cli<'a> {
 
     // ---------- print mode ----------
 
+    /// `neru -p`: answers once and exits, as `claude -p` does. A call that needs approval is
+    /// refused (no one can answer) and the model carries on; the refusals are reported at the end.
     fn print_mode(&mut self, prompt: &str) -> i32 {
+        // /init, /review and the project's own commands work here too.
+        let mut prompt = prompt.to_string();
+        if let Some(name) = prompt.strip_prefix('/').and_then(|rest| rest.split_whitespace().next()).map(str::to_string) {
+            if matches!(name.as_str(), "init" | "review" | "security-review") || self.commands.iter().any(|command| command.name == name) {
+                if let Flow::Send(expanded) = self.command(prompt.trim()) {
+                    prompt = expanded;
+                }
+            }
+        }
+        let started = Instant::now();
+        let model = self.state().provider.lock().map(|config| config.model.clone()).unwrap_or_default();
+        let mut out = std::io::stdout();
+        if self.output == Output::StreamJson {
+            let tools: Vec<&str> = Vec::new();
+            emit_json(&mut out, json!({"type": "system", "subtype": "init", "session_id": self.session, "model": model, "cwd": self.cwd(), "permission_mode": claude_mode(&self.mode), "tools": tools, "version": VERSION}));
+        }
+        let mut denials = Vec::new();
+        let mut turns = 0;
+        let mut printed = String::new();
+        let mut tools = Vec::new();
+        let result = loop {
+            let (outcome, rounds) = self.print_round(&prompt, &mut printed, &mut tools);
+            turns += rounds;
+            match outcome {
+                Ok(response) if response.pending.is_some() && denials.len() < 20 => {
+                    let Some(pending) = response.pending else { continue };
+                    let _ = workspace::deny_pending(&self.state(), "Permission denied: neru -p cannot ask for approval, so this call did not run. Carry on without it, or tell the user how to allow it (--permission-mode acceptEdits or bypassPermissions, or --allowedTools).");
+                    if self.output == Output::Text {
+                        esay!("{YELLOW}✗{RESET} Not allowed without asking: {}", pending.label);
+                    }
+                    denials.push(json!({"tool_name": pending.kind, "label": pending.label}));
+                    prompt = String::new();
+                }
+                other => break other,
+            }
+        };
+        let duration = started.elapsed().as_millis() as u64;
+        let (content, context, error) = match &result {
+            Ok(response) => (response.content.clone(), serde_json::to_value(&response.context).unwrap_or(Value::Null), None),
+            Err(error) => (String::new(), Value::Null, Some(cli_ui::strip(&friendly(error)))),
+        };
+        if result.as_ref().is_ok_and(|response| response.pending.is_some()) {
+            let _ = workspace::reject_pending(self.state());
+        }
+        // The agent pauses at the round limit (--max-turns) and says so at the end of its reply.
+        let max_turns = error.is_none() && content.trim_end().trim_end_matches('*').ends_with("tool rounds. Say “continue” to keep going.");
+        let code = if error.is_some() || max_turns { 1 } else { 0 };
+        if std::env::var_os("NERU_DEBUG").is_some() {
+            eprintln!("[neru] done after {duration} ms");
+        }
+        match self.output {
+            Output::Text => {
+                // Some providers send the answer only at the end, without streamed pieces.
+                if printed.trim().is_empty() && !content.trim().is_empty() {
+                    let _ = write!(out, "{}", content.trim_end());
+                }
+                println!();
+                if let Some(error) = &error {
+                    eprintln!("{error}");
+                }
+                if max_turns {
+                    esay!("Stopped after the most tool rounds allowed (--max-turns). Run neru -c to keep going.");
+                }
+            }
+            _ => {
+                let subtype = if error.is_some() { "error_during_execution" } else if max_turns { "error_max_turns" } else { "success" };
+                let mut summary = json!({"type": "result", "subtype": subtype, "is_error": code != 0, "duration_ms": duration, "num_turns": turns.max(1), "result": content, "session_id": self.session, "permission_denials": denials, "model": model, "context": context});
+                if let Some(error) = &error {
+                    summary["error"] = json!(error);
+                }
+                if self.output == Output::Json {
+                    summary["tools"] = json!(tools);
+                }
+                emit_json(&mut out, summary);
+            }
+        }
+        code
+    }
+
+    /// One `ai_chat` call for print mode, streaming its events. Returns the result and how many
+    /// model rounds it took.
+    fn print_round(&mut self, prompt: &str, printed: &mut String, tools: &mut Vec<Value>) -> (Result<agent::AgentResponse, String>, usize) {
         let (done_tx, done_rx) = mpsc::channel();
         let app = self.app.clone();
-        let notes = self.notes();
+        let notes = if prompt.trim().is_empty() { None } else { self.notes() };
         let (prompt, mode, web, session, effort) = (prompt.to_string(), self.mode.clone(), self.web, self.session.clone(), self.effort.clone());
         tauri::async_runtime::spawn(async move {
             let _ = done_tx.send(agent::ai_chat(prompt, vec![], mode, Some(web), None, None, effort, Some(session), notes, Some("code".into()), app).await);
@@ -1508,19 +1946,16 @@ impl<'a> Cli<'a> {
         let debug = std::env::var_os("NERU_DEBUG").is_some();
         let started = Instant::now();
         let mut first = true;
-        let model = self.state().provider.lock().map(|config| config.model.clone()).unwrap_or_default();
-        let emit = |out: &mut std::io::Stdout, value: Value| {
-            let _ = writeln!(out, "{value}");
-            let _ = out.flush();
+        let mut rounds = 0;
+        // stream-json sends whole messages, as Claude Code does: text so far goes out before a tool.
+        let mut pending_text = String::new();
+        let session = self.session.clone();
+        let flush_text = |out: &mut std::io::Stdout, text: &mut String| {
+            if !text.trim().is_empty() {
+                emit_json(out, json!({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": std::mem::take(text)}]}, "session_id": session}));
+            }
+            text.clear();
         };
-        if self.output == Output::StreamJson {
-            emit(&mut out, json!({"type": "system", "subtype": "init", "session_id": self.session, "model": model, "cwd": self.cwd(), "permission_mode": self.mode, "version": VERSION}));
-        }
-        if debug {
-            eprintln!("[neru] request sent after startup");
-        }
-        let mut tools = Vec::new();
-        let mut printed = String::new();
         loop {
             // Wait first, then drain: events are queued before the reply returns, so none are missed.
             let finished = done_rx.recv_timeout(Duration::from_millis(50));
@@ -1538,17 +1973,31 @@ impl<'a> Cli<'a> {
                     }
                 }
                 let kind = event["type"].as_str().unwrap_or("");
+                if let Some(request) = event["approval"]["requestId"].as_str() {
+                    // No one can answer in print mode: the sub-agent hears no and reports it.
+                    let _ = crate::subagent::answer_subagent_approval(request.to_string(), false);
+                    let label = event["approval"]["label"].as_str().unwrap_or("");
+                    eprintln!("Declined a sub-agent's request ({label}): print mode cannot ask. Use --permission-mode or --allowedTools to let it run.");
+                }
+                if kind == "context" {
+                    rounds += 1;
+                }
+                let done = kind == "tool" && event["status"] != "running";
+                let failed = event["status"] == "error";
                 match self.output {
                     Output::StreamJson => match kind {
-                        "delta" => emit(&mut out, json!({"type": "text", "text": event["text"]})),
-                        "tool" if event["status"] != "running" => emit(&mut out, json!({"type": "tool", "id": event["id"], "label": event["label"], "status": event["status"]})),
-                        "todos" => emit(&mut out, json!({"type": "todos", "todos": event["todos"]})),
-                        "notice" => emit(&mut out, json!({"type": "notice", "text": event["text"]})),
-                        "provider" => emit(&mut out, json!({"type": "provider", "model": event["model"], "provider": event["providerId"]})),
+                        "delta" => pending_text.push_str(event["text"].as_str().unwrap_or("")),
+                        "tool" if done => {
+                            flush_text(&mut out, &mut pending_text);
+                            let id = event["id"].as_str().unwrap_or("").to_string();
+                            emit_json(&mut out, json!({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": id, "name": event["label"].as_str().and_then(|label| label.split_whitespace().next()).unwrap_or("tool"), "input": {"description": event["label"]}}]}, "session_id": self.session}));
+                            emit_json(&mut out, json!({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": id, "content": if failed { "failed" } else { "done" }, "is_error": failed}]}, "session_id": self.session}));
+                        }
+                        "notice" => emit_json(&mut out, json!({"type": "system", "subtype": "notice", "text": event["text"], "session_id": self.session})),
                         _ => {}
                     },
                     Output::Json => {
-                        if kind == "tool" && event["status"] != "running" {
+                        if done {
                             tools.push(json!({"label": event["label"], "status": event["status"]}));
                         }
                     }
@@ -1559,9 +2008,10 @@ impl<'a> Cli<'a> {
                             let _ = write!(out, "{text}");
                             let _ = out.flush();
                         }
-                        "tool" if event["status"] != "running" => {
+                        "tool" if done => {
                             let label = event["label"].as_str().unwrap_or("");
-                            if color { eprintln!("{DIM}⏺ {label}{RESET}") } else { eprintln!("⏺ {label}") }
+                            let (mark, tone) = if failed { ("✗", RED) } else { ("⏺", DIM) };
+                            if color { eprintln!("{tone}{mark} {label}{RESET}") } else { eprintln!("{mark} {label}") }
                         }
                         _ => {}
                     },
@@ -1569,51 +2019,19 @@ impl<'a> Cli<'a> {
             }
             match finished {
                 Ok(result) => {
-                    let duration = started.elapsed().as_millis() as u64;
-                    if debug {
-                        eprintln!("[neru] done after {duration} ms");
-                    }
-                    let (content, context, error, pending) = match &result {
-                        Ok(response) => (response.content.clone(), serde_json::to_value(&response.context).unwrap_or(Value::Null), None, response.pending.as_ref().map(|pending| pending.label.clone())),
-                        Err(error) => (String::new(), Value::Null, Some(friendly(error)), None),
-                    };
-                    if pending.is_some() {
-                        let _ = workspace::reject_pending(self.state());
-                    }
-                    let blocked = pending.as_ref().map(|label| format!("Stopped: “{label}” needs approval. Run with --mode edits, auto or bypass to allow it without asking."));
-                    let code = if error.is_some() { 1 } else if blocked.is_some() { 3 } else { 0 };
-                    match self.output {
-                        Output::Text => {
-                            // Some providers send the answer only at the end, without streamed pieces.
-                            if printed.trim().is_empty() && !content.trim().is_empty() {
-                                let _ = write!(out, "{}", content.trim_end());
-                            }
-                            println!();
-                            if let Some(error) = &error {
-                                eprintln!("{}", cli_ui::strip(error));
-                            }
-                            if let Some(blocked) = &blocked {
-                                eprintln!("{blocked}");
+                    if self.output == Output::StreamJson {
+                        // A provider that sends the answer only at the end still gets its message.
+                        if pending_text.trim().is_empty() {
+                            if let Ok(response) = &result {
+                                pending_text = response.content.clone();
                             }
                         }
-                        _ => {
-                            let mut result = json!({"type": "result", "subtype": if error.is_some() { "error" } else if blocked.is_some() { "needs_approval" } else { "success" }, "is_error": code != 0, "result": content, "session_id": self.session, "model": model, "duration_ms": duration, "context": context});
-                            if let Some(error) = &error {
-                                result["error"] = json!(cli_ui::strip(error));
-                            }
-                            if let Some(blocked) = &blocked {
-                                result["error"] = json!(blocked);
-                            }
-                            if self.output == Output::Json {
-                                result["tools"] = json!(tools);
-                            }
-                            emit(&mut out, result);
-                        }
+                        flush_text(&mut out, &mut pending_text);
                     }
-                    return code;
+                    return (result, rounds);
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => return 1,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return (Err("The request stopped unexpectedly".into()), rounds),
             }
         }
     }
@@ -1731,7 +2149,7 @@ impl<'a> Cli<'a> {
             },
             "model" => {
                 if !args.is_empty() {
-                    match switch_model(self.app, args) {
+                    match choose_model(self.app, args) {
                         Ok(model) => self.note(&format!("Model set to {BOLD}{model}{RESET}")),
                         Err(error) => self.note(&friendly(&error)),
                     }
@@ -1750,7 +2168,7 @@ impl<'a> Cli<'a> {
                         let items: Vec<(String, String)> = models.iter().map(|model| (model.clone(), String::new())).collect();
                         let current = models.iter().position(|model| *model == view.model);
                         if let Some(index) = cli_ui::pick(&mut self.screen, &format!("Model · {}", view.provider_id), &items, current) {
-                            match switch_model(self.app, &models[index]) {
+                            match choose_model(self.app, &models[index]) {
                                 Ok(model) => self.note(&format!("Model set to {BOLD}{model}{RESET}")),
                                 Err(error) => self.note(&friendly(&error)),
                             }
@@ -1806,11 +2224,11 @@ impl<'a> Cli<'a> {
             }
             "compact" => {
                 self.screen.footer(&[format!("{DIM}Summarizing the conversation…{RESET}")], None);
-                let result = tauri::async_runtime::block_on(agent::compact_session(self.session.clone(), self.app.clone()));
+                let result = tauri::async_runtime::block_on(agent::compact_session(self.session.clone(), Some(args.to_string()), self.app.clone()));
                 self.screen.clear();
                 match result {
                     Ok(usage) => {
-                        self.note(&format!("Compacted. Context is now {} tokens.", usage.used));
+                        self.note(&format!("Compacted conversation. Context is now {} tokens.", usage.used));
                         self.context = Some(usage);
                     }
                     Err(error) => self.note(&friendly(&error)),
@@ -1954,6 +2372,54 @@ impl<'a> Cli<'a> {
                     Err(error) => self.note(&friendly(&error)),
                 }
             }
+            "output-style" => {
+                let root = workspace::project_root(&self.state()).unwrap_or_else(|_| std::path::PathBuf::from(self.cwd()));
+                if args.trim().is_empty() {
+                    let current = crate::styles::current(&root).name;
+                    let styles = crate::styles::list(&root);
+                    let rows: Vec<(String, String)> = styles.iter().map(|style| (style.name.clone(), style.description.clone())).collect();
+                    let selected = styles.iter().position(|style| style.name == current);
+                    if let Some(index) = cli_ui::pick(&mut self.screen, "Output style", &rows, selected) {
+                        match crate::styles::choose(&root, &styles[index].name) {
+                            Ok(style) => self.note(&format!("Output style: {}. Saved in .claude/settings.local.json.", style.name)),
+                            Err(error) => self.note(&error),
+                        }
+                    }
+                } else {
+                    match crate::styles::choose(&root, args) {
+                        Ok(style) => self.note(&format!("Output style: {}. Saved in .claude/settings.local.json.", style.name)),
+                        Err(error) => self.note(&format!("{error}. /output-style lists them.")),
+                    }
+                }
+            }
+            "statusline" => {
+                let root = workspace::project_root(&self.state()).unwrap_or_else(|_| std::path::PathBuf::from(self.cwd()));
+                let text = args.trim();
+                if text.is_empty() {
+                    match crate::styles::status_command(&root) {
+                        Some(command) => self.note(&format!("Status line: {command}
+  /statusline <command> sets another; /statusline off removes it. The command gets the session as JSON on stdin.")),
+                        None => self.note("No custom status line. /statusline <command> shows the first line a command prints, like Claude Code's statusLine setting (it gets the session as JSON on stdin)."),
+                    }
+                } else {
+                    let command = (!matches!(text, "off" | "none" | "remove")).then_some(text);
+                    match crate::styles::set_status_command(&root, command) {
+                        Ok(()) if command.is_some() && !crate::trust::is_trusted(&root) => self.note("Saved in .claude/settings.local.json. A project's status line runs once the folder is trusted: /trust."),
+                        Ok(()) => self.note(if command.is_some() { "Status line saved in .claude/settings.local.json." } else { "Custom status line removed." }),
+                        Err(error) => self.note(&error),
+                    }
+                }
+            }
+            "trust" | "untrust" => {
+                let root = workspace::project_root(&self.state()).unwrap_or_else(|_| std::path::PathBuf::from(self.cwd()));
+                let result = if name == "trust" { crate::trust::trust_project(&root) } else { crate::trust::untrust_project(&root) };
+                tauri::async_runtime::block_on(self.state().mcp.sync_project(Some(&root)));
+                match result {
+                    Ok(()) if name == "trust" => self.note("Trusted this folder: its .mcp.json connectors, settings hooks and allow rules now apply."),
+                    Ok(()) => self.note("Stopped trusting this folder: its .mcp.json connectors, settings hooks and allow rules are off."),
+                    Err(error) => self.note(&error),
+                }
+            }
             "doctor" => {
                 self.screen.footer(&[format!("{DIM}Checking your setup…{RESET}")], None);
                 let checks = tauri::async_runtime::block_on(crate::extras::doctor(self.app.clone())).unwrap_or_default();
@@ -1967,7 +2433,7 @@ impl<'a> Cli<'a> {
             }
             "export" => {
                 let Ok(snapshot) = sessions::session_snapshot(self.session.clone(), self.app.state()) else { return Flow::Continue };
-                let body = snapshot.messages.iter().map(|entry| format!("## {}\n\n{}", if entry.role == "user" { "You" } else { "Neru" }, entry.content)).collect::<Vec<_>>().join("\n\n");
+                let body = snapshot.messages.iter().map(|entry| match entry.role.as_str() { "note" => format!("_{}_", entry.content), "user" => format!("## You\n\n{}", entry.content), _ => format!("## Neru\n\n{}", entry.content) }).collect::<Vec<_>>().join("\n\n");
                 let safe: String = snapshot.session.title.chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').chars().take(60).collect();
                 let path = if args.is_empty() { format!(".neru/exports/{}.md", if safe.is_empty() { "conversation".into() } else { safe }) } else { args.to_string() };
                 match workspace::save_file(path.clone(), format!("# {}\n\n{body}\n", snapshot.session.title), self.app.state()) {
@@ -1977,7 +2443,7 @@ impl<'a> Cli<'a> {
             }
             "copy" => {
                 let Ok(snapshot) = sessions::session_snapshot(self.session.clone(), self.app.state()) else { return Flow::Continue };
-                match snapshot.messages.iter().rev().find(|entry| entry.role != "user" && !entry.content.trim().is_empty()) {
+                match snapshot.messages.iter().rev().find(|entry| entry.role == "assistant" && !entry.content.trim().is_empty()) {
                     Some(entry) => match copy_to_clipboard(&entry.content) {
                         Ok(()) => self.note(&format!("Copied Neru's last reply ({} lines)", entry.content.lines().count())),
                         Err(error) => self.note(&error),
@@ -2059,7 +2525,13 @@ impl<'a> Cli<'a> {
             other => {
                 if let Some(command) = self.commands.iter().find(|command| command.name == other) {
                     let root = workspace::project_root(&self.state()).unwrap_or_else(|_| std::path::PathBuf::from(self.cwd()));
-                    return Flow::Send(crate::commands::expand(&command.template, args, &root));
+                    let (prompt, run) = tauri::async_runtime::block_on(crate::commands::prepare(command, args, &root));
+                    if let Ok(shared) = sessions::runtime(&self.state(), &self.session) {
+                        if let Ok(mut runtime) = sessions::lock(&shared) {
+                            runtime.command_run = Some(run);
+                        }
+                    }
+                    return Flow::Send(prompt);
                 }
                 self.note(&format!("Unknown command /{other}. Type /help to see them all."));
             }
@@ -2102,6 +2574,10 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("pr-comments", "Summarize this branch's PR review comments"),
     ("diff", "Uncommitted changes at a glance"),
     ("doctor", "Check the model, tools and setup"),
+    ("output-style", "How Neru writes: default, explanatory, learning or your own"),
+    ("statusline", "Show a command's output in the status line"),
+    ("trust", "Trust this folder's connectors, hooks and rules"),
+    ("untrust", "Stop trusting this folder"),
     ("web", "Turn web search on or off"),
     ("export", "Save this conversation as Markdown"),
     ("copy", "Copy Neru's last reply"),
@@ -2119,7 +2595,12 @@ const BUILT_IN: &[(&str, &str)] = &[
 /// Provider and tool errors in plain words, with what to do next.
 pub fn friendly(error: &str) -> String {
     let lower = error.to_lowercase();
-    let hint = if lower.contains("401") || lower.contains("invalid api key") || lower.contains("unauthorized") || lower.contains("incorrect api key") {
+    let locked = crate::fallback::is_client_locked(error).then(|| format!("{}. Switch with /model or /login.", crate::models::client_locked_reason(error)));
+    let hint = if let Some(locked) = &locked {
+        locked.as_str()
+    } else if crate::fallback::needs_credits(error) {
+        "This account has no credits for the model. Add credits, or pick a free model with /model."
+    } else if lower.contains("401") || lower.contains("invalid api key") || lower.contains("unauthorized") || lower.contains("incorrect api key") {
         "The provider rejected the API key. Run /login to enter it again."
     } else if lower.contains("429") || lower.contains("rate limit") || lower.contains("quota") {
         "The model's rate limit was reached. Wait a minute, or switch with /model."
@@ -2149,6 +2630,8 @@ mod tests {
         assert_eq!(mode_id("edits"), Some("accept_edits"));
         assert_eq!(mode_id("nope"), None);
         assert!(friendly("Provider error (HTTP 401): bad key").contains("rejected the API key"));
+        assert!(friendly("Provider HTTP 403 Forbidden: Free tier can only be used from within OpenCode").contains("only works inside OpenCode"));
+        assert!(friendly("Provider HTTP 402 Payment Required: no funds").contains("no credits"));
         assert_eq!(friendly("plain"), "plain");
     }
 
@@ -2176,5 +2659,46 @@ mod tests {
         assert_eq!(limited.run.allow, vec!["Edit", "Read"]);
         assert_eq!(limited.run.deny, vec!["Bash"]);
         assert_eq!(limited.run.max_rounds, Some(5));
+        let custom = parse_args(args("--system-prompt be-brief --session-id 2b3c --add-dir . -p hi")).unwrap();
+        assert_eq!(custom.run.system_prompt.as_deref(), Some("be-brief"));
+        assert_eq!(custom.session_id.as_deref(), Some("2b3c"));
+        assert_eq!(custom.run.add_dirs.len(), 1);
+        assert!(parse_args(args("--add-dir ./no-such-folder-here -p hi")).is_err());
+        let fallback = parse_args(args("--fallback-model qwen3-coder,glm-4.6 --fallback-model kimi -p hi")).unwrap();
+        assert_eq!(fallback.run.fallback_models, vec!["qwen3-coder", "glm-4.6", "kimi"]);
+    }
+
+    #[test]
+    fn flags_parse_like_claude_code() {
+        // --flag=value, options after the prompt, and `--` before a prompt that looks like a flag.
+        let options = parse_args(args("-p hello --output-format=json --model=qwen there")).unwrap();
+        assert!(options.output == Output::Json);
+        assert_eq!(options.model.as_deref(), Some("qwen"));
+        assert_eq!(options.prompt.as_deref(), Some("hello there"));
+        assert_eq!(parse_args(args("-p -- -v means verbose")).unwrap().prompt.as_deref(), Some("-v means verbose"));
+        assert_eq!(parse_args(args("--resume=abc")).unwrap().resume, Some(Some("abc".into())));
+        assert_eq!(parse_args(args("--append-system-prompt be-kind -p hi")).unwrap().run.append_system_prompt.as_deref(), Some("be-kind"));
+        // Mistakes are usage errors (stderr, exit 1); help and the version are not.
+        assert!(matches!(parse_args(args("--bogus")), Err(Stop::Usage(_))));
+        assert!(matches!(parse_args(args("-p hi --bogus")), Err(Stop::Usage(_))));
+        assert!(matches!(parse_args(args("--max-turns 0")), Err(Stop::Usage(_))));
+        assert!(matches!(parse_args(args("--help")), Err(Stop::Info(_))));
+        assert!(matches!(parse_args(args("--version")), Err(Stop::Info(_))));
+    }
+
+    #[test]
+    fn mcp_add_reads_claude_code_syntax() {
+        let (server, project) = mcp_add_args(&args("--transport http docs https://example.com/mcp -H Authorization:Bearer-x")).unwrap();
+        assert_eq!((server.name.as_str(), server.url.as_deref(), project), ("docs", Some("https://example.com/mcp"), false));
+        assert_eq!(server.headers.get("Authorization").map(String::as_str), Some("Bearer-x"));
+        let (server, project) = mcp_add_args(&args("-s project -e KEY=1 files -- npx -y @x/files --root .")).unwrap();
+        assert_eq!((server.name.as_str(), server.command.as_str(), project), ("files", "npx", true));
+        assert_eq!(server.args, vec!["-y", "@x/files", "--root", "."]);
+        assert_eq!(server.env.get("KEY").map(String::as_str), Some("1"));
+        // The command's own flags stay with the command.
+        assert_eq!(mcp_add_args(&args("git uvx mcp-git --repo .")).unwrap().0.args, vec!["mcp-git", "--repo", "."]);
+        assert!(mcp_add_args(&args("--transport sse old https://x/sse")).is_err());
+        assert!(mcp_add_args(&args("--bogus x y")).is_err());
+        assert!(mcp_add_args(&args("--scope team x y")).is_err());
     }
 }

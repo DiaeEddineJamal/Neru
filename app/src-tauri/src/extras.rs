@@ -434,7 +434,22 @@ pub async fn doctor(app: AppHandle) -> Result<Vec<Check>, String> {
             Err(error) => (false, format!("Could not reach the provider: {}", error.to_string().chars().take(120).collect::<String>())),
         };
         checks.push(Check { name: "Provider connection".into(), ok, detail, fix: "Check the key in Settings → Model, your internet connection, or try another provider.".into() });
+        if ok {
+            // Listing models can work while the model itself is refused (a free tier locked to the
+            // provider's own app, no credits), so send it one small request.
+            let result = crate::models::health(&config, true).await;
+            let fine = result.status != "unavailable" && result.status != "badKey";
+            let detail = if result.status == "ok" { format!("{} answered a test request", config.model) } else { result.reason };
+            checks.push(Check { name: "Model answers".into(), ok: fine, detail, fix: "Pick another model (/model), add credits, or add a key for another provider.".into() });
+        }
     }
+    let root = state.root.lock().map_err(|e| e.to_string())?.clone().unwrap_or_else(|| std::path::PathBuf::from("."));
+    checks.push(Check {
+        name: "Sandbox".into(),
+        ok: crate::sandbox::kind(&root) != crate::sandbox::Kind::None || crate::sandbox::turned_off(&root),
+        detail: crate::sandbox::describe(&root),
+        fix: "On Linux install bubblewrap (sudo apt install bubblewrap); approved commands otherwise run unconfined.".into(),
+    });
     for (name, program, fix) in [
         ("Git", "git", "Install Git from git-scm.com to use branches, diffs and checkpoints."),
         ("Node.js", "node", "Install Node.js LTS from nodejs.org to run JavaScript projects and previews."),

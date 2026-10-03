@@ -73,6 +73,12 @@ pub struct EditProposal {
     pub to: String,
 }
 
+/// A path as people write it: without Windows' `\\?\` prefix, which canonicalize adds.
+pub(crate) fn shown(path: &Path) -> String {
+    let text = path.display().to_string();
+    text.strip_prefix(r"\\?\UNC\").map(|rest| format!(r"\\{rest}")).unwrap_or_else(|| text.trim_start_matches(r"\\?\").to_string())
+}
+
 pub fn data_dir() -> Result<PathBuf, String> {
     let project_data = PathBuf::from(r"D:\Neru\.local\data");
     let path = std::env::var_os("NERU_DATA_DIR")
@@ -111,6 +117,12 @@ pub fn relative_path(root: &Path, path: &Path) -> String {
 }
 
 pub fn resolve_existing(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    // A folder added with --add-dir is reached by its absolute path.
+    if let Some(dir) = crate::run_options::added_dir_for(Path::new(relative)) {
+        if dir != root {
+            return resolve_existing(&dir, relative);
+        }
+    }
     let candidate = root.join(relative);
     let canonical = candidate.canonicalize().map_err(|e| e.to_string())?;
     if !canonical.starts_with(root) {
@@ -122,6 +134,15 @@ pub fn resolve_existing(root: &Path, relative: &str) -> Result<PathBuf, String> 
 /// A path inside the project that may not exist yet, including new folders along the way
 /// (`src/features/auth/login.ts` when `features/` is new). `..` and absolute paths are refused.
 pub fn resolve_new(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    if let Some(dir) = crate::run_options::added_dir_for(Path::new(relative)) {
+        if dir != root {
+            let canonical = Path::new(relative).canonicalize().ok();
+            let inside = canonical.as_deref().and_then(|path| path.strip_prefix(&dir).ok()).or_else(|| Path::new(relative).strip_prefix(&dir).ok());
+            if let Some(inside) = inside.map(Path::to_path_buf) {
+                return resolve_new(&dir, &inside.to_string_lossy());
+            }
+        }
+    }
     let candidate = root.join(relative);
     if candidate.exists() {
         return resolve_existing(root, relative);
@@ -894,11 +915,16 @@ pub fn apply_pending(state: State<'_, AppState>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn reject_pending(state: State<'_, AppState>) -> Result<(), String> {
-    let shared = sessions::active(&state)?;
+    deny_pending(&state, "User rejected this operation")
+}
+
+/// Answers the waiting call with `reason` instead of running it (`neru -p`, which cannot ask).
+pub fn deny_pending(state: &AppState, reason: &str) -> Result<(), String> {
+    let shared = sessions::active(state)?;
     let mut runtime = sessions::lock(&shared)?;
     if let Some(action) = runtime.pending.take() {
         if let Some(id) = action.tool_call_id() {
-            runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":"User rejected this operation"}));
+            runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":reason}));
         }
     }
     // Later calls from the same turn never ran; answer them so the conversation stays valid.

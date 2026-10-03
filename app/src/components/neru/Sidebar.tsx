@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { BookOpen, ChevronRight, Command, Copy, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, Sun, Trash2 } from 'lucide-react'
+import { BookOpen, Compass, ChevronRight, Command, Copy, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, Sun, Trash2, Users } from 'lucide-react'
 import { useContextMenu } from './ContextMenu'
 import { Mascot } from './Mascot'
 import type { ProjectInfo, Section, SessionSummary } from '../../types'
@@ -54,6 +54,7 @@ export interface SidebarProps {
   onToggleTheme: () => void
   onPalette: () => void
   onGuide: () => void
+  onTour: () => void
   /** Collapse when docked; dock (keep open) when shown on hover. */
   onCollapse: () => void
   /** Rendered over the workspace while the pointer hovers the left edge. */
@@ -123,11 +124,12 @@ export function Sidebar(props: SidebarProps) {
     </div>
 
     <nav className="sidebar-nav" aria-label="Main navigation">
-      <button className="nav-item new-session" onClick={() => props.onNewSession()} disabled={(props.surface === 'code' && !project) || busy}><SquarePen size={16} /><span>New session</span><kbd>{mod} N</kbd></button>
+      <button className="nav-item new-session" data-tour="new-session" onClick={() => props.onNewSession()} disabled={(props.surface === 'code' && !project) || busy}><SquarePen size={16} /><span>New session</span><kbd>{mod} N</kbd></button>
+      <button data-tour="team-nav" className={`nav-item ${section === 'team' ? 'active' : ''}`} onClick={() => props.onSection('team')} title="Claude Code, Codex and more in one shared thread"><Users size={16} strokeWidth={1.75} /><span>Team</span></button>
       {props.surface === 'code' && tools.map(item => <button key={item.id} className={`nav-item ${section === item.id ? 'active' : ''}`} onClick={() => props.onSection(item.id)} disabled={!project}><item.icon size={16} strokeWidth={1.75} /><span>{item.label}</span></button>)}
     </nav>
 
-    <div className="sidebar-scroll">
+    <div className="sidebar-scroll" data-tour="sessions">
       {props.surface === 'chat' ? <>
         <div className="sidebar-label"><span>Chat history</span></div>
         {sessions.filter(session => !session.projectPath).length === 0 && <p className="sidebar-empty">No chats yet.</p>}
@@ -202,8 +204,9 @@ export function Sidebar(props: SidebarProps) {
         <button role="menuitem" onClick={props.onToggleTheme}>{light ? <Moon size={15} /> : <Sun size={15} />}{light ? 'Dark theme' : 'Light theme'}</button>
         <div className="menu-separator" />
         <button role="menuitem" onClick={() => { setAccountOpen(false); props.onGuide() }}><BookOpen size={15} />Getting started</button>
+        <button role="menuitem" onClick={() => { setAccountOpen(false); props.onTour() }}><Compass size={15} />Take the tour</button>
       </div>}
-      <div className="sidebar-footer-row">
+      <div className="sidebar-footer-row" data-tour="settings">
         <button className={`footer-settings ${section === 'settings' ? 'active' : ''}`} onClick={() => { setAccountOpen(false); props.onSection('settings') }} title={`Settings (${mod} ,)`}>
           <Settings2 size={16} strokeWidth={1.75} /><span>Settings</span><kbd>{mod} ,</kbd>
         </button>

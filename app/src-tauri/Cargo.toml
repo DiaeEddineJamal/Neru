@@ -1,6 +1,6 @@
 [package]
 name = "neru"
-version = "0.6.0"
+version = "0.7.0"
 description = "A calm, local-first coding agent"
 authors = ["Neru"]
 license = "MIT"
@@ -42,9 +42,10 @@ similar = "3"
 sha2 = "0.10"
 portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["time", "process", "sync", "macros", "io-util", "net", "fs", "rt"] }
+tokio = { version = "1", features = ["time", "process", "sync", "macros", "io-util", "net", "fs", "rt", "signal"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "6"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

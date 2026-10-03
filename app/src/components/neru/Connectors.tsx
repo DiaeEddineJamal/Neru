@@ -75,12 +75,18 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
   const [saving, setSaving] = useState(false)
   const [working, setWorking] = useState<string | null>(null)
   const [tab, setTab] = useState<'hosted' | 'local'>('hosted')
+  const [trusted, setTrusted] = useState(false)
 
   useEffect(() => {
     let alive = true
     api.mcpServers().then(list => { if (alive) setServers(list) }).catch(cause => onError(String(cause)))
+    api.projectTrustStatus().then(status => { if (alive) setTrusted(status.trusted) }).catch(() => undefined)
     return () => { alive = false }
   }, [onError])
+  const untrust = async () => {
+    setWorking('trust')
+    try { setTrusted((await api.untrustProject()).trusted); setServers(await api.mcpServers()) } catch (cause) { onError(String(cause)) } finally { setWorking(null) }
+  }
   const starting = Boolean(servers?.some(server => server.status === 'starting'))
   useEffect(() => {
     // Connectors finish starting in the background; refresh until none is still starting.
@@ -172,6 +178,7 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
         {entry.auth === 'oauth' ? <LogIn size={14} className="catalog-add" /> : <Plus size={14} className="catalog-add" />}
       </button>)}</div>
     </div>}
+    {trusted && <p className="settings-note trust-note"><ShieldCheck size={14} /> This project folder is trusted: its .mcp.json connectors, settings hooks and allow rules apply. <button className="button subtle small" disabled={working !== null} onClick={() => void untrust()}>{working === 'trust' ? <LoaderCircle size={13} className="animate-spin" /> : null} Stop trusting</button></p>}
     <p className="settings-note"><ShieldCheck size={14} /> Hosted sign-ins happen in your browser; Neru stores only the resulting token, encrypted with your system keychain, and refreshes it. Local connectors run with your permissions and keep their package caches in Neru’s storage. Add only servers you trust.</p>
   </section>
 }

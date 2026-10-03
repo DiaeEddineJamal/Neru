@@ -3,8 +3,9 @@
 # check releases/latest/download/latest.json and offer the new version.
 #
 # Each build also uploads the standalone `neru` CLI (neru-cli-<target>.zip/.tar.gz plus a .sha256),
-# which install.sh, install.ps1, the npm package and winget download. After publishing, the npm and
-# winget jobs push the new version there when their secrets (NPM_TOKEN, WINGET_TOKEN) are set.
+# which install.sh, install.ps1, the npm package, winget and Homebrew download. After publishing, the npm and
+# winget jobs push the new version there when their secrets (NPM_TOKEN, WINGET_TOKEN) are set, and the
+# homebrew job attaches a filled-in cask (neru.rb) and formula (neru-cli.rb) for the tap.
 #
 # To release: bump the version in app/package.json, app/src-tauri/tauri.conf.json and
 # app/src-tauri/Cargo.toml, add an entry to app/src/changelog.json, then push a tag: v0.2.0.
@@ -62,6 +63,10 @@ jobs:
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             args: '--bundles deb,appimage'
+          # Linux on ARM (Raspberry Pi, Graviton, WSL on Windows on ARM): native arm64 runner.
+          - platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            args: '--bundles deb,appimage'
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -69,7 +74,7 @@ jobs:
           ref: ${{ env.TAG }}
 
       - name: Linux build dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
@@ -154,6 +159,35 @@ jobs:
           cat "$asset.sha256"
           echo "CLI_ASSET=$asset" >> "$GITHUB_ENV"
 
+      # A scripted first run against a local mock model: a new project, an edit, a command, then a
+      # resumed session. A failure stops the upload, so the release stays a draft. The Intel macOS
+      # build is skipped: the runner is Apple silicon and cannot run it without Rosetta.
+      - name: Smoke test the neru CLI
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          exe=''
+          if [ "$RUNNER_OS" = Windows ]; then exe='.exe'; fi
+          out='app/src-tauri/target/release'
+          if [ "$RUNNER_OS" = macOS ]; then out="app/src-tauri/target/$TARGET/release"; fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            # The CLI needs a display for WebKitGTK; bubblewrap lets the run exercise the sandbox.
+            sudo apt-get install -y xvfb bubblewrap
+            xvfb-run -a node app/scripts/smoke.mjs "$out/neru-cli$exe"
+          else
+            node app/scripts/smoke.mjs "$out/neru-cli$exe"
+          fi
+
+      # Team runs other agents' CLIs: a stub CLI checks starting one, feeding it the prompt and
+      # reading its JSON stream, plus the thread, hand-off and import logic, on every OS.
+      - name: Test Team and imports
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: cargo test --manifest-path app/src-tauri/Cargo.toml --lib -- team imports
+
       # The release is still a draft here; gh finds drafts by tag.
       - name: Upload the neru CLI to the release
         shell: bash
@@ -169,7 +203,14 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+        # A tag like v0.8.0-beta.1 is a prerelease: install scripts and `neru update` follow
+        # releases/latest, so it must not become the latest.
+        run: |
+          if [[ "$TAG" == *-* ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi
 
   # npm: `npm install -g neru-cli`. The package downloads the CLI archive for its version from the
   # release, so it goes out after publishing. Skipped until the NPM_TOKEN secret exists.
@@ -213,6 +254,44 @@ jobs:
           dist_tag=latest
           case "$TAG" in *-*) dist_tag=next ;; esac
           npm publish --provenance --access public --tag "$dist_tag"
+
+  # Homebrew: fills packaging/homebrew/{Casks/neru.rb,Formula/neru-cli.rb} with this version and
+  # the published SHA256s and uploads them to the release. Copy them into the tap repo
+  # (DiaeEddineJamal/homebrew-neru, same Casks/ and Formula/ folders); nothing is pushed from here.
+  homebrew:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Render and upload the cask and formula
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          dl="$RUNNER_TEMP/assets"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$dl" \
+            -p "Neru_${version}_aarch64.dmg" -p "Neru_${version}_x64.dmg" -p 'neru-cli-*.tar.gz.sha256'
+
+          # @@SHA256_CLI_<TARGET>@@ comes from neru-cli-<target>.tar.gz.sha256.
+          # The first two lines are a note for the template; the rendered file drops them.
+          args=(-e '1,2d' -e "s/@@VERSION@@/$version/g"
+            -e "s/@@SHA256_DMG_AARCH64@@/$(sha256sum "$dl/Neru_${version}_aarch64.dmg" | cut -d' ' -f1)/g"
+            -e "s/@@SHA256_DMG_X64@@/$(sha256sum "$dl/Neru_${version}_x64.dmg" | cut -d' ' -f1)/g")
+          for sum in "$dl"/neru-cli-*.tar.gz.sha256; do
+            target=$(basename "$sum" .tar.gz.sha256); target=${target#neru-cli-}
+            key=$(echo "$target" | tr 'a-z-' 'A-Z_')
+            args+=(-e "s/@@SHA256_CLI_${key}@@/$(cut -d' ' -f1 "$sum")/g")
+          done
+
+          out="$RUNNER_TEMP/homebrew"; mkdir -p "$out"
+          sed "${args[@]}" packaging/homebrew/Casks/neru.rb > "$out/neru.rb"
+          sed "${args[@]}" packaging/homebrew/Formula/neru-cli.rb > "$out/neru-cli.rb"
+          if grep -n '@@' "$out"/*.rb; then echo '::error::unfilled placeholders'; exit 1; fi
+          gh release upload "$TAG" "$out/neru.rb" "$out/neru-cli.rb" --clobber --repo "$GITHUB_REPOSITORY"
 
   # winget: opens update PRs on microsoft/winget-pkgs for the app and the standalone CLI.
   # The first version of each package is submitted by hand (packaging/winget/README.md).

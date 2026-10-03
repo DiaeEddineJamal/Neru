@@ -2,7 +2,8 @@
 //! `.neru/agents/` or `.claude/agents/`, or in Neru's personal `agents` folder. The front matter
 //! names the agent (`name`), says when to use it (`description`), lists its tools (`tools`, Neru
 //! or Claude names) and may pick a `model`; the body is its system prompt. The `task` tool lists
-//! them next to the built-in explore, plan and general agents.
+//! them next to the built-in explore, plan and general agents. Edit and command tools are given only
+//! when the `tools` line lists them; the user approves their calls as for the main agent.
 
 use std::{
     fs,
@@ -15,8 +16,8 @@ use tauri::State;
 
 use crate::{AppState, skills::front_value, workspace::data_dir};
 
-/// Tools a sub-agent can be given. Sub-agents only read: edits and commands need the user's
-/// approval, which only the main agent can ask for.
+/// Read-only tools a sub-agent can be given; an agent without a `tools` line gets all of them.
+/// Edit and command tools (`subagent::WRITE_TOOLS`) must be listed by name.
 pub const SUBAGENT_TOOLS: &[&str] = &[
     "list_directory", "read_file", "read_files", "search_text", "find_symbol", "find_files", "project_map", "git_status", "git_diff", "web_search", "fetch_url",
 ];
@@ -112,7 +113,7 @@ pub fn resolve_tools(value: Option<&str>) -> (Vec<String>, Vec<String>) {
     };
     let (mut tools, mut ignored) = (Vec::<String>::new(), Vec::new());
     for name in tool_names(value) {
-        let granted: Vec<&str> = map_tool(&name).into_iter().filter(|tool| SUBAGENT_TOOLS.contains(tool)).collect();
+        let granted: Vec<&str> = map_tool(&name).into_iter().filter(|tool| SUBAGENT_TOOLS.contains(tool) || crate::subagent::WRITE_TOOLS.contains(tool)).collect();
         if granted.is_empty() {
             if !ignored.contains(&name) {
                 ignored.push(name);
@@ -273,8 +274,8 @@ mod tests {
         assert_eq!(agent.name, "code-reviewer");
         assert_eq!(agent.description, "Reviews diffs for bugs. Use after edits.");
         assert_eq!(agent.prompt, "You are a senior reviewer.\nBe strict.");
-        assert_eq!(agent.tools, vec!["read_file", "read_files", "search_text", "find_symbol", "find_files", "list_directory"]);
-        assert_eq!(agent.ignored, vec!["Bash"]);
+        assert_eq!(agent.tools, vec!["read_file", "read_files", "search_text", "find_symbol", "find_files", "list_directory", "run_shell_command"]);
+        assert!(agent.ignored.is_empty());
         assert_eq!(agent.model, None, "Claude aliases are not model ids");
     }
 
@@ -310,9 +311,9 @@ mod tests {
         assert_eq!(map_tool("Bash"), vec!["run_shell_command"]);
         assert_eq!(map_tool("project_map"), vec!["project_map"]);
         assert!(map_tool("Teleport").is_empty());
-        let (tools, ignored) = resolve_tools(Some("Edit, Write, Grep"));
-        assert_eq!(tools, vec!["search_text", "find_symbol"]);
-        assert_eq!(ignored, vec!["Edit", "Write"]);
+        let (tools, ignored) = resolve_tools(Some("Edit, Write, Grep, TodoWrite"));
+        assert_eq!(tools, vec!["propose_edit", "propose_write_file", "search_text", "find_symbol"]);
+        assert_eq!(ignored, vec!["TodoWrite"]);
         assert_eq!(resolve_tools(Some("*")).0.len(), SUBAGENT_TOOLS.len());
     }
 

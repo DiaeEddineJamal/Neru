@@ -5,6 +5,7 @@
 # Installs into %LOCALAPPDATA%\Neru\cli and adds that folder to your user PATH.
 # Pin a version with $env:NERU_VERSION = '0.4.0' before piping, or run the file with -Version 0.4.0.
 # Set $env:NERU_NO_MODIFY_PATH = '1' to leave PATH alone.
+# Uninstall: $env:NERU_UNINSTALL = '1'; irm https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.ps1 | iex
 # Works in Windows PowerShell 5.1 and PowerShell 7.
 
 param([string]$Version)
@@ -29,6 +30,20 @@ function Install-NeruCli {
     Write-Host ''
     Write-Host "$mark Neru" -ForegroundColor Green
     Write-Host ''
+
+    if ($env:NERU_UNINSTALL -eq '1') {
+        Remove-Item Env:NERU_UNINSTALL -ErrorAction SilentlyContinue
+        $installDir = Join-Path (Join-Path $env:LOCALAPPDATA 'Neru') 'cli'
+        if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+        if ($userPath) {
+            $kept = ($userPath -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ine $installDir.TrimEnd('\') }) -join ';'
+            [Environment]::SetEnvironmentVariable('Path', $kept, 'User')
+        }
+        # Settings, keys and sessions stay in the data folder, shared with the app.
+        Write-Host 'neru is uninstalled. Your settings and sessions were kept.'
+        return
+    }
 
     if (-not $Version) { $Version = $env:NERU_VERSION }
     if ($Version) { $Version = $Version.TrimStart('v', 'V') }

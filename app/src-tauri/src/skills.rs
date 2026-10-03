@@ -351,7 +351,7 @@ pub fn open_skills_folder() -> Result<(), String> {
     Ok(())
 }
 
-fn front_name(text: &str) -> Option<String> {
+pub(crate) fn front_name(text: &str) -> Option<String> {
     let rest = text.trim_start_matches('\u{feff}').strip_prefix("---")?;
     let end = rest.find("\n---")?;
     front_value(&rest[..end], "name").map(|value| value.to_lowercase())

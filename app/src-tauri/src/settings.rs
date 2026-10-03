@@ -38,10 +38,7 @@ pub fn load(provider: &mut ProviderConfig, keys: &mut HashMap<String, String>, v
         }
     }
     if !stored.provider_id.is_empty() && !stored.base_url.is_empty() {
-        provider.api_key = keys
-            .get(&format!("{}\n{}", stored.provider_id, stored.base_url))
-            .cloned()
-            .unwrap_or_default();
+        provider.api_key = key_for(keys, &stored.provider_id, &stored.base_url).unwrap_or_default();
         provider.provider_id = stored.provider_id;
         provider.api_format = stored.api_format;
         provider.base_url = stored.base_url;
@@ -56,7 +53,16 @@ pub fn load(provider: &mut ProviderConfig, keys: &mut HashMap<String, String>, v
 
 /// Writes the current provider, keys and voice settings. Keys that cannot be protected are not saved.
 pub fn save(state: &AppState) -> Result<(), String> {
-    let provider = state.provider.lock().map_err(|e| e.to_string())?.clone();
+    let mut provider = state.provider.lock().map_err(|e| e.to_string())?.clone();
+    // A model chosen for one CLI run (--model, or a switch after a rate limit) is not the new default.
+    if crate::run_options::get().keep_saved_model {
+        if let Some(saved) = data_dir().ok().and_then(|dir| fs::read_to_string(dir.join(FILE)).ok()).and_then(|text| serde_json::from_str::<Stored>(&text).ok()).filter(|saved| !saved.provider_id.is_empty()) {
+            provider.provider_id = saved.provider_id;
+            provider.api_format = saved.api_format;
+            provider.base_url = saved.base_url;
+            provider.model = saved.model;
+        }
+    }
     let keys = state.provider_keys.lock().map_err(|e| e.to_string())?.clone();
     let voice = state.voice.lock().map_err(|e| e.to_string())?.clone();
     let stored = Stored {
@@ -81,6 +87,28 @@ pub fn save(state: &AppState) -> Result<(), String> {
     fs::write(&temp, serde_json::to_vec_pretty(&stored).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     fs::rename(&temp, &path).map_err(|e| e.to_string())
+}
+
+/// The saved key for a provider: the one for this exact base URL, else any key saved for the same
+/// provider (a region or path variant of its URL), so switching providers never loses a key.
+pub fn key_for(keys: &HashMap<String, String>, provider_id: &str, base_url: &str) -> Option<String> {
+    let base_url = base_url.trim().trim_end_matches('/');
+    keys.get(&format!("{provider_id}\n{base_url}")).cloned().or_else(|| {
+        let prefix = format!("{provider_id}\n");
+        let mut found: Vec<_> = keys.iter().filter(|(id, _)| id.starts_with(&prefix)).collect();
+        found.sort();
+        found.first().map(|(_, key)| (*key).clone())
+    })
+}
+
+/// Providers that have a key saved on this PC, so the UI can switch to them without asking again.
+#[tauri::command]
+pub fn saved_key_providers(state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
+    let keys = state.provider_keys.lock().map_err(|e| e.to_string())?;
+    let mut ids: Vec<String> = keys.keys().filter_map(|id| id.split_once('\n').map(|(provider, _)| provider.to_string())).collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 /// Forgets every saved key (Settings → Model provider → Forget saved keys).
@@ -244,6 +272,19 @@ mod tests {
     fn hex_round_trips() {
         assert_eq!(from_hex(&to_hex(&[0, 15, 255])).unwrap(), vec![0, 15, 255]);
         assert!(from_hex("abc").is_none());
+    }
+
+    #[test]
+    fn switching_providers_keeps_each_key() {
+        let keys = HashMap::from([
+            ("groq\nhttps://api.groq.com/openai/v1".to_string(), "gsk".to_string()),
+            ("openrouter\nhttps://openrouter.ai/api/v1".to_string(), "or".to_string()),
+        ]);
+        assert_eq!(key_for(&keys, "groq", "https://api.groq.com/openai/v1/").as_deref(), Some("gsk"));
+        assert_eq!(key_for(&keys, "openrouter", "https://openrouter.ai/api/v1").as_deref(), Some("or"));
+        // A changed URL for the same provider still finds its key; another provider never borrows it.
+        assert_eq!(key_for(&keys, "groq", "https://api.groq.com/v2").as_deref(), Some("gsk"));
+        assert_eq!(key_for(&keys, "cerebras", "https://api.cerebras.ai/v1"), None);
     }
 
     #[cfg(windows)]

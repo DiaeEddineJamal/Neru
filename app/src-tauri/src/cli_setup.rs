@@ -22,7 +22,7 @@ const NAMES: &[&str] = &["neru.exe", "neru.cmd", "neru.bat"];
 #[cfg(not(windows))]
 const NAMES: &[&str] = &["neru"];
 
-fn command(program: &Path) -> Command {
+pub(crate) fn command(program: &Path) -> Command {
     #[allow(unused_mut)]
     let mut command = Command::new(program);
     #[cfg(windows)]
@@ -34,7 +34,7 @@ fn command(program: &Path) -> Command {
 }
 
 /// Runs a command and returns its stdout, or None if it fails or takes longer than `limit`.
-fn output_within(mut command: Command, limit: Duration) -> Option<String> {
+pub(crate) fn output_within(mut command: Command, limit: Duration) -> Option<String> {
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -69,7 +69,7 @@ fn bundled_cli() -> Option<PathBuf> {
 }
 
 /// The PATH a new terminal would get: this process's, plus the per-user one (Windows) or the login shell's.
-fn search_path() -> Vec<PathBuf> {
+pub(crate) fn search_path() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
@@ -120,6 +120,21 @@ fn find_on_path() -> Option<PathBuf> {
                 .map(|name| dir.join(name))
                 .find(|path| path.is_file() && !is_desktop_app(path))
         })
+}
+
+/// Finds `name` the way a new terminal would, including npm's `.cmd` shims on Windows, then in
+/// `extra` folders that installers use but often leave off the PATH.
+pub(crate) fn which(name: &str, extra: &[PathBuf]) -> Option<PathBuf> {
+    let files: Vec<String> = if cfg!(windows) {
+        ["exe", "cmd", "bat"].iter().map(|ext| format!("{name}.{ext}")).collect()
+    } else {
+        vec![name.to_string()]
+    };
+    search_path()
+        .into_iter()
+        .chain(extra.iter().cloned())
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .find_map(|dir| files.iter().map(|file| dir.join(file)).find(|path| path.is_file()))
 }
 
 fn version_of(path: &Path) -> Option<String> {

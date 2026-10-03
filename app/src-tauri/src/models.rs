@@ -508,6 +508,25 @@ const PARAMETER_ISSUE: &[&str] = &[
 
 const BAD_KEY: &[&str] = &["invalid api key", "invalid_api_key", "incorrect api key", "invalid token", "authentication", "unauthenticated", "api key not valid", "api_key_invalid", "expired"];
 
+/// The error (lowercase) is about the key itself, not the model.
+pub fn is_bad_key_text(lower: &str) -> bool {
+    BAD_KEY.iter().any(|marker| lower.contains(marker))
+}
+
+/// What a check reports for a free model the provider only serves inside its own app. The app's
+/// name comes from the provider's message ("…can only be used from within OpenCode").
+pub fn client_locked_reason(message: &str) -> String {
+    let lower = message.to_lowercase();
+    let app = ["from within ", "used within ", "used in ", "available in ", "available within ", "works in "]
+        .iter()
+        .find_map(|marker| lower.find(marker).map(|at| at + marker.len()))
+        .and_then(|start| message.get(start..))
+        .map(|rest| rest.split(['.', ',', ';', '"', '\n']).next().unwrap_or("").trim())
+        .filter(|name| !name.is_empty() && name.len() <= 40)
+        .map_or_else(|| "the provider's own app".to_string(), |name| name.trim_start_matches("the ").to_string());
+    format!("Its free tier only works inside {app}, not in other apps such as Neru. Pick a paid model this key has credits for, or another provider")
+}
+
 fn excerpt(body: &str) -> String {
     let message = serde_json::from_str::<Value>(body)
         .ok()
@@ -536,9 +555,10 @@ pub fn classify_probe(status: u16, body: &str) -> Verdict {
         200..=299 => Verdict::Ok("Answered a test request".into()),
         401 => Verdict::BadKey("The provider rejected the API key".into()),
         429 => Verdict::RateLimited("Rate limited right now; try again in a minute".into()),
-        402 => Verdict::Unknown("The provider asks for credits or a paid plan".into()),
+        402 => Verdict::Unknown(format!("The provider asks for credits or a paid plan ({})", said_or("HTTP 402"))),
+        403 if crate::fallback::is_client_locked(&format!("http 403 {lower}")) => Verdict::Unavailable(client_locked_reason(&said)),
         403 => {
-            if BAD_KEY.iter().any(|marker| lower.contains(marker)) {
+            if is_bad_key_text(&lower) {
                 Verdict::BadKey("The provider rejected the API key".into())
             } else if lower.contains("quota") || lower.contains("rate limit") {
                 Verdict::Unknown(said_or("Quota reached"))
@@ -888,7 +908,7 @@ fn resolve(provider_id: String, api_format: String, base_url: String, api_key: S
     }
     let state = app.state::<AppState>();
     let key = if api_key.trim().is_empty() {
-        state.provider_keys.lock().map_err(|e| e.to_string())?.get(&format!("{provider_id}\n{base_url}")).cloned().unwrap_or_default()
+        crate::settings::key_for(&*state.provider_keys.lock().map_err(|e| e.to_string())?, &provider_id, &base_url).unwrap_or_default()
     } else {
         api_key.trim().to_string()
     };
@@ -1002,14 +1022,25 @@ pub async fn probe_model(provider_id: String, api_format: String, base_url: Stri
         return Err("Choose a model".into());
     }
     let config = resolve(provider_id, api_format, base_url, api_key, model, &app)?;
-    if !force.unwrap_or(false) {
-        if let Some(entry) = cached(&config, &config.model) {
-            return Ok(ProbeResult { model: config.model.clone(), status: entry.status, reason: entry.reason, rate_limited: false, cached: true });
+    Ok(health(&config, force.unwrap_or(false)).await)
+}
+
+/// Whether this key can call the configured model: a check from the last day when there is one
+/// (unless `force`), else one test request. Used at startup, after signing in, and by doctor.
+pub async fn health(config: &ProviderConfig, force: bool) -> ProbeResult {
+    if !force {
+        if let Some(entry) = cached(config, &config.model) {
+            return ProbeResult { model: config.model.clone(), status: entry.status, reason: entry.reason, rate_limited: false, cached: true };
         }
     }
-    let verdict = probe_once(&Client::new(), &config).await;
-    store(&config, &config.model, &verdict);
-    Ok(result_of(&config.model, &verdict, false))
+    let verdict = probe_once(&Client::new(), config).await;
+    store(config, &config.model, &verdict);
+    result_of(&config.model, &verdict, false)
+}
+
+/// The check from the last day, without sending anything.
+pub fn cached_health(config: &ProviderConfig) -> Option<ProbeResult> {
+    cached(config, &config.model).map(|entry| ProbeResult { model: config.model.clone(), status: entry.status, reason: entry.reason, rate_limited: false, cached: true })
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -1476,6 +1507,19 @@ mod tests {
         assert!(matches!(classify_error_text("Provider HTTP 404 Not Found: Function 'x': Not found for account 'y'"), Some(Verdict::Unavailable(_))));
         assert!(matches!(classify_error_text("Provider HTTP 429 Too Many Requests: slow down"), Some(Verdict::RateLimited(_))));
         assert!(classify_error_text("The model did not start answering within 75 seconds").is_none());
+    }
+
+    #[test]
+    fn free_tiers_locked_to_their_own_app_say_so() {
+        let body = r#"{"error":{"message":"Free tier can only be used from within OpenCode","type":"forbidden"}}"#;
+        let Verdict::Unavailable(reason) = classify_probe(403, body) else { panic!("a locked free tier is unavailable") };
+        assert!(reason.starts_with("Its free tier only works inside OpenCode,"), "{reason}");
+        let Some(Verdict::Unavailable(reason)) = classify_error_text("Provider HTTP 403 Forbidden: Free tier can only be used from within OpenCode") else { panic!() };
+        assert!(reason.contains("inside OpenCode,"), "{reason}");
+        assert!(client_locked_reason("Forbidden").contains("the provider's own app"));
+        // Other 403s keep their meaning.
+        assert!(matches!(classify_probe(403, r#"{"error":{"message":"Invalid API key"}}"#), Verdict::BadKey(_)));
+        assert!(matches!(classify_probe(402, r#"{"error":{"message":"Insufficient balance"}}"#), Verdict::Unknown(reason) if reason.contains("Insufficient balance")));
     }
 
     #[test]

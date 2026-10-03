@@ -2,14 +2,22 @@
 //! the project, and in Neru's data folder for every project, in Claude Code's format. Subfolders
 //! namespace commands (`frontend/test.md` is `/frontend:test`). Front matter may set
 //! `description`, `argument-hint`, `model` and `allowed-tools`. [`expand`] fills in `$ARGUMENTS`,
-//! `$1`…`$9` and `@path` file references.
+//! `$1`…`$9` and `@path` file references; [`prepare`] also runs `` !`command` `` lines and returns
+//! the command's model and allowed tools, which apply to the request it starts.
+//!
+//! As in Claude Code, a `` !`command` `` runs only when `allowed-tools` allows it (`Bash(git status:*)`).
+//! A project's commands may run them and grant tools only once the folder is trusted.
 
 use std::{fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::{AppState, workspace::{data_dir, project_root}};
+use crate::{AppState, sessions::CommandRun, workspace::{data_dir, project_root}};
+
+/// Longest a `` !`command` `` may run, and the most of its output kept.
+const INLINE_SECONDS: u64 = 30;
+const INLINE_CHARS: usize = 10_000;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Default, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -290,18 +298,89 @@ pub fn list_commands(state: State<'_, AppState>) -> Vec<SlashCommand> {
     commands
 }
 
-/// The prompt a custom command sends: its template expanded with `args` (see [`expand`]).
+/// The prompt a custom command sends: its template expanded with `args` (see [`prepare`]). Its
+/// model and allowed tools are kept on the shown session for the request that prompt starts.
 #[tauri::command]
-pub fn expand_command(name: String, args: String, state: State<'_, AppState>) -> Result<String, String> {
+pub async fn expand_command(name: String, args: String, state: State<'_, AppState>) -> Result<String, String> {
     let name = name.trim().trim_start_matches('/').to_lowercase();
     let command = list_commands(state.clone()).into_iter().find(|command| command.name == name).ok_or_else(|| format!("No command named /{name}"))?;
     let root = project_root(&state).unwrap_or_default();
-    Ok(expand(&command.template, &args, &root))
+    let (prompt, run) = prepare(&command, &args, &root).await;
+    if let Ok(shared) = crate::sessions::active(&state) {
+        crate::sessions::lock(&shared)?.command_run = Some(run);
+    }
+    Ok(prompt)
+}
+
+/// A command's prompt, with `` !`command` `` output filled in, and the options for its request.
+pub async fn prepare(command: &SlashCommand, args: &str, root: &Path) -> (String, CommandRun) {
+    // A project's command files could come from anyone who wrote to the repository.
+    let trusted = command.source == "personal" || (command.source == "project" && crate::trust::is_trusted(root));
+    let allowed_tools = if trusted { command.allowed_tools.clone() } else { Vec::new() };
+    let prompt = run_inline_commands(&expand(&command.template, args, root), &allowed_tools, root).await;
+    (prompt.clone(), CommandRun { prompt, model: command.model.trim().to_string(), allowed_tools })
+}
+
+/// Replaces each `` !`command` `` with what it printed. Only commands `allowed_tools` allows run, in
+/// the sandbox; refused and destructive ones never do.
+async fn run_inline_commands(text: &str, allowed_tools: &[String], root: &Path) -> String {
+    let mut rules = crate::policy::Rules::default();
+    rules.extend_from(&serde_json::json!({"permissions": {"allow": allowed_tools}}), "allowed-tools");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("!`") {
+        let Some(end) = rest[at + 2..].find('`') else { break };
+        let command = rest[at + 2..at + 2 + end].trim();
+        out.push_str(&rest[..at]);
+        rest = &rest[at + 2 + end + 1..];
+        let allowed = rules.check(root, "run_shell_command", &serde_json::json!({ "command": command })).is_some_and(|found| found.decision == crate::policy::Decision::Allow);
+        let output = if command.is_empty() {
+            String::new()
+        } else if !allowed {
+            format!("[`{command}` was not run: the command's allowed-tools does not allow it, or the project is not trusted]")
+        } else if crate::policy::refused(command).is_some() || crate::policy::decide(root, command) == crate::policy::Decision::Deny {
+            format!("[`{command}` was not run: it is destructive]")
+        } else {
+            run_inline(command, root).await
+        };
+        out.push_str(&output);
+    }
+    out.push_str(rest);
+    out
+}
+
+async fn run_inline(command: &str, root: &Path) -> String {
+    let mut prepared = crate::sandbox::prepare(command, root, true);
+    prepared.process.current_dir(root).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+    let Ok((child, _guard)) = prepared.start() else { return format!("[`{command}` could not start]") };
+    match tokio::time::timeout(std::time::Duration::from_secs(INLINE_SECONDS), child.wait_with_output()).await {
+        Ok(Ok(output)) => {
+            let mut text = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
+            if !output.status.success() {
+                text.push_str(String::from_utf8_lossy(&output.stderr).trim_end());
+            }
+            text.chars().take(INLINE_CHARS).collect()
+        }
+        Ok(Err(error)) => format!("[`{command}` failed: {error}]"),
+        Err(_) => format!("[`{command}` took longer than {INLINE_SECONDS}s and was stopped]"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn inline_commands_run_only_when_allowed() {
+        let root = std::env::temp_dir();
+        let allowed = vec!["Bash(echo:*)".to_string()];
+        let text = run_inline_commands("Status: !`echo neru-inline` and !`git push` done", &allowed, &root).await;
+        assert!(text.starts_with("Status: neru-inline and "), "{text}");
+        assert!(text.contains("[`git push` was not run") && text.ends_with(" done"), "{text}");
+        assert_eq!(run_inline_commands("no commands, just `code`", &allowed, &root).await, "no commands, just `code`");
+        let none = run_inline_commands("!`echo hi`", &[], &root).await;
+        assert!(none.contains("was not run"), "{none}");
+    }
 
     #[test]
     fn parses_front_matter_and_plain_files() {

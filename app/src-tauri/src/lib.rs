@@ -9,6 +9,7 @@ mod extras;
 mod fallback;
 mod git;
 mod hooks;
+mod imports;
 mod index;
 mod limits;
 mod mcp;
@@ -19,13 +20,20 @@ mod preview;
 mod preview_proxy;
 mod providers;
 mod run_options;
+mod sandbox;
 mod sessions;
 mod settings;
 mod shells;
 mod skills;
+mod styles;
 mod stream;
 mod subagent;
 mod tasks;
+mod team;
+mod team_agents;
+mod team_mcp;
+mod team_more;
+mod team_tools;
 mod terminal;
 mod tools;
 mod trust;
@@ -69,6 +77,9 @@ pub enum PendingAction {
         /// Seconds before the command is stopped; None keeps the default limit.
         #[serde(default)]
         timeout_seconds: Option<u64>,
+        /// The model asked to run it outside the OS sandbox (sandbox.rs); the user always approves.
+        #[serde(default)]
+        outside_sandbox: bool,
     },
     /// A tool on a connected MCP server.
     Mcp {
@@ -311,6 +322,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             agent::new_chat,
             models::list_models,
             models::probe_model,
+            subagent::answer_subagent_approval,
             models::check_models,
             models::cancel_check_models,
             agent::ai_chat,
@@ -352,9 +364,63 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             mcp::mcp_sync_project,
             trust::commands::project_trust_status,
             trust::commands::trust_project,
+            trust::commands::untrust_project,
+            team::commands::list_team_agents,
+            team::commands::list_team_tasks,
+            team::commands::create_team_task,
+            team::commands::team_snapshot,
+            team::commands::add_team_member,
+            team::commands::update_team_member,
+            team::commands::remove_team_member,
+            team::commands::set_team_worktree,
+            team::commands::rename_team_task,
+            team::commands::set_team_routing,
+            team::commands::delete_team_task,
+            team::commands::send_team_message,
+            team::commands::stop_team,
+            team::commands::cancel_team_routing,
+            team::commands::list_team_artifacts,
+            team::commands::read_team_artifact,
+            team::commands::write_team_artifact,
+            team::commands::team_agent_login,
+            team::commands::sweep_team_worktrees,
+            team::commands::undo_team_turn,
+            team::commands::fork_team_member,
+            team::commands::ask_team_side,
+            team::commands::team_open_terminal,
+            team::commands::set_team_pinned,
+            team::commands::set_team_labels,
+            team::commands::search_team,
+            team::commands::list_custom_agents,
+            team::commands::set_gemini_key,
+            team::commands::team_cleanup_info,
+            team::commands::set_team_appearance,
+            team::commands::update_team_queue,
+            team::commands::rerun_team_setup,
+            team_more::commands::team_task_changes,
+            team_more::commands::team_pr_status,
+            team_more::commands::team_failed_log,
+            team_more::commands::team_task_cwd,
+            team_more::commands::team_terminal_launch,
+            team_more::commands::list_agent_models,
+            team_more::commands::list_agent_commands,
+            team_more::commands::set_agent_path,
+            team_more::commands::agent_latest_version,
+            team_more::commands::install_agent,
+            team_more::commands::set_team_execution,
+            team_more::commands::run_team_execution,
+            team_more::commands::stop_team_execution,
+            team_more::commands::export_team_usage,
+            team::commands::set_team_artifact_status,
+            team::commands::export_team_artifacts,
+            imports::scan_imports,
+            imports::import_chats,
+            imports::import_rules,
+            imports::import_servers,
             voice::voice_status,
             voice::configure_voice,
             settings::forget_keys,
+            settings::saved_key_providers,
             voice::transcribe_audio,
             web::open_url,
             cli_setup::cli_status,

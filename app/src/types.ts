@@ -1,4 +1,4 @@
-export type Section = 'home' | 'explorer' | 'search' | 'git' | 'terminal' | 'preview' | 'settings'
+export type Section = 'home' | 'explorer' | 'search' | 'git' | 'terminal' | 'preview' | 'settings' | 'team'
 
 export interface ProjectInfo {
   name: string
@@ -116,7 +116,8 @@ export interface Source {
 
 export interface ChatEntry {
   id: string
-  role: 'user' | 'assistant'
+  /** A note is a session event (a model switch, a compaction) shown as a quiet line. */
+  role: 'user' | 'assistant' | 'note'
   content: string
   steps?: string[]
   contextPaths?: string[]
@@ -146,7 +147,10 @@ export type AgentEvent = { sessionId: string } & (
   | ({ type: 'subagent' } & SubagentProgress))
 
 /** Live state of one sub-agent, sent while it works and shown nested under its `task` tool call. */
-export interface SubagentProgress { id: string; role: string; description: string; status: 'running' | 'done'; tools: number; rounds: number; elapsedMs: number; current: string; steps: string[] }
+export interface SubagentProgress { id: string; role: string; description: string; status: 'running' | 'done'; tools: number; rounds: number; elapsedMs: number; current: string; steps: string[]; approval?: SubagentApproval }
+
+/** An edit or command a sub-agent waits on the user for, answered with api.answerSubagentApproval. */
+export interface SubagentApproval { requestId: string; kind: string; label: string; diff?: string | null }
 
 export interface Todo { content: string; status: 'pending' | 'in_progress' | 'completed' }
 
@@ -243,3 +247,43 @@ export interface ProbeResult { model: string; status: 'ok' | 'unavailable' | 'un
 export interface CheckProgress { runId: string; done: number; total: number; result: ProbeResult | null; finished: boolean; note: string | null }
 
 export interface CheckSummary { checked: number; total: number; ok: number; unavailable: number; unknown: number; cancelled: boolean; note: string | null }
+
+/** A coding-agent CLI Neru can run as a Team member on the user's own subscription. */
+export interface TeamAgent { kind: string; name: string; path: string | null; version: string | null; signedIn: boolean; login: string; install: string; resumes: boolean; customPath?: boolean; npm?: string | null }
+export interface TeamLimit { label: string; used: number; resetsAt: number | null }
+export interface TeamSpend { at: number; input: number; output: number; cost: number }
+export interface TeamUsage { input: number; output: number; cost: number; turns: number; limits: TeamLimit[]; history?: TeamSpend[] }
+export type TeamMemberStatus = 'idle' | 'working' | 'failed' | 'stopped' | ''
+export interface TeamMember { handle: string; kind: string; model: string; mode: string; upstream: string | null; seen: number; status: TeamMemberStatus; error: string | null; usage: TeamUsage; worktree: { path: string; branch: string; base: string } | null; forkNext?: boolean }
+export interface TeamChanges { root: string; before: string; after: string; files: { path: string; status: string }[]; undone: boolean }
+export interface TeamPost { id: string; author: string; to: string[]; text: string; steps: string[]; at: number; kind: 'message' | 'notice' | 'error' | 'side' | 'setup' | 'queued'; changes?: TeamChanges; status?: 'running' | 'ok' | 'failed' }
+export interface TeamQueued { id: string; text: string; to: string[]; at: number }
+export interface TeamExecution { executor: string; reviewer: string; maxRounds: number; running: boolean }
+export interface TeamTask { id: string; title: string; projectPath: string; createdAt: number; updatedAt: number; members: TeamMember[]; posts: TeamPost[]; routeOnLimit: boolean; pinned: boolean; labels: string[]; folder: string; group: string; icon: string; color: string; queue: TeamQueued[]; queuePaused: boolean; execution: TeamExecution }
+export interface TeamTaskSummary { id: string; title: string; projectPath: string; updatedAt: number; createdAt: number; running: boolean; pinned: boolean; labels: string[]; members: { handle: string; kind: string; status: TeamMemberStatus }[]; group: string; icon: string; color: string; failed: boolean; posts: number; queued: number }
+export interface TeamTaskFile { path: string; diff: string; additions: number; deletions: number; status: string; place: string }
+export interface TeamTreeInfo { handle: string; path: string; branch: string; dirty: number; ahead: number }
+export interface AgentCommand { agent: string; name: string; description: string; body: string }
+export interface TerminalLaunch { cwd: string; program: string; args: string[]; env: [string, string][]; title: string }
+export interface TeamArtifact { path: string; size: number; modified: number; versions: string[]; kind: string | null; status: string | null; title: string | null }
+export interface TeamSearchHit { taskId: string; taskTitle: string; postId: string; author: string; snippet: string; at: number }
+export interface CustomAgent { kind: string; name: string; path: string }
+export type TeamEvent = { taskId: string } & (
+  | { type: 'member'; member: TeamMember }
+  | { type: 'live'; handle: string; text: string; steps: string[] }
+  | { type: 'post'; post: TeamPost }
+  | { type: 'routing'; from: string; to: string; seconds: number; moved?: boolean }
+  | { type: 'error'; error: string }
+  | { type: 'queued'; handle: string; queued: boolean }
+  | { type: 'idle'; summary: TeamTaskSummary }
+  | { type: 'queue'; queue: TeamQueued[]; paused: boolean }
+  | { type: 'setup'; post: TeamPost }
+  | { type: 'execution'; running: boolean }
+)
+export interface ImportSource { id: string; name: string; kind: 'agent' | 'app' | 'editor'; found: boolean; path: string; chats: number; skills: number; servers: number; rules: number; note: string | null }
+export interface ImportChat { key: string; source: string; cwd: string; title: string; updated: number; messages: number; imported: boolean; unreadable: boolean; reason: string | null }
+export interface ImportProgress { done: number; total: number; title: string }
+export interface ImportSkill { source: string; name: string; path: string; description: string; conflict: boolean }
+export interface ImportServer { key: string; source: string; name: string; target: string; conflict: boolean }
+export interface ImportRules { source: string; path: string; scope: 'personal' | 'project'; size: number; imported: boolean }
+export interface ImportScan { sources: ImportSource[]; chats: ImportChat[]; skills: ImportSkill[]; servers: ImportServer[]; rules: ImportRules[] }

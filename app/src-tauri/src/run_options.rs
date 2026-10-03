@@ -1,5 +1,6 @@
-//! Options one run of the terminal CLI sets for every request: `--allowedTools`, `--disallowedTools`
-//! and `--max-turns`. The rules use the same syntax as `permissions` in Claude Code's settings files.
+//! Options one run of the terminal CLI sets for every request: `--allowedTools`, `--disallowedTools`,
+//! `--max-turns`, `--fallback-model`, `--system-prompt` and `--add-dir`. The rules use the same
+//! syntax as `permissions` in Claude Code's settings files.
 
 use std::sync::{LazyLock, RwLock};
 
@@ -11,6 +12,26 @@ pub struct RunOptions {
     pub deny: Vec<String>,
     /// Most tool rounds per request.
     pub max_rounds: Option<usize>,
+    /// Models to switch to, in order, before Neru picks one itself when the current model fails.
+    pub fallback_models: Vec<String>,
+    /// Replaces Neru's own system prompt; instruction files, skills and memory still follow it.
+    pub system_prompt: Option<String>,
+    /// Folders outside the project the agent may also read and edit, canonical.
+    pub add_dirs: Vec<std::path::PathBuf>,
+    /// --append-system-prompt: added to the end of the system prompt.
+    pub append_system_prompt: Option<String>,
+    /// The CLI's --model and automatic switches last for this run only, as in Claude Code: saving
+    /// settings keeps the model already on disk. /model and `neru login` turn it off.
+    pub keep_saved_model: bool,
+}
+
+/// The `--add-dir` folder that holds `path`, when `path` is absolute and inside one.
+pub fn added_dir_for(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    get().add_dirs.into_iter().find(|dir| path.starts_with(dir))
 }
 
 static OPTIONS: LazyLock<RwLock<RunOptions>> = LazyLock::new(Default::default);
@@ -18,6 +39,12 @@ static OPTIONS: LazyLock<RwLock<RunOptions>> = LazyLock::new(Default::default);
 pub fn set(options: RunOptions) {
     if let Ok(mut current) = OPTIONS.write() {
         *current = options;
+    }
+}
+
+pub fn update(change: impl FnOnce(&mut RunOptions)) {
+    if let Ok(mut current) = OPTIONS.write() {
+        change(&mut current);
     }
 }
 

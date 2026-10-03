@@ -3,7 +3,8 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, MessageCircle, Mic, Moon, Paperclip, PenLine, RotateCw, FolderSearch, Plus, ShieldCheck, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Bot, Cpu, Download, Palette, Plug, Search, Settings, FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, MessageCircle, Mic, Moon, Paperclip, PenLine, RotateCw, FolderSearch, Plus, ShieldCheck, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
 import { FileDiff } from '@/components/agents/file-diff'
 import { languageForPath } from '@/components/agents/agent-code'
 import type { StreamingResponseFeedback } from '@/components/agents/streaming-response'
@@ -22,15 +23,19 @@ import { downloadModel, transcribeLocally } from '@/lib/speech/local'
 import { ApprovalCard, Conversation, TodoPanel, agentPhase, draftState, type LiveResponse, type ResolvedApproval } from './components/neru/Conversation'
 import { FileTree, type TreeChange } from './components/neru/FileTree'
 import { Skills } from './components/neru/Skills'
+import { TeamView, sendToTeamComposer } from './components/neru/team/TeamView'
+import { AgentsSettings, ImportsSettings } from './components/neru/team/Imports'
 import { UpdateToast, WhatsNew } from './components/neru/WhatsNew'
 import { findUpdate, installUpdate, type Update } from './lib/updates'
 import { getVersion } from '@tauri-apps/api/app'
 import { Mascot } from './components/neru/Mascot'
 import { Onboarding } from './components/neru/Onboarding'
+import { Tour, useTour } from './components/neru/Tour'
+import { APP_TOUR } from './components/neru/appTour'
 import { Sidebar } from './components/neru/Sidebar'
 import { TitleBarLeading, WindowControls, type AppMenuSection } from './components/neru/TitleBar'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { TerminalPane, pushAgentOutput } from './components/neru/TerminalPane'
+import { TerminalPane, pushAgentOutput, type TerminalScope } from './components/neru/TerminalPane'
 import { GitActions } from './components/neru/GitActions'
 import { BrowserTabStrip, PreviewPane } from './components/neru/PreviewPane'
 import { Dock, type DockPaneSpec, type PaneId } from './components/neru/Dock'
@@ -39,6 +44,7 @@ import { useBrowserTabs } from './lib/useBrowserTabs'
 import { EllipsisVertical, ScanSearch } from 'lucide-react'
 import { SearchPanel } from './components/neru/SearchPanel'
 import { ErrorNotice } from './components/neru/ErrorNotice'
+import { CliSettings } from './components/neru/CliSettings'
 import { useContextMenu } from './components/neru/ContextMenu'
 import type { ErrorAction } from '@/lib/friendlyError'
 import type { ModelInfo, Todo, WorkspaceChange, AgentEvent, AgentMode, AgentResponse, PrStatus, SessionChange, SlashCommand, AttachedDocument, ChatEntry, ContextUsage, Effort, GitStatus, PendingView, ProjectInfo, ProviderView, RemoteInfo, Section, SessionSnapshot, SessionSummary, TrustStatus, VoiceView } from './types'
@@ -55,7 +61,7 @@ const CodeEditor = lazy(() => import('./components/neru/CodeEditor'))
 const uid = () => crypto.randomUUID()
 const errorText = (value: unknown) => value instanceof Error ? value.message : String(value)
 
-const sectionTitles: Record<Section, string> = { home: 'Session', explorer: 'Explorer', search: 'Search', git: 'Source control', terminal: 'Terminal', preview: 'Preview', settings: 'Settings' }
+const sectionTitles: Record<Section, string> = { home: 'Session', explorer: 'Explorer', search: 'Search', git: 'Source control', terminal: 'Terminal', preview: 'Preview', settings: 'Settings', team: 'Team' }
 const ATTACH_LIMIT = 20
 
 /** "MCP servers github, db · hooks on PreToolUse, Stop" for the trust banner. */
@@ -68,8 +74,25 @@ function trustSummary(status: TrustStatus) {
 
 /** Overrides for one send: who it goes to, what it carries, and whether the message box is left alone (a queued message). */
 interface SendOptions { mode?: AgentMode; sessionId?: string; documents?: AttachedDocument[]; contextPaths?: string[]; keepComposer?: boolean; onStarted?: () => void }
-type SettingsTab = 'general' | 'appearance' | 'model' | 'voice' | 'connectors' | 'skills'
-const settingsTabs: { id: SettingsTab; label: string }[] = [{ id: 'general', label: 'General' }, { id: 'appearance', label: 'Appearance' }, { id: 'model', label: 'Model provider' }, { id: 'voice', label: 'Voice' }, { id: 'connectors', label: 'Connectors' }, { id: 'skills', label: 'Skills' }]
+type SettingsTab = 'general' | 'appearance' | 'model' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills'
+// Grouped like Claude's settings: the app, this computer, and what you add to it. Words help the search find a tab.
+const settingsGroups: { label: string; tabs: { id: SettingsTab; label: string; icon: typeof Settings; words: string }[] }[] = [
+  { label: 'Settings', tabs: [
+    { id: 'general', label: 'General', icon: Settings, words: 'project guide tour notifications web search updates version credits keyboard shortcuts' },
+    { id: 'appearance', label: 'Appearance', icon: Palette, words: 'color mode dark light theme sidebar hover' },
+    { id: 'model', label: 'Model provider', icon: Cpu, words: 'api key provider model base url format free forget keys' },
+    { id: 'voice', label: 'Voice', icon: Mic, words: 'dictation speech microphone whisper transcription language' },
+  ] },
+  { label: 'This computer', tabs: [
+    { id: 'agents', label: 'Agents', icon: Bot, words: 'claude code codex opencode gemini cursor subscriptions sign in cli' },
+    { id: 'cli', label: 'CLI', icon: SquareTerminal, words: 'neru command terminal install path powershell homebrew npm winget curl update uninstall flags shortcuts' },
+    { id: 'imports', label: 'Imports', icon: Download, words: 'chat history skills import claude codex cursor' },
+  ] },
+  { label: 'Customize', tabs: [
+    { id: 'skills', label: 'Skills', icon: BookOpen, words: 'skills commands slash' },
+    { id: 'connectors', label: 'Connectors', icon: Plug, words: 'mcp servers connectors tools' },
+  ] },
+]
 const readStored = <T,>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }
 type Surface = 'chat' | 'code'
 const CHAT_PHRASES = ["Let's noodle", "Let's cook", "Let's knead", "Let's sketch", "Let's tinker", "Let's riff", "Let's wander", "Let's mull it over", "Let's poke at it", "Let's make a mess", "Let's chew on it", "Let's daydream"]
@@ -93,7 +116,7 @@ const WEB_FILE = /\.(html?|css|scss|less|[cm]?[jt]sx?|vue|svelte|astro)$/i
 function applyAgentEvent(live: LiveResponse, event: AgentEvent): LiveResponse {
   if (event.type === 'status' || event.type === 'notice' || event.type === 'context' || event.type === 'provider' || event.type === 'todos' || event.type === 'steered') return live
   if (event.type === 'subagent') {
-    const agent = { id: event.id, role: event.role, description: event.description, status: event.status, tools: event.tools, rounds: event.rounds, elapsedMs: event.elapsedMs, current: event.current, steps: event.steps, since: Date.now() - event.elapsedMs }
+    const agent = { id: event.id, role: event.role, description: event.description, status: event.status, tools: event.tools, rounds: event.rounds, elapsedMs: event.elapsedMs, current: event.current, steps: event.steps, approval: event.approval, since: Date.now() - event.elapsedMs }
     const known = live.tools.some(tool => tool.id === event.id)
     return { ...live, tools: known ? live.tools.map(tool => tool.id === event.id ? { ...tool, agent } : tool) : [...live.tools, { id: event.id, label: `Agent: ${event.description}`, status: 'running' as const, agent }] }
   }
@@ -122,7 +145,18 @@ function EmptyProject({ onOpen }: { onOpen: () => void }) {
 }
 
 function App() {
-  const [section, setSection] = useState<Section>('home')
+  const [section, setSectionRaw] = useState<Section>('home')
+  // Settings open as a dialog over whatever you were doing, like Claude's.
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsQuery, setSettingsQuery] = useState('')
+  const setSection = useCallback((next: Section | ((current: Section) => Section)) => {
+    if (next === 'settings') { setSettingsOpen(true); return }
+    setSettingsOpen(false); setSectionRaw(next)
+  }, [])
+  const sectionRef = useRef(section)
+  useEffect(() => { sectionRef.current = section }, [section])
+  // The open Team task's terminal tabs and folder.
+  const [teamScope, setTeamScope] = useState<TerminalScope | null>(null)
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [recent, setRecent] = useState<string[]>([])
   const [messages, setMessages] = useState<ChatEntry[]>([])
@@ -148,6 +182,14 @@ function App() {
   const [effortOk, setEffortOk] = useState(false)
   const [context, setContext] = useState<ContextUsage | null>(null)
   const [notice, setNotice] = useState('')
+  // Session events (a model switch, a compaction) are lines in the thread. The backend keeps the
+  // finished ones in the session's transcript; one ending in “…” is progress, shown until the next.
+  const [progressNote, setProgressNote] = useState<string | null>(null)
+  /** Shows a session event in the thread. Null clears a line in progress. */
+  const sessionNote = useCallback((text: string | null) => {
+    if (text && !text.endsWith('…')) setMessages(current => [...current, { id: uid(), role: 'note', content: text }])
+    setProgressNote(text?.endsWith('…') ? text : null)
+  }, [])
   // What the open project's .mcp.json and settings hooks would run, until the folder is trusted.
   const [trust, setTrust] = useState<(TrustStatus & { path: string }) | null>(null)
   const [trustBusy, setTrustBusy] = useState(false)
@@ -203,7 +245,8 @@ function App() {
   const paneOpen: Record<PaneId, boolean> = { terminal: dock.terminal, files: dock.files, browser: dock.browser, changes: reviewOpen }
   const setPane = (id: PaneId, open: boolean) => {
     if (id === 'changes') { setReviewOpen(open); if (open) void loadChangesRef.current() } else setDock(current => ({ ...current, [id]: open }))
-    if (open) setSection('home')
+    // Panes open beside a session or a Team task; anywhere else they bring you back to the session.
+    if (open) setSection(current => current === 'team' ? current : 'home')
     else setDockExpanded(current => current === id ? null : current)
   }
   const openPane = (id: PaneId) => setPane(id, true)
@@ -213,6 +256,8 @@ function App() {
   const loadChangesRef = useRef<() => Promise<void> | void>(() => undefined)
   // Feedback from the in-app browser (annotations, a picked element, console errors) lands in the message box.
   const sendFromPreview = (text: string, images: { name: string; dataUrl: string }[], element?: { label: string; detail: string }) => {
+    // In Team, the feedback goes to the task's message box instead, so a teammate fixes it.
+    if (sectionRef.current === 'team' && sendToTeamComposer([element ? `${element.label}\n${element.detail}` : '', text, images.length ? `[${images.length === 1 ? 'A screenshot was' : `${images.length} screenshots were`} left out: Team messages are text only.]` : ''].filter(Boolean).join('\n\n'))) return
     // A picked element becomes a compact chip in the message box; its full detail goes with the message.
     if (element) setDocuments(current => [...current.filter(doc => !(doc.kind === 'element' && doc.text === element.detail)), { name: element.label, path: `element:${uid()}`, size: element.detail.length, kind: 'element' as const, text: element.detail }].slice(-ATTACH_LIMIT))
     if (text) setPrompt(current =>`${current.trim() ? `${current.trim()}\n\n` : ''}${text}`)
@@ -304,6 +349,10 @@ function App() {
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsError, setModelsError] = useState('')
   const [providerReady, setProviderReady] = useState(() => !isTauri())
+  // Providers with a key saved on this PC: switching back to one reuses its key instead of asking again.
+  const [savedKeys, setSavedKeys] = useState<string[]>([])
+  const refreshSavedKeys = () => { if (isTauri()) void api.savedKeyProviders().then(setSavedKeys).catch(() => undefined) }
+  useEffect(refreshSavedKeys, [])
   const [onboarding, setOnboarding] = useState<'checking' | 'show' | 'done'>(() => isTauri() ? 'checking' : localStorage.getItem('neru.onboarding.v1') === 'done' ? 'done' : 'show')
 
   useEffect(() => {
@@ -322,7 +371,7 @@ function App() {
         try {
           const snapshot = await api.currentSession()
           const history = await api.listAllSessions()
-          if (snapshot) { setActiveSessionId(snapshot.session.id); setMessages(snapshot.messages); setPending(snapshot.pending); setPendingFromAgent(snapshot.pendingFromAgent) }
+          if (snapshot) { setActiveSessionId(snapshot.session.id); setMessages(snapshot.messages); setProgressNote(null); setPending(snapshot.pending); setPendingFromAgent(snapshot.pendingFromAgent) }
           applySessions(history)
           if (snapshot) void api.sessionContext(snapshot.session.id).then(setContext).then(() => api.refreshContext(snapshot.session.id)).then(setContext).catch(() => undefined)
         } catch (cause) { setError(errorText(cause)) }
@@ -336,6 +385,21 @@ function App() {
       } else setOnboarding('show')
     })()
   }, [])
+  // Health check of the model in use, once per model and app start: a model the list offers can
+  // still be refused (a free tier locked to the provider's own app, an account without credits).
+  // A check from the last day answers without sending anything.
+  const checkedModel = useRef('')
+  useEffect(() => {
+    if (!providerReady || !isTauri() || !provider.configured || !provider.model || LISTING_IS_AUTHORITATIVE.has(provider.providerId)) return
+    const key = `${provider.providerId}|${provider.baseUrl}|${provider.model}`
+    if (checkedModel.current === key) return
+    checkedModel.current = key
+    void api.probeModel(provider.providerId, provider.apiFormat, provider.baseUrl, '', provider.model).then(result => {
+      if (checkedModel.current !== key) return
+      if (result.status === 'unavailable') setModelNotice({ tone: 'error', text: `${shortModelName(provider.model)} does not work with this key: ${result.reason}. Neru switches to another model when a request fails; pick one in the model menu to choose yourself.` })
+      else if (result.status === 'badKey') setModelNotice({ tone: 'error', text: `${result.reason}. Check the key in Settings → Model provider.` })
+    }).catch(() => undefined)
+  }, [providerReady, provider.configured, provider.providerId, provider.baseUrl, provider.model, provider.apiFormat])
   useEffect(() => { document.documentElement.dataset.theme = light ? 'light' : 'dark'; writeStored('neru.theme', light ? 'light' : 'dark') }, [light])
   useEffect(() => { activeRef.current = activeSessionId }, [activeSessionId])
   // After an update, show what changed once. A first install is covered by onboarding instead.
@@ -374,7 +438,7 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return
     const unlisten = api.onAgentEvent(event => {
-      if (event.type === 'notice') { if (event.sessionId === activeRef.current) setNotice(event.text); return }
+      if (event.type === 'notice') { if (event.sessionId === activeRef.current) sessionNote(event.text); return }
       if (event.type === 'context') { if (event.sessionId === activeRef.current) setContext(event.usage); return }
       if (event.type === 'todos') { if (event.sessionId === activeRef.current) setTodos(event.todos); return }
       if (event.type === 'steered') return
@@ -385,6 +449,7 @@ function App() {
       }
       if (event.type === 'status') {
         setRunning(current => { const next = new Set(current); if (event.running) next.add(event.sessionId); else next.delete(event.sessionId); return next })
+        if (!event.running && event.sessionId === activeRef.current) sessionNote(null)
         setSessions(list => list.map(item => item.id === event.sessionId ? { ...item, running: event.running } : item))
         return
       }
@@ -463,6 +528,7 @@ function App() {
     const id = snapshot.session.id
     setActiveSessionId(id); activeRef.current = id
     setMessages(snapshot.messages); setTodos(snapshot.todos ?? []); setPending(snapshot.pending); setPendingFromAgent(snapshot.pendingFromAgent); setPendingStatus('pending'); setResolved([]); setFailed(null)
+    setProgressNote(null)
     // A session still responding in the background shows its live reply when you come back to it.
     const background = liveBy.current[id] ?? null
     liveRef.current = background; setLive(background)
@@ -489,7 +555,7 @@ function App() {
     try {
       setRecent(await api.forgetProject(path))
       if (project && project.path === path) {
-        setProject(null); setMessages([]); setActiveSessionId(null); activeRef.current = null
+        setProject(null); setMessages([]); setActiveSessionId(null); activeRef.current = null; setProgressNote(null)
         setSelectedFile(null); setFileText(''); setFileDraft(''); setTabs([]); setPending(null); setTodos([])
       }
       await refreshSessions()
@@ -523,10 +589,10 @@ function App() {
       setProject(next); setRecent(await api.recentProjects()); const snapshot = await api.currentSession(); if (snapshot) loadSession(snapshot); await refreshSessions(); setSelectedFile(null); setGitStatus(null); setSection('home'); setCloneOpen(false); setCloneUrl('')
     } catch (cause) { setError(errorText(cause)) } finally { setBusy(false) }
   }
-  const newChat = useCallback(async (worktree = false) => { if (!project || busy) return; try { loadSession(await api.createSession(worktree === true)); await refreshSessions(); if (worktree === true) setNotice('New session in its own Git worktree. Its changes stay on a separate branch until you push them.') } catch (cause) { setError(errorText(cause)) } }, [project, busy, loadSession, refreshSessions])
+  const newChat = useCallback(async (worktree = false) => { if (!project || busy) return; try { loadSession(await api.createSession(worktree === true)); await refreshSessions(); if (worktree === true) sessionNote('New session in its own Git worktree. Its changes stay on a separate branch until you push them.') } catch (cause) { setError(errorText(cause)) } }, [project, busy, loadSession, refreshSessions])
   const blankChat = () => {
     setActiveSessionId(null); activeRef.current = null
-    setMessages([]); setPending(null); setPendingFromAgent(false); setPendingStatus('pending'); setResolved([]); setFailed(null); setLive(null)
+    setMessages([]); setPending(null); setPendingFromAgent(false); setPendingStatus('pending'); setResolved([]); setFailed(null); setLive(null); setProgressNote(null)
     setSection('home')
   }
   const newLooseChat = useCallback(async () => {
@@ -601,7 +667,7 @@ function App() {
   const imagesAllowed = (docs: AttachedDocument[]) => {
     if (!docs.some(doc => doc.kind === 'image') || !activeModel || activeModel.vision) return true
     if (activeModel.source === 'metadata') { setError(`${provider.model} reads text only. Switch to a model with the eye icon in the model menu, or remove the image.`); return false }
-    setNotice(`${provider.model} may not read images (judging by its name). Sending anyway.`)
+    sessionNote(`${provider.model} may not read images (judging by its name). Sending anyway.`)
     return true
   }
   const runChat = async (value: string, addUser = true, options: SendOptions = {}) => {
@@ -805,10 +871,11 @@ function App() {
     try { setChanges(await api.sessionChanges()) } catch { setChanges([]) } finally { setChangesLoading(false) }
   }
   loadChangesRef.current = loadChanges
-  const compactNow = async () => {
+  const compactNow = async (instructions?: string) => {
     if (!activeSessionId || responding) return
-    setNotice('Compacting the conversation…')
-    try { setContext(await api.compactSession(activeSessionId)); setNotice('Earlier messages were summarized. The latest requests are kept word for word.') } catch (cause) { setNotice(''); setError(errorText(cause)) }
+    sessionNote('Compacting conversation…')
+    // The backend adds “Compacted conversation · saved …” to the session and sends it like any event.
+    try { setContext(await api.compactSession(activeSessionId, instructions)) } catch (cause) { sessionNote(null); setError(errorText(cause)) }
   }
   const builtInCommands: SlashCommand[] = [
     { name: 'new', description: 'Start a new session', template: '', source: 'built-in' },
@@ -888,7 +955,7 @@ function App() {
         case 'export': {
           if (!project) { say('Open a project to export into it.'); return }
           const title = sessions.find(item => item.id === activeSessionId)?.title ?? 'conversation'
-          const body = `# ${title}\n\n${messages.map(entry => `## ${entry.role === 'user' ? 'You' : 'Neru'}\n\n${entry.content}${entry.steps?.length ? `\n\n${entry.steps.map(step => `- ${step}`).join('\n')}` : ''}`).join('\n\n')}\n`
+          const body = `# ${title}\n\n${messages.map(entry => entry.role === 'note' ? `_${entry.content}_` : `## ${entry.role === 'user' ? 'You' : 'Neru'}\n\n${entry.content}${entry.steps?.length ? `\n\n${entry.steps.map(step => `- ${step}`).join('\n')}` : ''}`).join('\n\n')}\n`
           const path = `.neru/exports/${title.replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'conversation'}-${new Date().toISOString().slice(0, 10)}.md`
           await api.saveFile(path, body); setTreeVersion(value => value + 1); say(`Saved this conversation to \`${path}\`.`); return
         }
@@ -909,9 +976,9 @@ function App() {
     switch (command.name) {
       case 'new': void newChat(); return true
       case 'worktree': void newChat(true); return true
-      case 'compact': void compactNow(); return true
+      case 'compact': void compactNow(args || undefined); return true
       case 'review': setReviewOpen(true); void loadChanges(); void runChat('Review the current uncommitted changes. Inspect Git status and the diff. For every concrete bug or risk, call add_review_comment with the file path, line, and a short note. Do not edit files.'); return true
-      case 'plan': setAgentMode('plan'); if (args) void runChat(args); else setNotice('Plan mode: Neru will explore and propose a plan without changing anything.'); return true
+      case 'plan': setAgentMode('plan'); if (args) void runChat(args); else sessionNote('Plan mode: Neru will explore and propose a plan without changing anything.'); return true
       case 'init': void runChat('Explore this repository and write an AGENTS.md at its root for future coding sessions: what the project is, how it is organised, how to build, test and run it, coding conventions, and anything surprising. Keep it concise and factual; propose it as a file edit.'); return true
       case 'connectors': setSettingsTab('connectors'); setSection('settings'); return true
       case 'settings': setSection('settings'); return true
@@ -929,10 +996,10 @@ function App() {
       setPrompt(result.prompt)
       setCheckpoint('')
       if (result.restored.length > 0) {
-        setNotice(`Rewound and restored ${result.restored.length === 1 ? result.restored[0] : `${result.restored.length} files`}. Edit the message and send it again.`)
+        sessionNote(`Rewound and restored ${result.restored.length === 1 ? result.restored[0] : `${result.restored.length} files`}. Edit the message and send it again.`)
         void refreshGit()
         if (selectedFile && result.restored.includes(selectedFile)) void showFile(selectedFile)
-      } else setNotice('Rewound. Edit the message and send it again.')
+      } else sessionNote('Rewound. Edit the message and send it again.')
       await refreshSessions()
     } catch (cause) { setError(errorText(cause)) }
   }
@@ -1181,7 +1248,11 @@ function App() {
     const timer = window.setInterval(() => void tick(), 20_000)
     return () => window.clearInterval(timer)
   }, [section, autoFix, autoMerge, remote?.github, notifications])
-  const selectProvider = (id: string) => { const preset = providerPresets.find(item => item.id === id); if (!preset) return; setProviderId(id); setProviderFormat(formatForModel(id, preset.model, preset.format, preset.baseUrl)); setProviderUrl(preset.baseUrl); setProviderModel(preset.model); setProviderKey(''); setModels([]); setModelsError('') }
+  const selectProvider = (id: string) => {
+    const preset = providerPresets.find(item => item.id === id); if (!preset) return
+    // Back to the provider in use: restore its own URL and model rather than the preset's.
+    if (id === provider.providerId) { setProviderId(id); setProviderFormat(provider.apiFormat); setProviderUrl(provider.baseUrl); setProviderModel(provider.model); setProviderKey(''); setModels([]); setModelsError(''); return }
+    setProviderId(id); setProviderFormat(formatForModel(id, preset.model, preset.format, preset.baseUrl)); setProviderUrl(preset.baseUrl); setProviderModel(preset.model); setProviderKey(''); setModels([]); setModelsError('') }
   const saveProvider = async () => {
     try {
       if (!LISTING_IS_AUTHORITATIVE.has(providerId) && providerModel) {
@@ -1193,15 +1264,18 @@ function App() {
           if (result.status === 'badKey') { setError(`${result.reason}. Check the API key.`); return }
         }
       }
-      setProvider(await api.configureProvider(providerId, providerFormat, providerUrl, providerKey, providerModel)); setProviderKey(''); setError(''); setModelNotice(null)
+      setProvider(await api.configureProvider(providerId, providerFormat, providerUrl, providerKey, providerModel)); setProviderKey(''); setError(''); setModelNotice(null); refreshSavedKeys()
     } catch (cause) { setError(errorText(cause)) }
   }
+  const appTour = useTour('neru.tour.app.v1')
+  // The app walkthrough plays once, right after onboarding (or on the first launch that has it).
+  useEffect(() => { if (onboarding === 'done' && section === 'home' && !settingsOpen && !appTour.seen()) { const timer = window.setTimeout(appTour.start, 600); return () => window.clearTimeout(timer) } }, [settingsOpen, onboarding]) // eslint-disable-line react-hooks/exhaustive-deps
   const finishOnboarding = () => { localStorage.setItem('neru.onboarding.v1', 'done'); setOnboarding('done'); setSection('home') }
   const chooseModel = (model: string) => { setProviderModel(model); setProviderFormat(formatForModel(providerId, model, providerFormat, providerUrl)) }
   useEffect(() => {
     if (!providerReady || !isTauri()) return
     const local = /localhost|127\.0\.0\.1/.test(providerUrl)
-    const savedKey = provider.hasKey && provider.providerId === providerId && provider.baseUrl.replace(/\/+$/, '') === providerUrl.replace(/\/+$/, '')
+    const savedKey = (provider.hasKey && provider.providerId === providerId) || savedKeys.includes(providerId)
     if (!providerKey.trim() && !savedKey && !local) {
       setModels([])
       setModelsLoading(false)
@@ -1228,16 +1302,18 @@ function App() {
       }).finally(() => { if (!cancelled) setModelsLoading(false) })
     }, 400)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [providerReady, providerId, providerUrl, providerKey, provider.hasKey, provider.providerId, provider.baseUrl])
+  }, [providerReady, providerId, providerUrl, providerKey, provider.hasKey, provider.providerId, provider.baseUrl, savedKeys])
   const paletteActions = [
     { label: 'Open project', action: chooseProject }, { label: 'Clone repository', action: () => setCloneOpen(true) }, { label: 'New chat', action: () => newChat() }, ...(project?.git ? [{ label: 'New worktree session', action: () => newChat(true) }] : []),
+    { label: 'Team', action: () => setSection('team') }, { label: 'Import chats & skills', action: () => { setSettingsTab('imports'); setSection('settings') } },
     { label: 'Search project', action: () => setSection('search') }, { label: 'Toggle files', action: () => togglePane('files') },
     { label: 'View Git', action: () => setSection('git') }, { label: 'Toggle terminal', action: () => togglePane('terminal') }, { label: 'Toggle browser', action: () => togglePane('browser') }, { label: 'Toggle changes', action: () => togglePane('changes') },
     { label: 'Settings', action: () => setSection('settings') }, { label: 'Model provider', action: () => { setSettingsTab('model'); setSection('settings') } },
     { label: 'Toggle sidebar', action: () => dockSidebar(!sidebarOpen) }, { label: light ? 'Switch to dark theme' : 'Switch to light theme', action: () => setLight(value => !value) },
     { label: 'Getting started guide', action: () => setOnboarding('show') },
+    { label: 'Take the tour', action: () => { setSection('home'); appTour.start() } },
   ]
-  useEffect(() => { const onKey = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setPalette(value => !value) }; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n' && (surface === 'chat' || project)) { event.preventDefault(); if (surface === 'chat') void newLooseChat(); else void newChat() }; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') { event.preventDefault(); setSidebarOpen(value => { writeStored('neru.sidebar.open', !value); return !value }); setPeek(false) }; if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); setSection('settings') }; if (event.key === 'Escape') { setPalette(false); if (responding) void api.stopChat(activeSessionId).catch(cause => setError(errorText(cause))) } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [project, busy, responding, activeSessionId, newChat, newLooseChat, surface])
+  useEffect(() => { const onKey = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setPalette(value => !value) }; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n' && (surface === 'chat' || project)) { event.preventDefault(); if (surface === 'chat') void newLooseChat(); else void newChat() }; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') { event.preventDefault(); setSidebarOpen(value => { writeStored('neru.sidebar.open', !value); return !value }); setPeek(false) }; if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); setSection('settings') }; if (event.key === 'Escape' && settingsOpen) { setSettingsOpen(false); return }; if (event.key === 'Escape') { setPalette(false); if (responding) void api.stopChat(activeSessionId).catch(cause => setError(errorText(cause))) } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [project, busy, responding, activeSessionId, newChat, newLooseChat, surface, settingsOpen, setSection])
 
   if (onboarding === 'checking') return <div className="onboarding-boot"><Mascot size={68} /><span>Neru</span></div>
   const updateLayer = <>
@@ -1280,6 +1356,7 @@ function App() {
     ] },
     { label: 'Help', items: [
       { label: 'Getting started', onSelect: () => setOnboarding('show') },
+      { label: 'Take the tour', onSelect: () => { setSection('home'); appTour.start() } },
       { label: 'Keyboard shortcuts', onSelect: () => { setSettingsTab('general'); setSection('settings') } },
       'separator',
       { label: 'About Neru 0.1', onSelect: () => { setSettingsTab('general'); setSection('settings') } },
@@ -1287,9 +1364,9 @@ function App() {
   ]
   const threadOpen = messages.length > 0 || Boolean(live) || Boolean(pending) || Boolean(failed)
   const chatHome = surface === 'chat' && section === 'home' && !threadOpen
-  const sidebar = (floating: boolean) => <Sidebar surface={surface} project={project} recent={recent} sessions={sessions} activeSessionId={activeSessionId} section={section} busy={busy} light={light} model={provider.model}
+  const sidebar = (floating: boolean) => <Sidebar surface={surface} project={project} recent={recent} sessions={sessions} activeSessionId={activeSessionId} section={settingsOpen ? 'settings' : section} busy={busy} light={light} model={provider.model}
     onSection={next => { setSection(next); if (next === 'git') void refreshGit() }} onNewSession={newSessionIn} onOpenSession={openSession} onOpenProject={() => void chooseProject()} onCloneProject={() => setCloneOpen(true)}
-    onRenameSession={(id, title) => void renameSession(id, title)} onDeleteSession={id => void removeSession(id)} onForgetProject={path => void forgetProject(path)} onRevealProject={path => void api.revealPath(path).catch(cause => setError(errorText(cause)))} onToggleTheme={() => setLight(value => !value)} onPalette={() => setPalette(true)} onGuide={() => setOnboarding('show')} onCollapse={() => dockSidebar(floating)} floating={floating} />
+    onRenameSession={(id, title) => void renameSession(id, title)} onDeleteSession={id => void removeSession(id)} onForgetProject={path => void forgetProject(path)} onRevealProject={path => void api.revealPath(path).catch(cause => setError(errorText(cause)))} onToggleTheme={() => setLight(value => !value)} onPalette={() => setPalette(true)} onGuide={() => setOnboarding('show')} onTour={() => { setSection('home'); appTour.start() }} onCollapse={() => dockSidebar(floating)} floating={floating} />
   const activeWorktree = sessions.find(item => item.id === activeSessionId)?.worktree
   const pageTitle = section === 'home' ? (sessions.find(session => session.id === activeSessionId)?.title || 'New session') : sectionTitles[section]
   const undoCheckpoint = () => { void api.restoreCheckpoint(checkpoint).then(() => { setCheckpoint(''); if (selectedFile) void showFile(selectedFile); void refreshGit() }).catch(cause => setError(errorText(cause))) }
@@ -1324,12 +1401,14 @@ function App() {
   ]
   const filesBody = project ? <><div className="tree-panel"><div className="panel-heading">Files <span>{project.name}</span></div><FileTree key={project.path} projectKey={project.path} selected={selectedFile} version={treeVersion} changed={touched} lastChange={lastChange} onSelect={path => void showFile(path)} {...treeActions} /></div><div className="editor-panel">{selectedFile ? <><div className="editor-tabs">{tabs.map(tab => <button key={tab.path} type="button" className={tab.path === selectedFile ? 'active' : ''} onClick={() => void showFile(tab.path)} onContextMenu={event => tabMenu(event, tab.path)} onAuxClick={event => { if (event.button === 1) closeTabs(item => item.path === tab.path) }} title={tab.path}>{tab.path.split(/[/\\]/).pop()}{tab.draft !== tab.saved ? ' •' : ''}</button>)}</div><div className="file-toolbar"><FileDiffIcon size={14} /><span className="truncate">{selectedFile}</span>{fileDraft !== fileText && <span className="unsaved-mark">Edited</span>}<button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void saveDraft()}>Save</button><button className="button subtle" onClick={() => void openEditor()}>Open in editor</button><button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void proposeDraft()}>Review changes</button></div><div className="editor-host">{fileLoading ? 'Reading file…' : <Suspense fallback="Loading editor…"><CodeEditor path={selectedFile} value={fileDraft} onChange={setFileDraft} light={light} /></Suspense>}</div>{pending && !pendingFromAgent && <div className="editor-pending"><ApprovalCard pending={pending} status={pendingStatus} projectPath={project.path} onApprove={() => void approve()} onDeny={() => void reject()} /></div>}</> : <div className="empty-pane"><FileSearch size={27} /><h2>Select a file</h2><p>Browse your project from the tree.</p></div>}</div></> : null
   const dockPanes: DockPaneSpec[] = project ? [
-    { id: 'terminal', title: 'Terminal', keepAlive: true, body: terminalSeen ? <TerminalPane key={project.path} projectKey={project.path} /> : null },
+    { id: 'terminal', title: 'Terminal', keepAlive: true, body: terminalSeen ? <TerminalPane key={project.path} projectKey={project.path} scope={section === 'team' && teamScope ? teamScope : undefined} /> : null },
     { id: 'files', title: 'Files', body: filesBody, actions: <button type="button" className="dock-button" onClick={() => setTreeVersion(value => value + 1)} aria-label="Refresh files" title="Refresh files"><RotateCw size={14} /></button> },
     { id: 'changes', title: 'Changes', body: <ReviewPane embedded changes={changes} loading={changesLoading} comments={reviewComments} onComments={setReviewComments} onRefresh={() => void loadChanges()} onClose={() => setPane('changes', false)} onSend={message => void runChat(message)} onOpenFile={path => void showFile(path)} /> },
-    { id: 'browser', title: 'Browser', keepAlive: true, header: <BrowserTabStrip browser={browser} />, body: browserSeen ? <PreviewPane key={project.path} browser={browser} projectKey={project.path} projectName={project.name} open={dock.browser && section === 'home'} onOpenExternal={url => void api.openUrl(url)} onSendToAgent={sendFromPreview} /> : null },
+    { id: 'browser', title: 'Browser', keepAlive: true, header: <BrowserTabStrip browser={browser} />, body: browserSeen ? <PreviewPane key={project.path} browser={browser} projectKey={project.path} projectName={project.name} open={dock.browser && (section === 'home' || section === 'team')} onOpenExternal={url => void api.openUrl(url)} onSendToAgent={sendFromPreview} /> : null },
   ] : []
-  const dockElement = project && surface !== 'chat' ? <Dock panes={dockPanes} open={{ terminal: dock.terminal && section === 'home', files: dock.files && section === 'home', changes: reviewOpen && section === 'home', browser: dock.browser && section === 'home' }} expanded={dockExpanded} onExpand={setDockExpanded} onClose={id => setPane(id, false)} /> : null
+  // The side panes work next to a session and next to a Team task.
+  const dockHere = section === 'home' || section === 'team'
+  const dockElement = project && surface !== 'chat' ? <Dock panes={dockPanes} open={{ terminal: dock.terminal && dockHere, files: dock.files && dockHere, changes: reviewOpen && dockHere, browser: dock.browser && dockHere }} expanded={dockExpanded} onExpand={setDockExpanded} onClose={id => setPane(id, false)} /> : null
   return <div className="app-shell">
   <header className={`titlebar ${/Mac/i.test(navigator.platform) ? 'mac' : ''}`} data-tauri-drag-region>
     <TitleBarLeading sections={menuSections} sidebarOpen={sidebarOpen} onToggleSidebar={() => dockSidebar(!sidebarOpen)} onPeek={() => !sidebarOpen && sidebarHover && showPeek(250)} onUnpeek={() => !sidebarOpen && sidebarHover && hidePeek(400)}
@@ -1363,6 +1442,7 @@ function App() {
       <div className="sidebar-hotzone" aria-hidden onMouseEnter={() => showPeek(120)} onMouseLeave={() => { if (!peek) window.clearTimeout(peekTimer.current) }} />
       {peek && <div className="sidebar-peek" onMouseEnter={() => window.clearTimeout(peekTimer.current)} onMouseLeave={() => hidePeek(280)}>{sidebar(true)}</div>}
     </>}
+  {appTour.open && <Tour label="Neru walkthrough" steps={APP_TOUR} onClose={appTour.close} />}
   <div className="workspace-row"><div className="workspace">
     {error && <div className="error-banner-wrap"><ErrorNotice error={error} onAction={action => { setError(''); errorAction(action) }} onDismiss={() => setError('')} /></div>}
     {notice && !error && <div className="notice-banner" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss"><X size={14} /></button></div>}
@@ -1379,7 +1459,7 @@ function App() {
     </div>}
     {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''}`}>
       {threadOpen
-        ? <Conversation onErrorAction={errorAction} previewOffer={previewOffer && !responding} onOpenPreview={openPreview} onDismissPreview={() => setPreviewOffer(false)} messages={messages} live={live} phase={responding ? agentPhase(live, agentMode) : null} busy={responding || busy} pending={pending} pendingStatus={pendingStatus} resolved={resolved} failed={failed} projectPath={project?.path}
+        ? <Conversation onErrorAction={errorAction} previewOffer={previewOffer && !responding} onOpenPreview={openPreview} onDismissPreview={() => setPreviewOffer(false)} messages={messages} live={live} phase={responding ? agentPhase(live, agentMode) : null} busy={responding || busy} pending={pending} pendingStatus={pendingStatus} resolved={resolved} progressNote={progressNote} failed={failed} projectPath={project?.path}
             feedback={feedback} onFeedback={(id, value) => setFeedback(current => { const next = { ...current, [id]: value }; writeStored('neru.feedback', next); return next })}
             onRetry={() => void runChat('', false)} onRewind={(index, restoreCode) => void rewind(index, restoreCode)} onApprove={() => void approve()} onAlwaysAllow={() => void alwaysAllow()} onDeny={() => void reject()} onResolvePlan={(approve, mode, feedback) => void resolvePlan(approve, mode, feedback)} onAnswer={answers => void answerQuestion(answers)} />
         : chatHome
@@ -1404,23 +1484,33 @@ function App() {
         {chatHome && <div className="chat-ideas">{CHAT_IDEAS.map(idea => <button key={idea.label} type="button" onClick={() => setPrompt(idea.prompt)}><idea.icon size={14} strokeWidth={1.75} />{idea.label}</button>)}<button type="button" onClick={() => chooseSurface('code')}><CodeXml size={14} strokeWidth={1.75} />Code</button></div>}
       </div>
     </main>}
+    {section === 'team' && <TeamView project={project} onError={setError} onOpenSettings={tab => { setSettingsTab(tab); setSection('settings') }} onScope={setTeamScope} onOpenPane={id => openPane(id)} />}
     {section === 'search' && <main className="content-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <div className="content-column"><div className="section-intro"><h2>Find what matters.</h2><p>Search source text with Git ignore rules respected.</p></div><SearchPanel key={project.path} projectKey={project.path} onOpen={path => void showFile(path)} /></div>}</main>}
     {section === 'git' && <main className="content-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <div className="git-layout"><div className="git-column"><div className="section-intro"><h2>Your work, clearly.</h2><p>{gitStatus ? `${gitStatus.files.length} changed files on ${gitStatus.branch}` : gitError || 'Loading Git status…'}</p></div>{gitStatus && <><div className="branch-card"><GitBranch size={16} /> {gitStatus.branch}<button className="mini-action" onClick={() => void refreshGit()}>Refresh</button></div>
               <GitActions busy={busy} branch={gitStatus.branch} branches={branches.length ? branches : [gitStatus.branch]} files={gitStatus.files} remote={remote} onFetch={() => void gitAct(() => api.gitFetch())} onPull={() => void gitAct(() => api.gitPull())} onCheckout={name => void gitAct(() => api.gitCheckout(name))} onMerge={name => void gitAct(() => api.gitMerge(name))} onRebase={name => void gitAct(() => api.gitRebase(name))} onStash={action => void gitAct(() => api.gitStash(action))} onPush={() => void push()} onPullRequest={(title, body) => void openPullRequest(title, body)} />
               {(remote?.github || remote?.web) && <PullRequestChecks pr={pr} loading={prLoading} error={prError} fixing={fixing} autoFix={autoFix} autoMerge={autoMerge} onAutoFix={value => { setAutoFix(value); writeStored('neru.ci.autofix', value) }} onAutoMerge={value => { setAutoMerge(value); writeStored('neru.ci.automerge', value) }} onRefresh={() => void refreshPr()} onOpen={url => void api.openUrl(url)} onFix={() => void fixChecks()} />}<div className="field-row"><input value={branchName} onChange={event => setBranchName(event.target.value)} placeholder="New branch name" /><button className="button subtle" onClick={() => void createBranch()} disabled={!branchName.trim()}>Create</button></div><div className="git-files"><div className="panel-heading">Changes <span>{gitStatus.files.length}</span></div>{gitStatus.files.map(file => <div className={`git-file ${selectedGit === file.path ? 'selected' : ''}`} key={file.path}><button onClick={() => void selectGit(file.path)}><span className={`git-state ${file.staged ? 'staged' : ''}`}>{file.status.trim() || 'M'}</span><span className="truncate">{file.path}</span></button><button className="mini-action" onClick={() => void stage(file.path, file.staged)} title={file.staged ? 'Unstage' : 'Stage'}>{file.staged ? <X size={14} /> : <Plus size={14} />}</button></div>)}{gitStatus.files.length === 0 && <div className="empty-small">Working tree is clean.</div>}</div><div className="commit-box"><GitCommitHorizontal size={17} /><input value={commitMessage} onChange={event => setCommitMessage(event.target.value)} placeholder="Commit message" /><button className="button primary" onClick={() => void commit()} disabled={!commitMessage.trim() || !gitStatus.files.some(file => file.staged)}>Commit</button></div></>}</div><div className="git-diff-panel">{selectedGit && gitDiff ? <div className="git-diff-scroll"><FileDiff key={selectedGit} file={selectedGit} lines={parseUnifiedDiff(gitDiff)} status="complete" collapseOnComplete={false} defaultOpen maxHeight={100000} language={languageForPath(selectedGit)} copyText={gitDiff} /></div> : <div className="empty-pane"><FileDiffIcon size={25} /><p>{selectedGit ? 'No unstaged changes in this file.' : 'Select a changed file to inspect its diff.'}</p></div>}</div></div>}</main>}
-    {section === 'settings' && <main className="settings-view">
-      <div className="settings-layout">
-        <h1 className="settings-title">Settings</h1>
-        <nav className="settings-nav" aria-label="Settings sections">{settingsTabs.map(tab => <button key={tab.id} className={settingsTab === tab.id ? 'active' : ''} aria-current={settingsTab === tab.id ? 'page' : undefined} onClick={() => setSettingsTab(tab.id)}>{tab.label}</button>)}</nav>
+    {settingsOpen && <div className="settings-backdrop" onMouseDown={() => setSettingsOpen(false)}>
+      <div className="settings-dialog" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={event => event.stopPropagation()}>
+        <nav className="settings-nav" aria-label="Settings sections">
+          <label className="settings-search"><Search size={16} aria-hidden /><input autoFocus value={settingsQuery} onChange={event => setSettingsQuery(event.target.value)} placeholder="Search" aria-label="Search settings" /></label>
+          <div className="settings-nav-scroll">{settingsGroups.map(group => {
+            const query = settingsQuery.trim().toLowerCase()
+            const tabs = group.tabs.filter(tab => !query || `${tab.label} ${tab.words}`.toLowerCase().includes(query))
+            return tabs.length > 0 && <div className="settings-nav-group" key={group.label}><span className="settings-nav-label">{group.label}</span>
+              {tabs.map(tab => <button key={tab.id} className={settingsTab === tab.id ? 'active' : ''} aria-current={settingsTab === tab.id ? 'page' : undefined} onClick={() => setSettingsTab(tab.id)}><tab.icon size={18} strokeWidth={1.75} aria-hidden />{tab.label}</button>)}</div>
+          })}</div>
+        </nav>
         <div className="settings-panel">
+          <button type="button" className="icon-button settings-close" onClick={() => setSettingsOpen(false)} aria-label="Close settings" title="Close (Esc)"><X size={18} /></button>
           {settingsTab === 'general' && <>
             <section className="settings-section"><h2>Workspace</h2>
-              <div className="settings-row"><div><strong>Current project</strong><p>{project ? project.path : 'No project open'}</p></div><button className="button subtle" onClick={() => void chooseProject()}><Folder size={15} /> {project ? 'Change' : 'Open folder'}</button></div>
+              <div className="settings-row"><div><strong>Current project</strong><p>{project ? project.path.replace(/^\\\\\?\\/, '') : 'No project open'}</p></div><button className="button subtle" onClick={() => void chooseProject()}><Folder size={15} /> {project ? 'Change' : 'Open folder'}</button></div>
               <div className="settings-row"><div><strong>Getting started</strong><p>Revisit the project, model, and review guide.</p></div><button className="button subtle" onClick={() => setOnboarding('show')}>Replay guide</button></div>
+              <div className="settings-row"><div><strong>Walkthrough</strong><p>A guided look at every control, one at a time.</p></div><button className="button subtle" onClick={() => { setSection('home'); appTour.start() }}>Take the tour</button></div>
             </section>
             <section className="settings-section"><h2>Agent</h2>
-              <div className="settings-row"><div><strong>Desktop notifications</strong><p>Tell me when a session in the background finishes or needs approval, or when Neru is not in focus.</p></div><div className="theme-toggle"><button className={notifications ? 'active' : ''} onClick={() => { setNotifications(true); writeStored('neru.notifications', true); void notifyUser('Notifications are on', 'Neru will tell you when a session needs you.') }}>On</button><button className={!notifications ? 'active' : ''} onClick={() => { setNotifications(false); writeStored('neru.notifications', false) }}>Off</button></div></div>
-              <div className="settings-row"><div><strong>Web search</strong><p>Let Neru search and read public pages, and show numbered sources with its answers.</p></div><div className="theme-toggle"><button className={web ? 'active' : ''} onClick={() => { setWeb(true); writeStored('neru.web', true) }}><Globe size={15} /> On</button><button className={!web ? 'active' : ''} onClick={() => { setWeb(false); writeStored('neru.web', false) }}>Off</button></div></div>
+              <div className="settings-row"><div><strong>Desktop notifications</strong><p>Tell me when a session in the background finishes or needs approval, or when Neru is not in focus.</p></div><button type="button" className={cn('switch', notifications && 'on')} role="switch" aria-checked={notifications} aria-label="Desktop notifications" onClick={() => { const on = !notifications; setNotifications(on); writeStored('neru.notifications', on); if (on) void notifyUser('Notifications are on', 'Neru will tell you when a session needs you.') }} /></div>
+              <div className="settings-row"><div><strong>Web search</strong><p>Let Neru search and read public pages, and show numbered sources with its answers.</p></div><button type="button" className={cn('switch', web && 'on')} role="switch" aria-checked={web} aria-label="Web search" onClick={() => { setWeb(!web); writeStored('neru.web', !web) }} /></div>
             </section>
             <section className="settings-section"><h2>Updates</h2>
               <div className="settings-row"><div><strong>Neru {appVersion || '0.1.0'}</strong><p>{update ? `Version ${update.version} is ready to install.` : updateCheck === 'current' ? 'You have the latest version.' : 'Neru checks GitHub Releases for new versions when it starts and every few hours.'}</p></div><div className="settings-actions-inline"><button className="button subtle" onClick={() => setWhatsNew(appVersion || 'latest')}>What’s new</button>{update ? <button className="button primary" onClick={() => void applyUpdate()} disabled={updateProgress !== undefined}>Restart to update</button> : <button className="button subtle" onClick={() => void checkNow()} disabled={updateCheck === 'checking' || !isTauri()}>{updateCheck === 'checking' ? 'Checking…' : 'Check for updates'}</button>}</div></div>
@@ -1435,7 +1525,7 @@ function App() {
           </>}
           {settingsTab === 'appearance' && <section className="settings-section"><h2>Appearance</h2>
             <div className="settings-row"><div><strong>Color mode</strong><p>Quiet surfaces for long sessions.</p></div><div className="theme-toggle"><button className={!light ? 'active' : ''} onClick={() => setLight(false)}><Moon size={15} /> Dark</button><button className={light ? 'active' : ''} onClick={() => setLight(true)}><Sun size={15} /> Light</button></div></div>
-            <div className="settings-row"><div><strong>Show sidebar on hover</strong><p>When the sidebar is collapsed, move the pointer to the left edge to peek at it.</p></div><div className="theme-toggle"><button className={sidebarHover ? 'active' : ''} onClick={() => { setSidebarHover(true); writeStored('neru.sidebar.hover', true) }}>On</button><button className={!sidebarHover ? 'active' : ''} onClick={() => { setSidebarHover(false); writeStored('neru.sidebar.hover', false); setPeek(false) }}>Off</button></div></div>
+            <div className="settings-row"><div><strong>Show sidebar on hover</strong><p>When the sidebar is collapsed, move the pointer to the left edge to peek at it.</p></div><button type="button" className={cn('switch', sidebarHover && 'on')} role="switch" aria-checked={sidebarHover} aria-label="Show sidebar on hover" onClick={() => { const on = !sidebarHover; setSidebarHover(on); writeStored('neru.sidebar.hover', on); if (!on) setPeek(false) }} /></div>
           </section>}
           {settingsTab === 'voice' && <section className="settings-section provider-settings"><h2>Voice</h2><p className="settings-lede">Dictate with the microphone in the message box. On-device models never send audio anywhere.</p>
             <div className="settings-row"><div><strong>Speech engine</strong><p>{voiceEngine === 'local' ? 'Runs a speech model on this machine. Private and works offline once downloaded.' : voiceEngine === 'system' ? 'Uses the window’s built-in recognition and types as you speak.' : 'Sends the recording to a Whisper-compatible API you choose.'}</p></div><div className="theme-toggle"><button className={voiceEngine === 'local' ? 'active' : ''} onClick={() => chooseVoiceEngine('local')}>On this device</button><button className={voiceEngine === 'transcription' ? 'active' : ''} onClick={() => chooseVoiceEngine('transcription')}><Mic size={15} /> Endpoint</button><button disabled={!systemSpeechAvailable} title={systemSpeechAvailable ? undefined : 'This window has no built-in speech recognition'} className={voiceEngine === 'system' ? 'active' : ''} onClick={() => chooseVoiceEngine('system')}>System</button></div></div>
@@ -1454,22 +1544,25 @@ function App() {
           </section>}
           {settingsTab === 'connectors' && <Connectors onError={setError} />}
           {settingsTab === 'skills' && <Skills onError={setError} onNotice={setNotice} />}
+          {settingsTab === 'cli' && <CliSettings onError={setError} onNotice={setNotice} />}
+          {settingsTab === 'agents' && <AgentsSettings onError={setError} onNotice={setNotice} />}
+          {settingsTab === 'imports' && <ImportsSettings project={project} onError={setError} onNotice={setNotice} onOpenTeam={() => setSection('team')} />}
           {settingsTab === 'model' && <section className="settings-section provider-settings"><h2>Model provider</h2><p className="settings-lede">Free keys for everyday frontend and backend work, a model on this PC, or your own API key.</p>
             <label>Provider<select value={providerId} onChange={event => selectProvider(event.target.value)}>{providerPresets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             {(() => { const preset = providerPresets.find(item => item.id === providerId); return <div className="provider-description"><p>{preset?.description}</p>{(preset?.freeLimit || preset?.keyUrl) && <p className="provider-meta">{preset.freeLimit && <span className="provider-free">Free: {preset.freeLimit}</span>}{preset.keyUrl && <a className="provider-key-link" href={preset.keyUrl} target="_blank" rel="noreferrer"><KeyRound size={13} /> Get a {preset.name} API key <ExternalLink size={12} /></a>}</p>}</div> })()}
             <div className="settings-grid"><label>API format<select value={providerFormat} onChange={event => setProviderFormat(event.target.value as ApiFormat)}><option value="openai-chat">Chat Completions</option><option value="openai-responses">Responses</option><option value="anthropic">Anthropic Messages</option></select></label><label>Base URL<input value={providerUrl} onChange={event => setProviderUrl(event.target.value)} placeholder="https://provider.example/v1" autoComplete="url" /></label></div>
-            <label>API key<input type="password" autoComplete="off" value={providerKey} onChange={event => setProviderKey(event.target.value)} placeholder={provider.hasKey && provider.providerId === providerId && provider.baseUrl.replace(/\/+$/, '') === providerUrl.replace(/\/+$/, '') ? 'Key already connected — models load from it' : 'Paste your provider key'} /></label>
+            <label>API key<input type="password" autoComplete="off" value={providerKey} onChange={event => setProviderKey(event.target.value)} placeholder={(provider.hasKey && provider.providerId === providerId) || savedKeys.includes(providerId) ? 'Key saved on this PC — models load from it. Paste a new one to replace it.' : 'Paste your provider key'} /></label>
             <div className="model-field"><span className="model-field-label">Model</span>
               <SettingsModelPicker providerId={providerId} baseUrl={providerUrl} apiKey={providerKey} models={models} onModels={update => setModels(update)} value={providerModel} onSelect={chooseModel} loading={modelsLoading}
                 formatFor={model => formatForModel(providerId, model, providerFormat, providerUrl)} emptyText="Models from this key appear here" /></div>
             <p className="settings-note">{modelsLoading ? 'Looking up the models this key can use…' : modelsError ? modelsError : models.length ? `${models.length} chat models from this key. Format set to ${formatLabel(providerFormat)}.` : 'Paste a key and Neru lists the models it can use.'}</p>
             <div className="settings-actions"><button className="button primary" onClick={() => void saveProvider()} disabled={!providerModel.trim() || !models.some(info => info.id === providerModel)}>Use provider</button></div>
             <p className="settings-note"><ShieldCheck size={14} /> Keys are encrypted with your Windows account, saved in Neru’s data folder on D:, and sent only to the selected API endpoint.</p>
-            <div className="settings-row"><div><strong>Saved keys</strong><p>Remove every provider and voice key from this PC. You will need to paste them again.</p></div><button className="button subtle" onClick={() => { if (window.confirm('Forget all saved API keys?')) void api.forgetKeys().then(async () => { setProvider(await api.providerStatus()); setVoice(await api.voiceStatus()); setNotice('Saved keys removed.') }).catch(cause => setError(errorText(cause))) }}><KeyRound size={15} /> Forget saved keys</button></div>
+            <div className="settings-row"><div><strong>Saved keys</strong><p>Remove every provider and voice key from this PC. You will need to paste them again.</p></div><button className="button subtle" onClick={() => { if (window.confirm('Forget all saved API keys?')) void api.forgetKeys().then(async () => { setSavedKeys([]); setProvider(await api.providerStatus()); setVoice(await api.voiceStatus()); setNotice('Saved keys removed.') }).catch(cause => setError(errorText(cause))) }}><KeyRound size={15} /> Forget saved keys</button></div>
           </section>}
         </div>
       </div>
-    </main>}
+    </div>}
   </div>{dockElement}</div></div>{cloneOpen && <div className="modal-backdrop" onMouseDown={() => !busy && setCloneOpen(false)}><form className="clone-dialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); void cloneProject() }}><h2>Clone a repository.</h2><p>Paste a Git URL and choose where the new folder goes.</p><label>Repository URL<input autoFocus value={cloneUrl} onChange={event => changeCloneUrl(event.target.value)} placeholder="https://github.com/owner/repository.git" /></label><label>Destination folder<span className="path-field"><input value={cloneDestination} onChange={event => setCloneDestination(event.target.value)} placeholder="D:\\Neru\\projects\\repository" /><button type="button" className="icon-button" onClick={() => void chooseCloneFolder()} disabled={busy} aria-label="Choose destination folder" title="Choose folder"><FolderOpen size={16} /></button></span></label>{error && <p className="clone-error">{error}</p>}<div className="clone-actions"><button type="button" className="button subtle" onClick={() => setCloneOpen(false)} disabled={busy}>Cancel</button><button type="submit" className="button primary" disabled={busy || !cloneUrl.trim() || !cloneDestination.trim()}>{busy ? "Cloning…" : "Clone project"}</button></div></form></div>}{palette && <div className="modal-backdrop" onMouseDown={() => setPalette(false)}><div className="palette" onMouseDown={event => event.stopPropagation()}><div className="palette-search"><Command size={17} /><input autoFocus value={paletteQuery} onChange={event => setPaletteQuery(event.target.value)} placeholder="Search commands…" /><span>Esc</span></div><div className="palette-results">{paletteActions.filter(item => item.label.toLowerCase().includes(paletteQuery.toLowerCase())).map(item => <button key={item.label} onClick={() => { void item.action(); setPalette(false); setPaletteQuery('') }}><ChevronRight size={14} />{item.label}<ArrowRight size={13} /></button>)}</div></div></div>}{updateLayer}</div>
 }
 

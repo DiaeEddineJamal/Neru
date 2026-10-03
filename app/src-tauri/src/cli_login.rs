@@ -3,7 +3,7 @@
 
 use crate::{
     agent,
-    cli_ui::{self, BOLD, CYAN, DIM, GREEN, RESET, SAGE, Screen},
+    cli_ui::{self, BOLD, CYAN, DIM, GREEN, RESET, SAGE, Screen, YELLOW},
 };
 
 pub struct Preset {
@@ -168,8 +168,21 @@ pub fn login(app: &tauri::AppHandle, screen: &mut Screen) -> Result<Option<Strin
         }
     };
     let format = format_for(preset.id, &model, &base_url, preset.format);
+    // Signing in picks the default model, even inside a run started with --model.
+    crate::run_options::update(|run| run.keep_saved_model = false);
     let view = agent::configure_provider(preset.id.into(), format, base_url, key, model, app.state())?;
     screen.print(&format!("{GREEN}⏺{RESET} Connected to {BOLD}{}{RESET} with {BOLD}{}{RESET}", preset.name, view.model));
+    // A listed model can still be refused (a free tier locked to the provider's own app, no
+    // credits), so find out now rather than on the first request.
+    screen.footer(&[format!("  {DIM}Checking that {} answers…{RESET}", view.model)], None);
+    let config = app.state::<crate::AppState>().provider.lock().map_err(|e| e.to_string())?.clone();
+    let health = tauri::async_runtime::block_on(crate::models::health(&config, false));
+    screen.clear();
+    match health.status.as_str() {
+        "unavailable" | "badKey" => screen.print(&format!("  {YELLOW}⚠{RESET} {} does not work with this key: {}.\n    {DIM}Run{RESET} /login {DIM}again to pick another model.{RESET}", view.model, health.reason)),
+        "unknown" => note(screen, &format!("Could not confirm {} right now ({}). It may still work.", view.model, health.reason)),
+        _ => {}
+    }
     Ok(Some(format!("{} · {}", view.model, view.provider_id)))
 }
 

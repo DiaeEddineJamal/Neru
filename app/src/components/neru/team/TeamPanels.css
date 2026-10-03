@@ -1,0 +1,205 @@
+/* Team: task appearance, filters, queue, setup cards, task-wide panels, onboarding helpers. */
+
+/* Task appearance: icon, colour and group */
+.agent-initial { color: #191a18; font: 700 1em/1 Inter, sans-serif; }
+.task-glyph { display: inline-grid; place-items: center; flex: 0 0 auto; width: 18px; height: 18px; border-radius: 5px; color: var(--secondary); --task: var(--muted); }
+.task-glyph i { width: 8px; height: 8px; border-radius: 50%; background: var(--task); }
+.task-glyph:has(svg) { background: color-mix(in oklch, var(--task) 18%, transparent); color: var(--task); }
+.task-sage { --task: var(--sage); }
+.task-sky { --task: oklch(0.72 0.09 235); }
+.task-amber { --task: oklch(0.78 0.12 80); }
+.task-rose { --task: oklch(0.7 0.12 15); }
+.task-violet { --task: oklch(0.7 0.1 300); }
+.task-teal { --task: oklch(0.72 0.08 185); }
+.task-slate { --task: oklch(0.65 0.02 250); }
+.team-appearance, .team-filter { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; left: auto; width: 268px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.team-filter { left: 0; right: auto; width: 252px; }
+.team-icon-grid, .team-color-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.team-icon-grid button, .team-color-grid button { display: grid; place-items: center; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 7px; background: var(--surface-2); color: var(--secondary); }
+.team-icon-grid button:hover, .team-color-grid button:hover { color: var(--text); border-color: var(--border); }
+.team-icon-grid button.on, .team-color-grid button.on { border-color: var(--sage); color: var(--text); background: var(--surface-3); }
+.task-swatch i { width: 14px; height: 14px; border-radius: 50%; background: var(--task); }
+.team-chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.team-filter-head { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-xs); }
+.team-filter-head .team-access { flex: 1; }
+.team-filter-foot { display: flex; justify-content: flex-end; gap: 6px; padding-top: 4px; }
+.team-field select, .team-panel-tools select, .team-review-all select { flex: 1; min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: var(--fs-sm); }
+.team-check { display: flex; align-items: center; gap: 8px; color: var(--secondary); font-size: var(--fs-sm); cursor: pointer; }
+.team-check input { accent-color: var(--moss-action); }
+.team-link { padding: 0; border: 0; background: transparent; color: var(--link); font-size: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+/* Rail: groups and indicators */
+.team-rail-head { gap: 2px; }
+.team-rail-head > span { flex: 1; }
+.team-rail-head .menu-anchor { position: relative; }
+.team-group + .team-group { margin-top: 4px; }
+.team-group-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: 0; background: transparent; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.team-group-head:hover { color: var(--text); }
+.team-group-head svg { transition: transform .15s ease-out; flex: 0 0 auto; }
+.team-group-head small { margin-left: auto; font-weight: 400; }
+.team-task-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.team-task-state { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: 0 0 auto; }
+.team-task-state time { color: var(--muted); font-size: var(--fs-xs); }
+.team-task-row:hover .team-task-state time { display: none; }
+.team-task-failed { color: var(--danger); }
+.team-task-queued { min-width: 16px; padding: 0 4px; border-radius: 999px; background: var(--surface-3); color: var(--secondary); font-size: 10.5px; text-align: center; }
+.team-unread { width: 8px; height: 8px; border-radius: 50%; background: var(--sage); box-shadow: 0 0 0 3px color-mix(in oklch, var(--sage) 25%, transparent); }
+
+/* Header: usage reading, transcript filter */
+.team-head .menu-anchor { position: relative; }
+.team-reading { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--secondary); font-size: var(--fs-xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.team-reading:hover { color: var(--text); border-color: var(--moss); }
+.team-reading.is-mid { border-color: oklch(0.76 0.1 85 / .6); color: oklch(0.72 0.12 75); }
+.team-reading.is-high { border-color: color-mix(in oklch, var(--danger) 60%, transparent); color: var(--danger); }
+.team-usage-pop { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; left: auto; width: 320px; max-height: 70vh; overflow-y: auto; padding: 6px 4px 10px; display: flex; flex-direction: column; gap: 6px; }
+.team-usage-pop .team-panel-body { padding: 6px 8px; overflow: visible; }
+.team-usage-pop > .button { align-self: center; }
+.team-only { display: flex; align-items: center; gap: 10px; padding: 7px 20px; border-bottom: 1px solid var(--border); background: var(--surface-2); color: var(--secondary); font-size: var(--fs-sm); }
+.team-only span { flex: 1; }
+
+/* Queue */
+.team-queue-list { margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 4px; }
+.team-queue-head { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--muted); }
+.team-queue-head strong { color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+.team-queue-head span { flex: 1; }
+.team-queue-item { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.team-queue-to { flex: 0 0 auto; color: var(--sage); font-size: var(--fs-xs); }
+.team-queue-text { flex: 1; min-width: 0; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: var(--fs-sm); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-queue-text:hover { background: var(--surface-3); }
+.team-queue-edit { flex: 1; display: flex; gap: 4px; min-width: 0; }
+.team-queue-edit input { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--sage); border-radius: 6px; background: var(--surface); color: var(--text); font-size: var(--fs-sm); }
+
+/* Setup card */
+.team-setup { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.team-setup-head { display: flex; align-items: center; gap: 10px; }
+.team-setup-head > div { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: var(--fs-sm); }
+.team-setup-head > div span { color: var(--muted); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-setup.is-ok .team-setup-head > svg { color: var(--sage); }
+.team-setup.is-failed { border-color: color-mix(in oklch, var(--danger) 45%, var(--border)); }
+.team-setup.is-failed .team-setup-head > svg { color: var(--danger); }
+.team-setup-output { max-height: 240px; margin: 0; padding: 8px 10px; overflow: auto; border-radius: 8px; background: var(--surface); color: var(--secondary); font: 12px/1.5 'JetBrains Mono', monospace; white-space: pre-wrap; }
+
+/* Delete dialog */
+.button.danger { background: var(--danger); color: #fff; border-color: transparent; }
+.button.danger:hover:not(:disabled) { filter: brightness(1.08); }
+.team-delete-trees { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.team-delete-trees li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; font-size: var(--fs-sm); }
+.team-delete-trees code { color: var(--code-chip); font-size: var(--fs-xs); }
+.team-delete-trees span { color: var(--muted); font-size: var(--fs-xs); }
+.team-delete-trees span.warn { color: var(--danger); }
+
+/* Changes, pull request, activity, usage panels */
+.team-tab-wide { flex: 0 0 auto !important; }
+.team-changes-place { display: flex; flex-direction: column; gap: 8px; }
+.team-changes-place h3, .team-activity h3 { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.team-review-all { display: flex; align-items: center; gap: 6px; color: var(--secondary); font-size: var(--fs-xs); }
+.team-pr-head { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); color: var(--text); text-decoration: none; }
+.team-pr-head > span { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: var(--fs-sm); }
+.team-pr-head small { color: var(--muted); font-size: var(--fs-xs); }
+.team-pr-head svg { color: var(--sage); flex: 0 0 auto; }
+.team-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.team-checks li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; font-size: var(--fs-sm); color: var(--secondary); }
+.team-checks a { color: inherit; }
+.team-checks li.is-success svg { color: var(--sage); }
+.team-checks li.is-failure { color: var(--danger); }
+.team-activity { display: flex; flex-direction: column; gap: 6px; }
+.team-activity-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.team-activity-row > div { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: var(--fs-sm); }
+.team-activity-row > div span { color: var(--muted); font-size: var(--fs-xs); }
+.team-activity-row time { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.team-activity-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--sage); animation: team-breathe 1.6s ease-in-out infinite; }
+.team-activity-dot.route { background: oklch(0.78 0.12 80); }
+@keyframes team-breathe { 50% { opacity: .35; } }
+.team-activity-note { margin: 0; padding: 6px 8px; border-radius: 8px; background: var(--surface-2); color: var(--secondary); font-size: var(--fs-sm); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.team-activity-note b { color: var(--sage); font-weight: 500; }
+.team-exec { padding: 10px; border: 1px solid var(--border); border-radius: 12px; }
+.team-exec .team-field input[type=number] { flex: 0 0 64px; }
+.team-usage-summary { display: flex; align-items: flex-start; gap: 14px; padding: 4px 2px; }
+.team-usage-summary > div { display: flex; flex-direction: column; }
+.team-usage-summary strong { font: 400 var(--fs-xl)/1.1 'Instrument Serif', Georgia, serif; }
+.team-usage-summary span { color: var(--muted); font-size: var(--fs-xs); }
+.team-usage-summary > button { margin-left: auto; }
+.team-usage-who { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); }
+.team-usage-who span { color: var(--muted); font-size: var(--fs-xs); }
+.team-bars { width: 100%; height: 40px; }
+.team-bars rect { fill: color-mix(in oklch, var(--sage) 70%, transparent); }
+.team-bars rect:hover { fill: var(--sage); }
+.compact .team-usage { padding: 8px; }
+
+/* Map replay */
+.team-replay { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.team-replay input { flex: 1; accent-color: var(--moss-action); }
+.team-map-caption { margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); color: var(--secondary); font-size: var(--fs-sm); }
+.team-map-caption strong { color: var(--text); font-weight: 600; }
+.team-map-node.speaking foreignObject { filter: drop-shadow(0 0 6px color-mix(in oklch, var(--sage) 80%, transparent)); }
+
+/* Empty state: checklist and quickstart */
+.team-checklist { width: min(100%, 560px); padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
+.team-checklist header { display: flex; align-items: center; gap: 10px; font-size: var(--fs-sm); }
+.team-checklist header > span { color: var(--muted); font-size: var(--fs-xs); }
+.team-checklist-bar { flex: 1; height: 4px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.team-checklist-bar i { display: block; height: 100%; background: var(--sage); transition: width .4s cubic-bezier(.16, 1, .3, 1); }
+.team-checklist ol { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.team-checklist li { display: flex; align-items: center; gap: 10px; }
+.team-checklist li > div { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: var(--fs-sm); }
+.team-checklist li small { color: var(--muted); font-size: var(--fs-xs); }
+.team-checklist li.done strong { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in oklch, var(--muted) 60%, transparent); }
+.team-checklist-mark { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 auto; border: 1.5px solid var(--border); border-radius: 50%; color: var(--bg); }
+.team-checklist li.done .team-checklist-mark { border-color: var(--sage); background: var(--sage); }
+.team-empty-start { display: flex; flex-direction: column; gap: 10px; width: min(100%, 760px); }
+.team-empty-start h2 { margin: 0; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.team-quickstart { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.team-quick { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text); text-align: left; transition: border-color .15s ease-out, background-color .15s ease-out, transform .15s ease-out; }
+.team-quick:hover { border-color: var(--moss); background: var(--surface-2); transform: translateY(-1px); }
+.team-quick > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.team-quick strong { font-size: var(--fs-sm); font-weight: 600; }
+.team-quick small { color: var(--muted); font-size: var(--fs-xs); line-height: 1.45; }
+.team-quick-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--moss-deep); color: var(--sage); }
+.team-pill { padding: 1px 8px; border-radius: 999px; background: var(--surface-3); color: var(--secondary); font-size: var(--fs-xs); }
+@media (prefers-reduced-motion: reduce) { .team-quick:hover { transform: none; } .team-activity-dot { animation: none; } }
+
+/* Terminal pane: the task the tabs belong to */
+.terminal-scope { flex: 0 0 auto; max-width: 160px; margin-right: 4px; padding: 2px 8px; border-radius: 999px; background: var(--moss-deep); color: var(--text); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Settings → Agents: versions and paths */
+.agent-buttons { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.agent-update { color: var(--sage); font-weight: 500; }
+.agent-manage div { flex-wrap: wrap; }
+.agent-manage span { flex: 0 0 52px; color: var(--muted); font-size: var(--fs-xs); }
+.agent-manage code { flex: 1 1 120px; min-width: 0; color: var(--code-chip); font-size: var(--fs-xs); }
+.agent-manage input { flex: 0 1 180px; height: 28px; }
+.agent-more { align-self: flex-start; margin-top: 4px; }
+
+/* Narrow layouts: the header keeps the title, the panel keeps every tab and access choice. */
+.team-head .team-title { flex: 0 1 auto; min-width: 96px; }
+.team-head .team-roster { flex: 1 1 48px; }
+.team-head > .menu-anchor, .team-head > .icon-button, .team-head > .button { flex: 0 0 auto; }
+.team-reading { max-width: 180px; }
+.team-reading span { overflow: hidden; text-overflow: ellipsis; }
+.team-tabs { display: flex; flex-wrap: nowrap; overflow: hidden; }
+.team-tabs button { flex: 1 1 0 !important; min-width: 28px; padding: 0 6px !important; }
+.team-tabs button.active { flex: 0 0 auto !important; }
+.team-member .team-access, .team-dialog .team-access { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.team-panel .team-member .team-access { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.team-member .team-access button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1280px) { .team-reading span { display: none; } }
+
+.team-more { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; left: auto; min-width: 240px; }
+.team-more small { margin-left: auto; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.team-more .danger { color: var(--danger); }
+
+.clone-dialog.team-dialog label.team-check { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; text-align: left; color: var(--secondary); font-size: var(--fs-sm); }
+.clone-dialog.team-dialog label.team-check input { width: auto; height: auto; margin: 0; }
+.clone-dialog.team-dialog label.team-check { margin-bottom: 6px; }
+.team-filter .team-check { text-transform: none; letter-spacing: normal; font-weight: 400; }
+
+/* Drag handles on the task list's right edge and the task panel's left edge. */
+.team-rail, .team-panel { position: relative; }
+.team-resizer { position: absolute; z-index: 6; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
+.team-resizer.edge-right { right: -4px; }
+.team-resizer.edge-left { left: -4px; }
+.team-resizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background-color .15s ease-out; }
+.team-resizer:hover::after, .team-resizer.dragging::after, .team-resizer:focus-visible::after { background: var(--moss); }
+.team-resizer:focus-visible { outline: none; }
+.team-view.resizing { animation: none; }
+body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none !important; }

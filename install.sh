@@ -3,6 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.sh | bash -s -- 0.4.0
+#   curl -fsSL https://raw.githubusercontent.com/DiaeEddineJamal/Neru/main/install.sh | bash -s -- --uninstall
 #
 # Installs into ${NERU_HOME:-$HOME/.neru}/cli and links ~/.local/bin/neru to it.
 # Set NERU_VERSION instead of passing an argument to pin a version, and NERU_NO_MODIFY_PATH=1 to
@@ -36,6 +37,16 @@ BIN_DIR="$HOME/.local/bin"
 
 printf '\n%s✻ Neru%s\n\n' "$MOSS$BOLD" "$RESET"
 
+if [ "$VERSION" = "--uninstall" ] || [ "$VERSION" = "uninstall" ]; then
+  # Settings, keys and sessions stay in the data folder, shared with the app.
+  if [ -L "$BIN_DIR/neru" ] || [ -f "$BIN_DIR/neru" ]; then
+    rm -f "$BIN_DIR/neru"
+  fi
+  rm -rf "$INSTALL_DIR"
+  say "neru is uninstalled. Your settings and sessions were kept."
+  exit 0
+fi
+
 # Platform
 os="$(uname -s)"
 arch="$(uname -m)"
@@ -44,14 +55,30 @@ case "$arch" in
   x86_64 | amd64) arch="x86_64" ;;
   *) fail "unsupported architecture: $arch" ;;
 esac
+# An Intel shell on an Apple silicon Mac (Rosetta) still gets the native build.
+if [ "$os" = "Darwin" ] && [ "$arch" = "x86_64" ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = 1 ]; then
+  arch="aarch64"
+fi
+# The Linux builds use glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).
+if [ "$os" = "Linux" ]; then
+  if ldd --version 2>&1 | grep -qi musl; then
+    fail "this system uses musl (Alpine and similar); neru's Linux builds need glibc 2.35 or newer."
+  fi
+  glibc="$(ldd --version 2>/dev/null | awk 'NR==1 {print $NF}')"
+  case "$glibc" in
+    [0-9]*.[0-9]*)
+      major="${glibc%%.*}"
+      minor="${glibc#*.}"
+      minor="${minor%%.*}"
+      if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 35 ]; }; then
+        fail "this system has glibc $glibc; neru's Linux builds need 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later)."
+      fi
+      ;;
+  esac
+fi
 case "$os" in
   Darwin) target="$arch-apple-darwin" ;;
-  Linux)
-    if [ "$arch" != "x86_64" ]; then
-      fail "Linux $arch is not built yet. Build from source: https://github.com/$REPO#build-from-source"
-    fi
-    target="x86_64-unknown-linux-gnu"
-    ;;
+  Linux) target="$arch-unknown-linux-gnu" ;;
   *) fail "unsupported system: $os. On Windows, run: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
 esac
 
@@ -173,10 +200,13 @@ fi
 # Linux: the CLI links against WebKitGTK like the desktop app
 if [ "$os" = "Linux" ]; then
   have_webkit=0
-  if command -v ldconfig >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q 'libwebkit2gtk-4\.1\.so'; then
+  # ldconfig lives in /sbin, which is not on a normal user's PATH on Debian.
+  ldconfig_bin="$(command -v ldconfig 2>/dev/null || true)"
+  [ -n "$ldconfig_bin" ] || { [ -x /sbin/ldconfig ] && ldconfig_bin=/sbin/ldconfig; } || true
+  if [ -n "$ldconfig_bin" ] && "$ldconfig_bin" -p 2>/dev/null | grep -q 'libwebkit2gtk-4\.1\.so'; then
     have_webkit=1
   else
-    for dir in /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /usr/local/lib /lib/x86_64-linux-gnu; do
+    for dir in /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/local/lib /lib/x86_64-linux-gnu /lib/aarch64-linux-gnu; do
       if ls "$dir"/libwebkit2gtk-4.1.so* >/dev/null 2>&1; then
         have_webkit=1
         break
@@ -196,6 +226,18 @@ if [ "$os" = "Linux" ]; then
       say "  Debian/Ubuntu: sudo apt install libwebkit2gtk-4.1-0"
       say "  Fedora:        sudo dnf install webkit2gtk4.1"
       say "  Arch:          sudo pacman -S webkit2gtk-4.1"
+    fi
+  fi
+  # Without a display (SSH, CI, containers), neru runs itself inside Xvfb.
+  if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && ! command -v xvfb-run >/dev/null 2>&1; then
+    say ""
+    say "This terminal has no display, so neru needs Xvfb to run here:"
+    if command -v apt-get >/dev/null 2>&1; then
+      say "  sudo apt install xvfb"
+    elif command -v dnf >/dev/null 2>&1; then
+      say "  sudo dnf install xorg-x11-server-Xvfb"
+    else
+      say "  install the xvfb package (it provides xvfb-run)"
     fi
   fi
 fi

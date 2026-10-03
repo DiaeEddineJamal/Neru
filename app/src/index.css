@@ -81,6 +81,15 @@
   --bubble-shadow: none;
   /* Floating menus sit one step above the page so they never blend into it. */
   --menu-bg: #1e201c;
+  /* Inline code and paths, @mentions and links read apart from prose, as in Claude. */
+  --code-chip: #e5866f;
+  --code-chip-bg: rgb(229 134 111 / .13);
+  --mention: #e5866f;
+  --mention-bg: rgb(229 134 111 / .16);
+  --link: #8cb4f5;
+  /* Team members' logos sit on app-icon tiles. */
+  --agent-tile: #f7f6f1;
+  --agent-tile-edge: rgb(255 255 255 / .06);
 }
 
 :root[data-theme='light'] {
@@ -109,6 +118,13 @@
   --bubble-text: #16231a;
   --bubble-shadow: 0 1px 0 rgb(255 255 255 / .7) inset, 0 8px 20px -14px rgb(40 70 45 / .45);
   --menu-bg: #ffffff;
+  --code-chip: #b4432f;
+  --code-chip-bg: rgb(180 67 47 / .09);
+  --mention: #b4432f;
+  --mention-bg: rgb(180 67 47 / .1);
+  --link: #2a62c4;
+  --agent-tile: #ffffff;
+  --agent-tile-edge: rgb(0 0 0 / .1);
   --sidebar-bg: oklch(0.935 0.042 128);
   --sidebar-hover: oklch(0.9 0.05 128);
   --sidebar-active: oklch(0.865 0.062 128);
@@ -152,3 +168,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border: 2px solid var(--surface); border-radius: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* Claude's way of setting code and links apart: coloured mono chips for inline code and paths,
+   underlined links, and @mentions as soft chips. */
+.neru-prose :not(pre) > code { padding: .12em .4em; border-radius: 5px; background: var(--code-chip-bg); color: var(--code-chip); font: .86em/1.5 'JetBrains Mono', ui-monospace, monospace; overflow-wrap: anywhere; }
+.neru-prose :not(pre) > code::before, .neru-prose :not(pre) > code::after { content: none; }
+.neru-prose a { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--link) 45%, transparent); text-underline-offset: 3px; transition: text-decoration-color .15s ease-out; }
+.neru-prose a:hover { text-decoration-color: var(--link); }
+.mention { padding: .05em .38em; border-radius: 6px; background: var(--mention-bg); color: var(--mention); font-weight: 500; white-space: nowrap; }

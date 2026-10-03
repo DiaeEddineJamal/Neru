@@ -21,6 +21,8 @@ pub enum InstallKind {
     Script,
     Npm,
     Winget,
+    /// `brew install`: files under the Homebrew Cellar, which brew owns.
+    Homebrew,
     /// `neru-cli` beside the desktop app, which updates itself.
     App,
     /// A build from source (`cargo run`, target/…).
@@ -35,6 +37,8 @@ pub fn install_kind() -> InstallKind {
         InstallKind::Npm
     } else if text.contains("/winget/packages/") || text.contains("/winget/links/") {
         InstallKind::Winget
+    } else if text.contains("/cellar/") || text.contains("/homebrew/") || text.contains("/linuxbrew/") {
+        InstallKind::Homebrew
     } else if cfg!(debug_assertions) || text.contains("/target/debug/") || text.contains("/target/release/") {
         InstallKind::Source
     } else if name == "neru-cli" {
@@ -51,6 +55,7 @@ pub fn target() -> Option<(&'static str, &'static str)> {
         ("macos", "aarch64") => ("aarch64-apple-darwin", "tar.gz"),
         ("macos", "x86_64") => ("x86_64-apple-darwin", "tar.gz"),
         ("linux", "x86_64") => ("x86_64-unknown-linux-gnu", "tar.gz"),
+        ("linux", "aarch64") => ("aarch64-unknown-linux-gnu", "tar.gz"),
         _ => return None,
     })
 }
@@ -164,11 +169,12 @@ pub fn run() -> i32 {
         println!("{}", if plain { crate::cli_ui::strip(&text) } else { text });
         let _ = std::io::stdout().flush();
     };
+    let fail = |text: String| eprintln!("{}", if std::io::IsTerminal::is_terminal(&std::io::stderr()) { text } else { crate::cli_ui::strip(&text) });
     say(format!("{MOSS}✻{RESET} {BOLD}Neru{RESET} {DIM}{VERSION}{RESET} · checking for updates…"));
     let latest = match latest_version() {
         Ok(version) => version,
         Err(error) => {
-            say(format!("{RED}✗{RESET} {error}"));
+            fail(format!("{RED}✗{RESET} {error}"));
             return 1;
         }
     };
@@ -180,9 +186,10 @@ pub fn run() -> i32 {
     let how = match install_kind() {
         InstallKind::Npm => Some("npm install -g neru-cli@latest"),
         InstallKind::Winget => Some("winget upgrade Luziv.Neru.CLI"),
+        InstallKind::Homebrew => Some("brew upgrade neru-cli"),
         InstallKind::App => {
             say(format!("  This neru came with the Neru app, which updates itself: open it and choose {BOLD}Restart to update{RESET}."));
-            Some(if cfg!(windows) { "winget upgrade Luziv.Neru" } else { "" })
+            Some("")
         }
         InstallKind::Source => Some("git pull, then cargo build --release --bin neru-cli"),
         InstallKind::Script => None,
@@ -194,7 +201,7 @@ pub fn run() -> i32 {
         return 0;
     }
     let Some(exe) = std::env::current_exe().ok().and_then(|path| path.canonicalize().ok()) else {
-        say(format!("{RED}✗{RESET} Could not find where neru is installed."));
+        fail(format!("{RED}✗{RESET} Could not find where neru is installed."));
         return 1;
     };
     let Some(dir) = exe.parent().map(Path::to_path_buf) else { return 1 };
@@ -205,7 +212,7 @@ pub fn run() -> i32 {
             0
         }
         Err(error) => {
-            say(format!("{RED}✗{RESET} {error}"));
+            fail(format!("{RED}✗{RESET} {error}"));
             say(format!("  {YELLOW}You can also reinstall with the command in the README.{RESET}"));
             1
         }

@@ -1,7 +1,7 @@
 {
   "name": "neru",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -27,6 +27,7 @@
     "clsx": "^2.1.1",
     "liquid-gooey": "^0.2.2",
     "lucide-react": "^1.48.0",
+    "mermaid": "^12.1.0",
     "monaco-editor": "^0.57.0",
     "motion": "^13.4.4",
     "pdfjs-dist": "^6.3.289",

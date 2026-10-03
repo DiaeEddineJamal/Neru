@@ -1,5 +1,55 @@
 [
   {
+    "version": "0.7.0",
+    "date": "2026-10-03",
+    "title": "Team, a CLI that works like Claude Code's, and free models that last longer",
+    "summary": "Team runs the coding agents you already pay for (Claude Code, Codex, Gemini CLI, OpenCode, Cursor and ten more) in one shared thread, and imports your chats, skills and connectors from them. The neru CLI now takes Claude Code's flags and output formats, and installs on Windows, macOS and Linux, x64 and arm64. Free models use far fewer tokens per request, and switching to the next working model is quicker and smarter.",
+    "sections": [
+      {
+        "title": "Team: your agents, one thread",
+        "items": [
+          "A new Team section runs Claude Code, Codex, OpenCode, Gemini CLI, Cursor Agent and ten more coding CLIs side by side, each on its own sign-in, plus Neru's own agent. They share one thread, hand work to each other with @mentions, and route around a member's usage limit.",
+          "Team skills write specs, tickets, reviews and debates to the task's artifacts, with versions, diagrams and wireframes. Members can work in their own Git worktrees, and Undo takes back a turn's file changes.",
+          "A message queue, side chats, forks, per-task terminals, a usage tab, and resizable task list and panel."
+        ]
+      },
+      {
+        "title": "The neru CLI, like Claude Code's",
+        "items": [
+          "Claude Code's flags and habits: --flag=value, options anywhere, usage errors on stderr with exit 1, --model for one run, --append-system-prompt in the system prompt, /compact with instructions.",
+          "Print mode refuses calls that need approval and carries on, and its json and stream-json output have Claude Code's shapes. --max-turns ends with error_max_turns.",
+          "neru mcp add takes claude mcp add's syntax (--transport, --scope, -e, -H) and there is neru mcp add-json.",
+          "NERU_API_KEY connects a model in CI without neru login. Ctrl-C stops a reply cleanly, NO_COLOR is respected, and Linux servers without a display run neru inside Xvfb.",
+          "Install and uninstall with one line on Windows, macOS and Linux (x64 and arm64), or with npm. Settings → CLI lists every command."
+        ]
+      },
+      {
+        "title": "Free models last longer",
+        "items": [
+          "On free plans Neru works within 64k tokens, shortens old tool output and paces requests to per-minute limits, so a free quota lasts much longer.",
+          "Sub-agents on free plans run on a quick sibling model with its own quota, and switch models instead of failing.",
+          "The next working model is chosen from every saved key at once, ranked by strength, recent failures and quotas. Failed models rest as long as the provider asked, remembered across restarts."
+        ]
+      },
+      {
+        "title": "Settings and session events",
+        "items": [
+          "Model switches, compactions and similar events show as quiet lines in the conversation, saved with the session, instead of a bar across the top.",
+          "Settings open as a dialog with search and a grouped list, like Claude's."
+        ]
+      },
+      {
+        "title": "Imports, safety and more",
+        "items": [
+          "Settings → Imports brings over chats, skills, MCP servers and instructions from Claude Code, the Claude app, Codex, Cursor, VS Code, OpenCode and Gemini CLI.",
+          "The agent's commands run in the operating system's sandbox, behind a rules gate that refuses destructive commands.",
+          "Custom agents can edit files and run commands under the session's permissions.",
+          "A guided walkthrough of every control, with a skip button."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.6.0",
     "date": "2026-10-01",
     "title": "Free models that keep going, 23 new skills, and your choice of microphone",

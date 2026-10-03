@@ -91,6 +91,8 @@ struct Shell {
     ended: Option<Instant>,
     output: Arc<Mutex<Buffer>>,
     child: tokio::process::Child,
+    /// Keeps the command's sandbox; on Windows, dropping it ends whatever the command left running.
+    _guard: crate::sandbox::Guard,
     status: Status,
 }
 
@@ -133,8 +135,8 @@ impl Shell {
 static SHELLS: LazyLock<Mutex<HashMap<String, Shell>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 
-/// The shell a command runs in: PowerShell on Windows, `sh -lc` elsewhere. Shared with the
-/// agent's foreground commands.
+/// The shell a command runs in: PowerShell on Windows, `sh -lc` elsewhere. sandbox.rs wraps it
+/// for the agent's commands.
 pub(crate) fn command(command: &str) -> tokio::process::Command {
     #[cfg(windows)]
     {
@@ -144,7 +146,7 @@ pub(crate) fn command(command: &str) -> tokio::process::Command {
             "-NonInteractive",
             "-Command",
             // The storage script only exists on the development machine; elsewhere run the command as is.
-            &format!("if (Test-Path 'D:\\Neru\\Use-NeruStorage.ps1') {{ . 'D:\\Neru\\Use-NeruStorage.ps1' }}; {command}"),
+            &format!("if (Test-Path 'D:\\Neru\\Use-NeruStorage.ps1') {{ . 'D:\\Neru\\Use-NeruStorage.ps1' 6>$null }}; {command}"),
         ]);
         process
     }
@@ -157,7 +159,7 @@ pub(crate) fn command(command: &str) -> tokio::process::Command {
 }
 
 /// Ends the process and everything it started (a shell wraps npm, which wraps node).
-fn kill_tree(child: &mut tokio::process::Child) {
+pub(crate) fn kill_tree(child: &mut tokio::process::Child) {
     #[cfg(windows)]
     if let Some(pid) = child.id() {
         use std::os::windows::process::CommandExt;
@@ -195,8 +197,8 @@ fn read_into(stream: impl AsyncRead + Unpin + Send + 'static, output: Arc<Mutex<
 }
 
 /// Starts `command` in `root` without waiting for it and returns its id, like `shell-3`. With
-/// `timeout` it is stopped after that long.
-pub fn start(session: &str, root: &Path, command_text: &str, timeout: Option<Duration>) -> Result<String, String> {
+/// `timeout` it is stopped after that long. `sandboxed` runs it in the OS sandbox (sandbox.rs).
+pub fn start(session: &str, root: &Path, command_text: &str, timeout: Option<Duration>, sandboxed: bool) -> Result<String, String> {
     {
         let mut shells = SHELLS.lock().map_err(|e| e.to_string())?;
         let running = shells
@@ -212,8 +214,9 @@ pub fn start(session: &str, root: &Path, command_text: &str, timeout: Option<Dur
             return Err(format!("{MAX_RUNNING} background shells are already running in this session. Stop one with kill_shell first."));
         }
     }
-    let mut process = command(command_text);
-    process
+    let mut prepared = crate::sandbox::prepare(command_text, root, sandboxed);
+    prepared
+        .process
         .current_dir(root)
         // Keeps dev servers from opening a browser tab of their own.
         .env("BROWSER", "none")
@@ -221,11 +224,9 @@ pub fn start(session: &str, root: &Path, command_text: &str, timeout: Option<Dur
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    process.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     #[cfg(unix)]
-    process.process_group(0);
-    let mut child = process.spawn().map_err(|e| format!("Could not start the command: {e}"))?;
+    prepared.process.process_group(0);
+    let (mut child, guard) = prepared.start()?;
     let output = Arc::new(Mutex::new(Buffer::default()));
     if let Some(stdout) = child.stdout.take() {
         read_into(stdout, output.clone());
@@ -236,7 +237,7 @@ pub fn start(session: &str, root: &Path, command_text: &str, timeout: Option<Dur
     let id = format!("shell-{}", NEXT.fetch_add(1, Ordering::Relaxed));
     SHELLS.lock().map_err(|e| e.to_string())?.insert(
         id.clone(),
-        Shell { session: session.into(), command: command_text.into(), started: Instant::now(), ended: None, output, child, status: Status::Running },
+        Shell { session: session.into(), command: command_text.into(), started: Instant::now(), ended: None, output, child, _guard: guard, status: Status::Running },
     );
     if let Some(limit) = timeout {
         let id = id.clone();
@@ -462,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn runs_in_the_background_and_stops() {
         let root = std::env::temp_dir();
-        let id = start("test-session", &root, "echo neru-ready", None).unwrap();
+        let id = start("test-session", &root, "echo neru-ready", None, true).unwrap();
         let mut text = String::new();
         for _ in 0..100 {
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -473,7 +474,7 @@ mod tests {
         }
         assert!(text.contains("neru-ready") && text.contains("exited with code 0"), "{text}");
         assert!(output("other-session", &id, None).is_err(), "shells are per session");
-        let sleeper = start("test-session", &root, if cfg!(windows) { "Start-Sleep -Seconds 60" } else { "sleep 60" }, None).unwrap();
+        let sleeper = start("test-session", &root, if cfg!(windows) { "Start-Sleep -Seconds 60" } else { "sleep 60" }, None, true).unwrap();
         assert!(list(Some("test-session")).iter().any(|shell| shell.id == sleeper && shell.status == "running"));
         assert!(kill("test-session", &sleeper).unwrap().starts_with("Stopped"));
         assert!(output("test-session", &sleeper, None).unwrap().contains("stopped (kill_shell)"));

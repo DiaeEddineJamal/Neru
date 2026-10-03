@@ -15,6 +15,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -54,6 +55,41 @@ export interface FileDiffProps {
   /** Called with the new-file line number when a row is clicked. */
   onLineClick?: (line: number) => void;
   comments?: { line: number; text: string }[];
+  /** Side-by-side shows old left, new right; falls back to unified in narrow containers. */
+  view?: "unified" | "split";
+}
+
+/** Below this container width split view falls back to unified. */
+const SPLIT_MIN_WIDTH = 560;
+
+type SplitRow =
+  | { hunk: number }
+  | { left?: number; right?: number };
+
+/** Pairs each run of removals with the additions that follow it; context sits on both sides. */
+export function splitRows(lines: FileDiffLine[]): SplitRow[] {
+  const rows: SplitRow[] = [];
+  let removed: number[] = [];
+  let added: number[] = [];
+  const flush = () => {
+    for (let i = 0; i < Math.max(removed.length, added.length); i++) {
+      rows.push({ left: removed[i], right: added[i] });
+    }
+    removed = [];
+    added = [];
+  };
+  lines.forEach((line, index) => {
+    if (line.type === "removed") {
+      if (added.length) flush();
+      removed.push(index);
+    } else if (line.type === "added") added.push(index);
+    else {
+      flush();
+      rows.push(line.type ? { left: index, right: index } : { hunk: index });
+    }
+  });
+  flush();
+  return rows;
 }
 
 function ChangeCount({ value, type }: { value: number; type: "added" | "removed" }) {
@@ -88,8 +124,12 @@ export function FileDiff({
   className,
   onLineClick,
   comments = [],
+  view = "unified",
 }: FileDiffProps) {
   const reduce = useReducedMotion() ?? false;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  const split = view === "split" && !narrow;
   const baseId = useId();
   const triggerId = `${baseId}-trigger`;
   const contentId = `${baseId}-content`;
@@ -105,6 +145,7 @@ export function FileDiff({
   const canCopy = Boolean(copyText || onCopy);
   const code = lines.map((line) => line.content).join("\n");
   const tokens = useAgentCodeTokens(code, language);
+  const rows = useMemo(() => (split ? splitRows(lines) : []), [lines, split]);
 
   const setOpen = useCallback(
     (next: boolean) => {
@@ -135,6 +176,16 @@ export function FileDiff({
     [],
   );
 
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || view !== "split" || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) =>
+      setNarrow(entry.contentRect.width < SPLIT_MIN_WIDTH),
+    );
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [view]);
+
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || !currentOpen || !streaming) return;
@@ -164,7 +215,9 @@ export function FileDiff({
 
   return (
     <div
+      ref={rootRef}
       data-state={status}
+      data-view={split ? "split" : "unified"}
       aria-busy={streaming}
       className={cn("w-full text-sm", className)}
     >
@@ -222,6 +275,93 @@ export function FileDiff({
               className="scrollbar-hide overflow-auto"
               style={{ maxHeight }}
             >
+              {split ? (
+                <div className="grid grid-cols-2 font-mono text-xs leading-5">
+                  <span className="sr-only">File changes, side by side</span>
+                  {(["left", "right"] as const).map((side) => (
+                    <div
+                      key={side}
+                      aria-label={side === "left" ? "Before" : "After"}
+                      className={cn(
+                        "min-w-0 overflow-x-auto",
+                        side === "right" && "border-l border-foreground/[0.06]",
+                      )}
+                    >
+                      <div className="w-max min-w-full">
+                        {rows.map((row, rowIndex) => {
+                          if ("hunk" in row) {
+                            return (
+                              <div
+                                key={rowIndex}
+                                className="h-5 whitespace-pre bg-foreground/[0.03] px-2 text-muted-foreground/60"
+                              >
+                                {side === "left" ? lines[row.hunk].content : " "}
+                              </div>
+                            );
+                          }
+                          // Notes belong to the row (same key the click uses) so both sides stay aligned.
+                          const anchor = lines[row.right ?? row.left ?? 0];
+                          const rowLine = anchor?.newLine ?? anchor?.oldLine;
+                          const notes = comments.filter((c) => c.line === rowLine);
+                          const index = row[side];
+                          const line = index === undefined ? undefined : lines[index];
+                          // ponytail: notes stay one line tall in split so both sides keep row alignment
+                          const noteRows = notes.map(note => side === "right"
+                            ? <div key={note.text} title={note.text} className="h-5 max-w-[40ch] truncate border-l-2 border-emerald-500/50 bg-emerald-500/[0.06] px-3 text-[11px] text-foreground/80">{note.text}</div>
+                            : <div key={note.text} className="h-5 bg-emerald-500/[0.03]" />);
+                          if (!line) {
+                            return (
+                              <div key={rowIndex}>
+                                <div className="h-5 bg-foreground/[0.03]" />
+                                {noteRows}
+                              </div>
+                            );
+                          }
+                          const type = line.type ?? "context";
+                          const lineNumber =
+                            side === "left" ? line.oldLine : line.newLine;
+                          const clickLine = line.newLine ?? line.oldLine;
+                          return (
+                            <div key={rowIndex}>
+                              <div
+                                role={onLineClick && clickLine ? "button" : undefined}
+                                tabIndex={onLineClick && clickLine ? 0 : undefined}
+                                onClick={() => { if (clickLine) onLineClick?.(clickLine) }}
+                                onKeyDown={event => { if ((event.key === "Enter" || event.key === " ") && clickLine) { event.preventDefault(); onLineClick?.(clickLine) } }}
+                                className={cn(
+                                  "grid h-5 grid-cols-[2.25rem_1rem_minmax(0,1fr)]",
+                                  type === "added" && "bg-emerald-500/[0.07]",
+                                  type === "removed" && "bg-rose-500/[0.07]",
+                                  onLineClick && "cursor-pointer hover:bg-foreground/[0.04]",
+                                )}
+                              >
+                                <span className="select-none pr-2 text-right tabular-nums text-muted-foreground/40">
+                                  {lineNumber}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "select-none text-center text-muted-foreground/45",
+                                    type === "added" && "text-emerald-600 dark:text-emerald-400",
+                                    type === "removed" && "text-rose-600 dark:text-rose-400",
+                                  )}
+                                >
+                                  {type === "added" ? "+" : type === "removed" ? "−" : ""}
+                                </span>
+                                <AgentCodeLine
+                                  code={line.content}
+                                  tokens={tokens?.[index!]}
+                                  className="min-w-0 whitespace-pre px-1.5"
+                                />
+                              </div>
+                              {noteRows}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div className="font-mono text-xs leading-5">
                 <span className="sr-only">File changes</span>
                 {lines.map((line, index) => {
@@ -274,6 +414,7 @@ export function FileDiff({
                   );
                 })}
               </div>
+              )}
             </div>
 
             {canCopy ? (

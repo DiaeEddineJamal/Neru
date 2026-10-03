@@ -521,23 +521,24 @@ fn gh(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// The pull request for the branch checked out in `root` and its CI checks; None without one.
+pub fn pr_status_at(root: &Path) -> Result<Option<PrStatus>, String> {
+    match gh(root, &["pr", "view", "--json", "number,url,title,state,statusCheckRollup"]) {
+        Ok(text) => {
+            let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            Ok(Some(parse_pr(&body)))
+        }
+        Err(error) if error.contains("no pull requests found") => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// The pull request for the current branch and its CI checks, or None when there is none.
 #[tauri::command]
 pub async fn pull_request_status(app: tauri::AppHandle) -> Result<Option<PrStatus>, String> {
     use tauri::Manager;
     let root = project_root(&app.state::<AppState>())?;
-    tauri::async_runtime::spawn_blocking(move || {
-        match gh(&root, &["pr", "view", "--json", "number,url,title,state,statusCheckRollup"]) {
-            Ok(text) => {
-                let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-                Ok(Some(parse_pr(&body)))
-            }
-            Err(error) if error.contains("no pull requests found") => Ok(None),
-            Err(error) => Err(error),
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || pr_status_at(&root)).await.map_err(|e| e.to_string())?
 }
 
 /// The failing log lines of the latest failed workflow run on this branch, for Neru to fix.
@@ -545,7 +546,13 @@ pub async fn pull_request_status(app: tauri::AppHandle) -> Result<Option<PrStatu
 pub async fn failed_check_log(app: tauri::AppHandle) -> Result<String, String> {
     use tauri::Manager;
     let root = project_root(&app.state::<AppState>())?;
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || failed_log_at(&root)).await.map_err(|e| e.to_string())?
+}
+
+/// The failing log lines of the latest failed workflow run on the branch checked out in `root`.
+pub fn failed_log_at(root: &Path) -> Result<String, String> {
+    let root = root.to_path_buf();
+    {
         let branch = current_branch(&root)?;
         let runs: serde_json::Value = serde_json::from_str(&gh(
             &root,
@@ -560,9 +567,7 @@ pub async fn failed_check_log(app: tauri::AppHandle) -> Result<String, String> {
         let log = gh(&root, &["run", "view", &id, "--log-failed"])?;
         let tail: String = log.chars().rev().take(20_000).collect::<Vec<_>>().into_iter().rev().collect();
         Ok(format!("Workflow \"{}\" (run {id}) failed. Failing steps:\n{tail}", run["name"].as_str().unwrap_or("CI")))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
 }
 
 #[cfg(test)]
