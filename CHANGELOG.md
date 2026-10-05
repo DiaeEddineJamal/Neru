@@ -2,6 +2,24 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.10.0 · Neru knows your name
+*2026-10-05*
+
+Tell Neru your name and how to address you, and every model you work with uses it. Desktop notifications now reach the Windows notification panel, and the desktop app goes back to API models only.
+
+### You
+
+- Setup asks what Neru should call you and whether to address you as a man or a woman. Models use your name now and then, and the right masculine or feminine forms in languages such as French or Arabic.
+- Change your name or gender any time in Settings → General → You.
+
+### Fixes
+
+- Desktop notifications show up on Windows again, with Neru's name and icon in the notification panel, even when no Start menu shortcut was created.
+
+### Changes
+
+- Pocket Lab is no longer in the desktop app. Neru on your computer works with API models; offline models stay in the phone app.
+
 ## 0.9.0 · Neru on your phone
 *2026-10-05*
 

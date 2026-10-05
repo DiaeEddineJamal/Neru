@@ -33,6 +33,7 @@ type OnboardingProps = {
 
 const steps = [
   { id: 'welcome', label: 'Welcome' },
+  { id: 'you', label: 'You' },
   { id: 'project', label: 'Project' },
   { id: 'model', label: 'Model' },
   { id: 'voice', label: 'Voice' },
@@ -41,7 +42,9 @@ const steps = [
   { id: 'decide', label: 'You decide' },
 ] as const
 
-const STEP = { welcome: 0, project: 1, model: 2, voice: 3, team: 4, toolkit: 5, decide: 6 } as const
+const STEP = { welcome: 0, you: 1, project: 2, model: 3, voice: 4, team: 5, toolkit: 6, decide: 7 } as const
+
+const genders = [{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }] as const
 
 const highlights = [
   { icon: FolderOpen, title: 'Reads your codebase', text: 'Explores files, Git history, and the web, and cites its sources.' },
@@ -151,6 +154,9 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
   const [group, setGroup] = useState(featureGroups[0].id)
   const [demo, setDemo] = useState<'listening' | 'processing'>('listening')
   const speech = useSpeechModels()
+  const [name, setName] = useState('')
+  const [gender, setGender] = useState('')
+  useEffect(() => { if (isDesktop) void api.getProfile().then(saved => { setName(saved.name); setGender(saved.gender) }).catch(() => undefined) }, [isDesktop])
   const [agents, setAgents] = useState<TeamAgent[] | null>(null)
   useEffect(() => { if (step === STEP.team && isDesktop && agents === null) void api.listTeamAgents().then(setAgents).catch(() => setAgents([])) }, [step, isDesktop, agents])
   const level = useDemoLevel(step === STEP.voice && demo === 'listening')
@@ -229,14 +235,16 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
   // Each step has one primary action; skippable steps also get a quiet secondary one.
   const primary = async () => {
     if (last) { onFinish(); return }
+    if (step === STEP.you && isDesktop) await api.setProfile(name, gender).catch(() => undefined)
     if (step === STEP.project && !project) { await openFolder(); return }
     if (step === STEP.model && !saved && canSave) { if (await saveProvider()) moveTo(step + 1); return }
     moveTo(step + 1)
   }
-  const skippable = step === STEP.project || step === STEP.model || step === STEP.voice || step === STEP.team
+  const skippable = step === STEP.you || step === STEP.project || step === STEP.model || step === STEP.voice || step === STEP.team
   const busy = saving || opening
   const primaryLabel = last ? 'Open workspace'
     : step === STEP.welcome ? 'Get started'
+    : step === STEP.you ? (name.trim() ? `Nice to meet you, ${name.trim().split(/\s+/)[0]}` : 'Continue')
     : step === STEP.project ? (project ? 'Continue' : 'Choose a folder')
     : step === STEP.model ? (saving ? 'Connecting…' : saved ? 'Continue' : canSave ? 'Connect and continue' : 'Continue')
     : step === STEP.voice ? (speech.active ? 'Continue' : 'Continue without voice')
@@ -319,6 +327,16 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
               </div>
               <div className="ob-hero" aria-hidden><div className="ob-hero-glow" /><Mascot size={132} interactive /></div>
             </div>}
+
+            {step === STEP.you && <>
+              <h1 ref={headingRef} tabIndex={-1}>What should Neru call you?</h1>
+              <p className="ob-lede">Every model you work with will know your name and how to address you. Change it any time in Settings, General.</p>
+              <label className="ob-field"><span>Your name</span><input value={name} onChange={event => setName(event.target.value)} placeholder="First name" autoComplete="given-name" maxLength={80} /></label>
+              <div className="ob-providers" role="radiogroup" aria-label="Gender">
+                {genders.map(item => <button key={item.value} type="button" role="radio" aria-checked={gender === item.value} className={cn('ob-provider', gender === item.value && 'selected')} onClick={() => setGender(item.value)}><strong>{item.label}</strong></button>)}
+              </div>
+              <p className="ob-note">Used for pronouns, and for masculine or feminine forms in languages like French or Arabic.</p>
+            </>}
 
             {step === STEP.project && <>
               <h1 ref={headingRef} tabIndex={-1}>Open a project.</h1>

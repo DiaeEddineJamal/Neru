@@ -50,7 +50,6 @@ import type { ErrorAction } from '@/lib/friendlyError'
 import type { ModelInfo, Todo, WorkspaceChange, AgentEvent, AgentMode, AgentResponse, PrStatus, SessionChange, SlashCommand, AttachedDocument, ChatEntry, ContextUsage, Effort, GitStatus, PendingView, ProjectInfo, ProviderView, RemoteInfo, Section, SessionSnapshot, SessionSummary, TrustStatus, VoiceView } from './types'
 import { Connectors } from './components/neru/Connectors'
 import { RemoteSettings } from './components/neru/RemoteSettings'
-import { PocketLab } from './components/neru/PocketLab'
 import { ReviewPane, type ReviewComment } from './components/neru/ReviewPane'
 import { PullRequestChecks } from './components/neru/PullRequestChecks'
 import { expandCommand } from './components/neru/Composer'
@@ -80,14 +79,13 @@ function trustSummary(status: TrustStatus) {
 
 /** Overrides for one send: who it goes to, what it carries, and whether the message box is left alone (a queued message). */
 interface SendOptions { mode?: AgentMode; sessionId?: string; documents?: AttachedDocument[]; contextPaths?: string[]; keepComposer?: boolean; onStarted?: () => void }
-type SettingsTab = 'general' | 'appearance' | 'model' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills' | 'phone' | 'pocket'
+type SettingsTab = 'general' | 'appearance' | 'model' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills' | 'phone'
 // Grouped like Claude's settings: the app, this computer, and what you add to it. Words help the search find a tab.
 const settingsGroups: { label: string; tabs: { id: SettingsTab; label: string; icon: typeof Settings; words: string }[] }[] = [
   { label: 'Settings', tabs: [
     { id: 'general', label: 'General', icon: Settings, words: 'project guide tour notifications web search updates version credits keyboard shortcuts' },
     { id: 'appearance', label: 'Appearance', icon: Palette, words: 'color mode dark light theme sidebar hover' },
     { id: 'model', label: 'Model provider', icon: Cpu, words: 'api key provider model base url format free forget keys' },
-    { id: 'pocket', label: 'Pocket Lab', icon: Sparkles, words: 'offline local models gemma qwen deepseek download cpu gpu thinking speculative' },
     { id: 'voice', label: 'Voice', icon: Mic, words: 'dictation speech microphone whisper transcription language' },
   ] },
   { label: 'This computer', tabs: [
@@ -171,6 +169,8 @@ function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')
+  const [profile, setProfile] = useState<{ name: string; gender: string }>({ name: '', gender: '' })
+  useEffect(() => { if (settingsOpen) void api.getProfile().then(setProfile).catch(() => {}) }, [settingsOpen])
   const [prompt, setPrompt] = useState('')
   const [contextPaths, setContextPaths] = useState<string[]>([])
   const [documents, setDocuments] = useState<AttachedDocument[]>([])
@@ -1539,7 +1539,7 @@ function App() {
           <label className="settings-search"><Search size={16} aria-hidden /><input autoFocus value={settingsQuery} onChange={event => setSettingsQuery(event.target.value)} placeholder="Search" aria-label="Search settings" /></label>
           <div className="settings-nav-scroll">{settingsGroups.map(group => {
             const query = settingsQuery.trim().toLowerCase()
-            const tabs = group.tabs.filter(tab => !query || `${tab.label} ${tab.words}`.toLowerCase().includes(query))
+            const tabs = group.tabs.filter(tab => (!query || `${tab.label} ${tab.words}`.toLowerCase().includes(query)))
             return tabs.length > 0 && <div className="settings-nav-group" key={group.label}><span className="settings-nav-label">{group.label}</span>
               {tabs.map(tab => <button key={tab.id} className={settingsTab === tab.id ? 'active' : ''} aria-current={settingsTab === tab.id ? 'page' : undefined} onClick={() => setSettingsTab(tab.id)}><tab.icon size={18} strokeWidth={1.75} aria-hidden />{tab.label}</button>)}</div>
           })}</div>
@@ -1549,6 +1549,10 @@ function App() {
           {/* The settings backdrop covers the main banner, so errors from settings show here. */}
           {error && errorBanner}
           {settingsTab === 'general' && <>
+            <section className="settings-section"><h2>You</h2>
+              <div className="settings-row"><div><strong>Name</strong><p>Every model you work with uses it now and then.</p></div><input className="settings-select" value={profile.name} maxLength={80} placeholder="First name" autoComplete="given-name" aria-label="Your name" onChange={event => setProfile({ ...profile, name: event.target.value })} onBlur={() => void api.setProfile(profile.name, profile.gender).catch(cause => setError(errorText(cause)))} /></div>
+              <div className="settings-row"><div><strong>Gender</strong><p>For pronouns, and masculine or feminine forms in languages that have them.</p></div><select className="settings-select" value={profile.gender} aria-label="Gender" onChange={event => { const next = { ...profile, gender: event.target.value }; setProfile(next); void api.setProfile(next.name, next.gender).catch(cause => setError(errorText(cause))) }}><option value="">Not set</option><option value="male">Male</option><option value="female">Female</option></select></div>
+            </section>
             <section className="settings-section"><h2>Workspace</h2>
               <div className="settings-row"><div><strong>Current project</strong><p>{project ? project.path.replace(/^\\\\\?\\/, '') : 'No project open'}</p></div><button className="button subtle" onClick={() => void chooseProject()}><Folder size={15} /> {project ? 'Change' : 'Open folder'}</button></div>
               <div className="settings-row"><div><strong>Getting started</strong><p>Revisit the project, model, and review guide.</p></div><button className="button subtle" onClick={() => setOnboarding('show')}>Replay guide</button></div>
@@ -1590,7 +1594,6 @@ function App() {
           </section>}
           {settingsTab === 'connectors' && <Connectors onError={setError} />}
           {settingsTab === 'phone' && <RemoteSettings onError={setError} onNotice={setNotice} />}
-          {settingsTab === 'pocket' && <PocketLab onError={setError} onNotice={setNotice} />}
           {settingsTab === 'skills' && <Skills onError={setError} onNotice={setNotice} />}
           {settingsTab === 'cli' && <CliSettings onError={setError} onNotice={setNotice} />}
           {settingsTab === 'agents' && <AgentsSettings onError={setError} onNotice={setNotice} />}

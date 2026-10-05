@@ -16,7 +16,6 @@ mod mcp;
 mod models;
 mod oauth;
 mod policy;
-mod pocket;
 mod preview;
 mod preview_proxy;
 mod providers;
@@ -264,6 +263,24 @@ impl Hidden for tokio::process::Command {
     }
 }
 
+/// Windows drops toasts from an app ID it does not know, and the notification plugin sends ours
+/// whenever the exe is outside `target\debug` (any install, or a dev build with CARGO_TARGET_DIR).
+/// Registering the ID under HKCU lets them reach the Action Center, with Neru's name and icon,
+/// whether or not a Start menu shortcut carries it.
+#[cfg(windows)]
+fn register_toast_app(identifier: String) {
+    std::thread::spawn(move || {
+        let icon = workspace::data_dir().map(|dir| dir.join("notification-icon.png"));
+        let icon = icon.ok().filter(|path| std::fs::write(path, include_bytes!("../icons/128x128.png")).is_ok());
+        let key = format!(r"HKCU\Software\Classes\AppUserModelId\{identifier}");
+        let mut values = vec![("DisplayName", "Neru".to_string())];
+        values.extend(icon.map(|path| ("IconUri", path.display().to_string())));
+        for (name, value) in values {
+            let _ = std::process::Command::new("reg").hidden().args(["add", &key, "/v", name, "/d", &value, "/f"]).status();
+        }
+    });
+}
+
 /// Everything but the window: plugins, state and commands. `ready` runs once the app is set up.
 pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
@@ -275,6 +292,8 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
         .setup(move |app| {
             use tauri::Manager;
             skills::set_bundled_dir(app.path().resource_dir().ok());
+            #[cfg(windows)]
+            register_toast_app(app.config().identifier.clone());
             index::set_app(app.handle().clone());
             if let Some(root) = app.state::<AppState>().root.lock().ok().and_then(|root| root.clone()) {
                 // Start indexing the last project now, so the first search or chat finds it ready.
@@ -365,6 +384,8 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             extras::resolve_plan,
             extras::answer_question,
             extras::open_memory_file,
+            extras::get_profile,
+            extras::set_profile,
             agent::run_task_command,
             agent::allow_pending_always,
             agent::session_context,
@@ -460,13 +481,5 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             remote::remote_reset_pairing,
             remote::remote_set_internet,
             remote::remote_set_endpoint,
-            pocket::pocket_status,
-            pocket::pocket_setup,
-            pocket::pocket_download,
-            pocket::pocket_pause,
-            pocket::pocket_cancel,
-            pocket::pocket_remove,
-            pocket::pocket_run,
-            pocket::pocket_vision_model,
         ])
 }

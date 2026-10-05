@@ -179,7 +179,44 @@ pub fn memory_prompt(root: Option<&Path>) -> String {
     if let Some(root) = root {
         add("Memory about this project (saved in earlier sessions)", Some(project_memory_path(root)));
     }
+    let profile = profile_prompt(&get_profile());
+    if !profile.is_empty() {
+        text.push_str(&format!("\n\n{profile}"));
+    }
     text
+}
+
+/// What models call the user, and which pronouns and grammatical gender they use (as on the phone app).
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct Profile {
+    pub name: String,
+    /// "male", "female" or empty.
+    pub gender: String,
+}
+
+fn profile_path() -> Result<PathBuf, String> { Ok(data_dir()?.join("profile.json")) }
+
+#[tauri::command]
+pub fn get_profile() -> Profile {
+    profile_path().ok().and_then(|path| fs::read_to_string(path).ok()).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn set_profile(name: String, gender: String) -> Result<(), String> {
+    let profile = Profile { name: name.trim().chars().take(80).collect(), gender: if matches!(gender.as_str(), "male" | "female") { gender } else { String::new() } };
+    fs::write(profile_path()?, serde_json::to_vec_pretty(&profile).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
+fn profile_prompt(profile: &Profile) -> String {
+    let name = profile.name.trim();
+    let who = match profile.gender.as_str() {
+        "male" => "He is a man: use he/him, and masculine forms in languages with grammatical gender.",
+        "female" => "She is a woman: use she/her, and feminine forms in languages with grammatical gender.",
+        _ => "",
+    };
+    let name = if name.is_empty() { String::new() } else { format!("The user's name is {name}. Use it now and then, naturally, not in every reply.") };
+    [name.as_str(), who].iter().filter(|part| !part.is_empty()).copied().collect::<Vec<_>>().join(" ")
 }
 
 pub fn save_memory(root: Option<&Path>, fact: &str, scope: &str) -> Result<String, String> {
@@ -503,6 +540,14 @@ pub fn open_memory_file(scope: String, state: tauri::State<'_, crate::AppState>)
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn profile_prompt_names_and_genders_the_user() {
+        assert_eq!(profile_prompt(&Profile::default()), "");
+        let text = profile_prompt(&Profile { name: " Diae ".into(), gender: "male".into() });
+        assert!(text.starts_with("The user's name is Diae.") && text.contains("he/him"));
+        assert!(profile_prompt(&Profile { name: String::new(), gender: "female".into() }).starts_with("She is a woman"));
+    }
 
     #[test]
     fn todos_normalize_statuses_and_summarize() {
