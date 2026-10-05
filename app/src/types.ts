@@ -289,3 +289,6 @@ export interface ImportSkill { source: string; name: string; path: string; descr
 export interface ImportServer { key: string; source: string; name: string; target: string; conflict: boolean }
 export interface ImportRules { source: string; path: string; scope: 'personal' | 'project'; size: number; imported: boolean }
 export interface ImportScan { sources: ImportSource[]; chats: ImportChat[]; skills: ImportSkill[]; servers: ImportServer[]; rules: ImportRules[] }
+
+/** Settings → Phone (Neru Remote). `pairing` and `qrSvg` are empty while it is off. */
+export interface RemoteStatus { enabled: boolean; port: number; hosts: string[]; name: string; pairing: string; qrSvg: string; clients: number; internet: boolean; endpoint: string; internetError: string }

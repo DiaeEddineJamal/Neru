@@ -4,7 +4,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { cn } from '@/lib/utils'
-import { Bot, Cpu, Download, Palette, Plug, Search, Settings, FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, MessageCircle, Mic, Moon, Paperclip, PenLine, RotateCw, FolderSearch, Plus, ShieldCheck, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
+import { Bot, Cpu, Download, Palette, Plug, Search, Settings, FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, MessageCircle, Mic, Moon, Paperclip, PenLine, RotateCw, FolderSearch, Plus, ShieldCheck, Smartphone, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
 import { FileDiff } from '@/components/agents/file-diff'
 import { languageForPath } from '@/components/agents/agent-code'
 import type { StreamingResponseFeedback } from '@/components/agents/streaming-response'
@@ -49,6 +49,8 @@ import { useContextMenu } from './components/neru/ContextMenu'
 import type { ErrorAction } from '@/lib/friendlyError'
 import type { ModelInfo, Todo, WorkspaceChange, AgentEvent, AgentMode, AgentResponse, PrStatus, SessionChange, SlashCommand, AttachedDocument, ChatEntry, ContextUsage, Effort, GitStatus, PendingView, ProjectInfo, ProviderView, RemoteInfo, Section, SessionSnapshot, SessionSummary, TrustStatus, VoiceView } from './types'
 import { Connectors } from './components/neru/Connectors'
+import { RemoteSettings } from './components/neru/RemoteSettings'
+import { PocketLab } from './components/neru/PocketLab'
 import { ReviewPane, type ReviewComment } from './components/neru/ReviewPane'
 import { PullRequestChecks } from './components/neru/PullRequestChecks'
 import { expandCommand } from './components/neru/Composer'
@@ -78,13 +80,14 @@ function trustSummary(status: TrustStatus) {
 
 /** Overrides for one send: who it goes to, what it carries, and whether the message box is left alone (a queued message). */
 interface SendOptions { mode?: AgentMode; sessionId?: string; documents?: AttachedDocument[]; contextPaths?: string[]; keepComposer?: boolean; onStarted?: () => void }
-type SettingsTab = 'general' | 'appearance' | 'model' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills'
+type SettingsTab = 'general' | 'appearance' | 'model' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills' | 'phone' | 'pocket'
 // Grouped like Claude's settings: the app, this computer, and what you add to it. Words help the search find a tab.
 const settingsGroups: { label: string; tabs: { id: SettingsTab; label: string; icon: typeof Settings; words: string }[] }[] = [
   { label: 'Settings', tabs: [
     { id: 'general', label: 'General', icon: Settings, words: 'project guide tour notifications web search updates version credits keyboard shortcuts' },
     { id: 'appearance', label: 'Appearance', icon: Palette, words: 'color mode dark light theme sidebar hover' },
     { id: 'model', label: 'Model provider', icon: Cpu, words: 'api key provider model base url format free forget keys' },
+    { id: 'pocket', label: 'Pocket Lab', icon: Sparkles, words: 'offline local models gemma qwen deepseek download cpu gpu thinking speculative' },
     { id: 'voice', label: 'Voice', icon: Mic, words: 'dictation speech microphone whisper transcription language' },
   ] },
   { label: 'This computer', tabs: [
@@ -95,6 +98,7 @@ const settingsGroups: { label: string; tabs: { id: SettingsTab; label: string; i
   { label: 'Customize', tabs: [
     { id: 'skills', label: 'Skills', icon: BookOpen, words: 'skills commands slash' },
     { id: 'connectors', label: 'Connectors', icon: Plug, words: 'mcp servers connectors tools' },
+    { id: 'phone', label: 'Phone', icon: Smartphone, words: 'phone mobile remote pair qr code android iphone neru remote' },
   ] },
 ]
 const readStored = <T,>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }
@@ -543,6 +547,32 @@ function App() {
   }, [])
   const applySessions = (list: SessionSummary[]) => { setSessions(list); setRunning(new Set(list.filter(item => item.running).map(item => item.id))) }
   const refreshSessions = useCallback(async () => { if (isTauri()) applySessions(await api.listAllSessions()) }, [])
+  // The phone (Settings → Phone) started a reply or answered an approval: stream it here too, and reload the session once it settles.
+  const remoteRuns = useRef(new Set<string>())
+  useEffect(() => {
+    if (!isTauri()) return
+    const unlisten = api.onRemoteSession(({ sessionId, phase }) => {
+      const shown = activeRef.current === sessionId
+      if (phase === 'started') {
+        if (liveBy.current[sessionId]) return
+        remoteRuns.current.add(sessionId)
+        const started: LiveResponse = { text: '', tools: [], sources: [], drafts: [], reasoning: 0 }
+        liveBy.current[sessionId] = started
+        if (shown) { liveRef.current = started; setLive(started) }
+        return
+      }
+      if (remoteRuns.current.delete(sessionId)) {
+        delete liveBy.current[sessionId]
+        if (shown) { liveRef.current = null; setLive(null) }
+      }
+      if (shown && !liveBy.current[sessionId]) void api.sessionSnapshot(sessionId).then(snapshot => {
+        if (activeRef.current !== sessionId) return
+        setMessages(snapshot.messages); setTodos(snapshot.todos ?? []); setPending(snapshot.pending); setPendingFromAgent(snapshot.pendingFromAgent); setPendingStatus('pending')
+      }).catch(() => undefined)
+      void refreshSessions().catch(() => undefined)
+    })
+    return () => { void unlisten.then(stop => stop()) }
+  }, [refreshSessions])
   const showFilePicker = async () => { if (!project || !isTauri()) return; try { setProjectFiles(await api.listProjectFiles()); setFilePicker(true) } catch (cause) { setError(errorText(cause)) } }
   const attachFile = (path: string) => { setContextPaths(current => current.includes(path) ? current : [...current, path].slice(0, Math.max(0, ATTACH_LIMIT - documents.length))); setPrompt(current => current.replace(/@[^\s@]*$/, '')); setFilePicker(false) }
 
@@ -1419,6 +1449,7 @@ function App() {
     { id: 'changes', title: 'Changes', body: <ReviewPane embedded changes={changes} loading={changesLoading} comments={reviewComments} onComments={setReviewComments} onRefresh={() => void loadChanges()} onClose={() => setPane('changes', false)} onSend={message => void runChat(message)} onOpenFile={path => void showFile(path)} /> },
     { id: 'browser', title: 'Browser', keepAlive: true, header: <BrowserTabStrip browser={browser} />, body: browserSeen ? <PreviewPane key={project.path} browser={browser} projectKey={project.path} projectName={project.name} open={dock.browser && (section === 'home' || section === 'team')} onOpenExternal={url => void api.openUrl(url)} onSendToAgent={sendFromPreview} /> : null },
   ] : []
+  const errorBanner = <div className="error-banner-wrap"><ErrorNotice error={error} onAction={action => { setError(''); errorAction(action) }} onDismiss={() => setError('')} /></div>
   // The side panes work next to a session and next to a Team task.
   const dockHere = section === 'home' || section === 'team'
   const dockElement = project && surface !== 'chat' ? <Dock panes={dockPanes} open={{ terminal: dock.terminal && dockHere, files: dock.files && dockHere, changes: reviewOpen && dockHere, browser: dock.browser && dockHere }} expanded={dockExpanded} onExpand={setDockExpanded} onClose={id => setPane(id, false)} /> : null
@@ -1457,7 +1488,7 @@ function App() {
     </>}
   {appTour.open && <Tour label="Neru walkthrough" steps={APP_TOUR} onClose={appTour.close} />}
   <div className="workspace-row"><div className="workspace">
-    {error && <div className="error-banner-wrap"><ErrorNotice error={error} onAction={action => { setError(''); errorAction(action) }} onDismiss={() => setError('')} /></div>}
+    {error && !settingsOpen && errorBanner}
     {notice && !error && <div className="notice-banner" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss"><X size={14} /></button></div>}
     {trust && !trust.trusted && trust.path === project?.path && (trust.mcpServers.length > 0 || trust.hookEvents.length > 0) && <div className="trust-banner" role="status">
       <ShieldCheck size={16} aria-hidden />
@@ -1515,6 +1546,8 @@ function App() {
         </nav>
         <div className="settings-panel">
           <button type="button" className="icon-button settings-close" onClick={() => setSettingsOpen(false)} aria-label="Close settings" title="Close (Esc)"><X size={18} /></button>
+          {/* The settings backdrop covers the main banner, so errors from settings show here. */}
+          {error && errorBanner}
           {settingsTab === 'general' && <>
             <section className="settings-section"><h2>Workspace</h2>
               <div className="settings-row"><div><strong>Current project</strong><p>{project ? project.path.replace(/^\\\\\?\\/, '') : 'No project open'}</p></div><button className="button subtle" onClick={() => void chooseProject()}><Folder size={15} /> {project ? 'Change' : 'Open folder'}</button></div>
@@ -1556,6 +1589,8 @@ function App() {
             </>}
           </section>}
           {settingsTab === 'connectors' && <Connectors onError={setError} />}
+          {settingsTab === 'phone' && <RemoteSettings onError={setError} onNotice={setNotice} />}
+          {settingsTab === 'pocket' && <PocketLab onError={setError} onNotice={setNotice} />}
           {settingsTab === 'skills' && <Skills onError={setError} onNotice={setNotice} />}
           {settingsTab === 'cli' && <CliSettings onError={setError} onNotice={setNotice} />}
           {settingsTab === 'agents' && <AgentsSettings onError={setError} onNotice={setNotice} />}

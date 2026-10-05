@@ -1,5 +1,40 @@
 [
   {
+    "version": "0.9.0",
+    "date": "2026-10-05",
+    "title": "Neru on your phone",
+    "summary": "Pair your phone with Neru and keep up with your sessions and Team from anywhere: read replies as they stream, look over diffs, approve or deny, send the next prompt, and start new Team tasks. The phone talks to this computer over your own network, or over the internet when you turn that on, encrypted with a key only the two of them know.",
+    "sections": [
+      {
+        "title": "Neru Remote",
+        "items": [
+          "Pair a phone by scanning the QR code in Settings → Phone with the Neru app, or paste the pairing link into it. Remote is off until you turn it on.",
+          "Follow every session from the phone: replies stream in as they are written, and diffs, commands and plans waiting for approval show in full.",
+          "Approve or deny, answer the agent's questions, reply, or stop a run, from the phone. A reply started on the phone streams in the desktop window too.",
+          "Team on the phone: follow a task's thread, message the whole team or one member, and stop a member or the task.",
+          "The connection stays on your network and every message is encrypted with the pairing key. Reset pairing makes a new code and disconnects every phone.",
+          "Connect over the internet: turn it on in Settings → Phone to reach this computer from mobile data or another Wi-Fi network. Traffic goes through an encrypted tunnel, and the relay only ever sees ciphertext.",
+          "Start a Team task from the phone: pick the agents and models installed on this computer, choose a project and access mode, and send the first message. @-mention members while you write, just like on the desktop."
+        ]
+      },
+      {
+        "title": "Pocket Lab",
+        "items": [
+          "Settings → Pocket Lab downloads open models and runs them offline on this computer, with their own settings for thinking, context length and speed.",
+          "Magic Touch cuts an object out of a photo with one click, entirely on your machine."
+        ]
+      },
+      {
+        "title": "Polish",
+        "items": [
+          "Settings has a slim scrollbar that follows the light and dark themes.",
+          "Errors raised while Settings is open now show at the top of Settings instead of hiding behind it.",
+          "When the window is newer than the app behind it, Neru says it needs a restart instead of showing a raw \"command not found\"."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.8.1",
     "date": "2026-10-03",
     "title": "Images open, and no more .omc",

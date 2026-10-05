@@ -16,9 +16,12 @@ mod mcp;
 mod models;
 mod oauth;
 mod policy;
+mod pocket;
 mod preview;
 mod preview_proxy;
 mod providers;
+mod remote;
+mod remote_tunnel;
 mod run_options;
 mod sandbox;
 mod sessions;
@@ -173,6 +176,7 @@ impl Default for AppState {
 pub fn run() {
     builder(|app| {
         fit_main_window(&app);
+        remote::init(&app);
         tauri::async_runtime::spawn(mcp::start_enabled(app));
     })
     .build(context())
@@ -451,5 +455,18 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             web::open_url,
             cli_setup::cli_status,
             cli_setup::cli_install_path,
+            remote::remote_status,
+            remote::remote_set_enabled,
+            remote::remote_reset_pairing,
+            remote::remote_set_internet,
+            remote::remote_set_endpoint,
+            pocket::pocket_status,
+            pocket::pocket_setup,
+            pocket::pocket_download,
+            pocket::pocket_pause,
+            pocket::pocket_cancel,
+            pocket::pocket_remove,
+            pocket::pocket_run,
+            pocket::pocket_vision_model,
         ])
 }

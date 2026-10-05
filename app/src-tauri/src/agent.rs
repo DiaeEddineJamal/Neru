@@ -1467,9 +1467,12 @@ pub fn revoke_permission(key: String, state: State<'_, AppState>) -> Result<Vec<
 #[tauri::command]
 pub fn allow_pending_always(state: State<'_, AppState>) -> Result<(), String> {
     // Permissions belong to the project, so they also hold in its worktree sessions.
-    let root = sessions::main_root(&state)?;
-    let shared = sessions::active(&state)?;
-    let action = sessions::lock(&shared)?
+    allow_pending_always_in(&sessions::active(&state)?, &sessions::main_root(&state)?)
+}
+
+/// Remembers what a session is waiting on for `root`, its project's own folder.
+pub(crate) fn allow_pending_always_in(shared: &Shared, root: &Path) -> Result<(), String> {
+    let action = sessions::lock(shared)?
         .pending
         .clone()
         .ok_or("No pending action")?;
@@ -2612,10 +2615,18 @@ pub fn memory_files(state: State<'_, AppState>) -> Result<MemoryFiles, String> {
 
 #[tauri::command]
 pub async fn run_pending_task(app: AppHandle) -> Result<String, String> {
+    let (shared, root) = {
+        let state = app.state::<AppState>();
+        (sessions::active(&state)?, project_root(&state)?)
+    };
+    run_pending_in(&app, &shared, &root).await
+}
+
+/// Runs the task, command or connector call a session is waiting on, in `root` (that session's folder).
+pub(crate) async fn run_pending_in(app: &AppHandle, shared: &Shared, root: &Path) -> Result<String, String> {
     let state = app.state::<AppState>();
-    let root = project_root(&state)?;
-    let shared = sessions::active(&state)?;
-    let action = sessions::lock(&shared)?
+    let (app, root) = (app.clone(), root.to_path_buf());
+    let action = sessions::lock(shared)?
         .pending
         .clone()
         .ok_or("No pending task")?;

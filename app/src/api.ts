@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
+import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat } from './providerCatalog'
 import type { Route } from './lib/browser'
 
@@ -146,6 +146,17 @@ export const api = {
   restoreCheckpoint: (id: string) => invoke<void>('restore_checkpoint', { id }),
   configureProvider: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string, model: string) => invoke<ProviderView>('configure_provider', { providerId, apiFormat, baseUrl, apiKey, model }),
   providerStatus: () => invoke<ProviderView>('provider_status'),
+  pocketStatus: () => invoke<{ runtime: boolean; models: { id: string; ready: boolean; partial: number }[] }>('pocket_status'),
+  pocketSetup: () => invoke<void>('pocket_setup'),
+  pocketDownload: (modelId: string, token: string) => invoke<void>('pocket_download', { modelId, token }),
+  pocketPause: () => invoke<void>('pocket_pause'),
+  pocketCancel: () => invoke<void>('pocket_cancel'),
+  pocketRemove: (modelId: string) => invoke<void>('pocket_remove', { modelId }),
+  pocketRun: (modelId: string, requestId: string, request: Record<string, unknown>) => invoke<{ cancelled?: boolean; image?: string }>('pocket_run', { modelId, requestId, request }),
+  pocketVisionModel: () => invoke<ArrayBuffer>('pocket_vision_model'),
+  onPocketDownload: (handler: (progress: { id: string; loaded: number; total: number; phase: string }) => void) => listen<{ id: string; loaded: number; total: number; phase: string }>('pocket://download', e => handler(e.payload)),
+  onPocketToken: (handler: (token: { requestId: string; text: string; reasoning: string }) => void) => listen<{ requestId: string; text: string; reasoning: string }>('pocket://token', e => handler(e.payload)),
+  onPocketSetup: (handler: (message: string) => void) => listen<string>('pocket://setup', e => handler(e.payload)),
   newChat: () => invoke<void>('new_chat'),
   forkSession: (id: string) => invoke<SessionSnapshot>('fork_session', { id }),
   listModels: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string) => invoke<ModelInfo[]>('list_models', { providerId, apiFormat, baseUrl, apiKey }),
@@ -198,4 +209,13 @@ export const api = {
   terminalWrite: (id: string, data: string) => invoke<void>('terminal_write', { id, data }),
   terminalResize: (id: string, cols: number, rows: number) => invoke<void>('terminal_resize', { id, cols, rows }),
   terminalStop: (id: string) => invoke<void>('terminal_stop', { id }),
+  remoteStatus: () => invoke<RemoteStatus>('remote_status'),
+  remoteSetEnabled: (enabled: boolean) => invoke<RemoteStatus>('remote_set_enabled', { enabled }),
+  remoteResetPairing: () => invoke<RemoteStatus>('remote_reset_pairing'),
+  remoteSetInternet: (enabled: boolean) => invoke<RemoteStatus>('remote_set_internet', { enabled }),
+  remoteSetEndpoint: (endpoint: string) => invoke<RemoteStatus>('remote_set_endpoint', { endpoint }),
+  onRemoteTunnel: (handler: () => void) => listen('remote://tunnel', handler),
+  onRemoteClients: (handler: (count: number) => void) => listen<number>('remote://clients', event => handler(event.payload)),
+  /** The phone started a reply in a session, or settled one (approved, denied, answered, reply finished). */
+  onRemoteSession: (handler: (event: { sessionId: string; phase: 'started' | 'settled' }) => void) => listen<{ sessionId: string; phase: 'started' | 'settled' }>('remote://session', event => handler(event.payload)),
 }

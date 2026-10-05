@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Bundled by scripts/prepare-pocket-vision.mjs; local inference check fixtures.
+public/mediapipe/
+public/__probe__/

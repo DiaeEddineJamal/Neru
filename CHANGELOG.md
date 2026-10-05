@@ -2,176 +2,101 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.9.0 · Neru on your phone
+*2026-10-05*
+
+Pair your phone with Neru and keep up with your sessions and Team from anywhere: read replies as they stream, look over diffs, approve or deny, send the next prompt, and start new Team tasks. The phone talks to this computer over your own network, or over the internet when you turn that on, encrypted with a key only the two of them know.
+
+### Neru Remote
+
+- Pair a phone by scanning the QR code in Settings → Phone with the Neru app, or paste the pairing link into it. Remote is off until you turn it on.
+- Follow every session from the phone: replies stream in as they are written, and diffs, commands and plans waiting for approval show in full.
+- Approve or deny, answer the agent's questions, reply, or stop a run, from the phone. A reply started on the phone streams in the desktop window too.
+- Team on the phone: follow a task's thread, message the whole team or one member, and stop a member or the task.
+- The connection stays on your network and every message is encrypted with the pairing key. Reset pairing makes a new code and disconnects every phone.
+- Connect over the internet: turn it on in Settings → Phone to reach this computer from mobile data or another Wi-Fi network. Traffic goes through an encrypted tunnel, and the relay only ever sees ciphertext.
+- Start a Team task from the phone: pick the agents and models installed on this computer, choose a project and access mode, and send the first message. @-mention members while you write, just like on the desktop.
+
+### Pocket Lab
+
+- Settings → Pocket Lab downloads open models and runs them offline on this computer, with their own settings for thinking, context length and speed.
+- Magic Touch cuts an object out of a photo with one click, entirely on your machine.
+
+### Polish
+
+- Settings has a slim scrollbar that follows the light and dark themes.
+- Errors raised while Settings is open now show at the top of Settings instead of hiding behind it.
+- When the window is newer than the app behind it, Neru says it needs a restart instead of showing a raw "command not found".
+
 ## 0.8.1 · Images open, and no more .omc
+*2026-10-03*
+
+Pictures open in the file viewer instead of failing, and Team members no longer leave .omc folders in your projects.
 
 ### Fixes
 
-- **Images open in the file viewer.** Clicking a picture in Files showed "stream did not contain valid UTF-8". Images now show as a preview, and other binary files (PDFs, archives, fonts, media) say they open in another app, with a button to do it.
-- **No .omc folders.** Claude Code members run without the oh-my-claudecode plugin, so they no longer write its `.omc` state folder into your projects; your own Claude Code keeps the plugin. Neru also leaves `.omc` out of the file tree, search, the project index and turn changes.
-- A project created with a new task was listed twice in the sidebar.
+- Images in Files show as a preview instead of “stream did not contain valid UTF-8”. Other binary files say they open in another app, with a button to do it.
+- Claude Code members run without the oh-my-claudecode plugin, so no .omc folder appears in your projects. Your own Claude Code keeps the plugin, and Neru hides .omc from files, search and changes.
+- A project created with a new task is listed once in the sidebar, not twice.
 
 ## 0.8.0 · Team you can watch work, with your models and your projects
+*2026-10-03*
+
+Team members now show their work as it happens, with the thinking orb and streamed replies from Code mode. The message box gains dictation and attachments, each member gets a model and effort dropdown with the newest Claude and Codex models, and a new task can start in any project, including a brand new one.
 
 ### Team
 
-- **Watch members work.** A member's turn shows at once, as in Code mode: the thinking orb with what it is doing ("Thinking…", "Exploring the project…", "Composing…"), its steps as they happen, and Claude Code's reply streaming in word by word. Before, nothing showed until the whole reply arrived, because the window was never told a member had started.
-- **The same message box as Code mode.** Dictate with the microphone (and pick the microphone), attach files with **+**, or paste a screenshot. Attachments are copied into the task folder, which every member can read, and their paths go with the message.
-- **Model and effort per member.** The Members panel has a dropdown of each agent's models and one of its effort levels: Claude Code's Fable, Opus, Sonnet and Haiku (by alias or full id, plus any newer model your Claude Code has used) with low to max, and every model your Codex account offers (GPT-6 Astra, Sol and Luna, GPT-5.6 and more) with that model's own levels. The old text field hid every model but the one already typed.
-- **Pick the project when starting a task:** the one open now, a recent one, another folder, a **new project** (Neru creates the folder and starts a Git repository there), or none for planning only.
-- Turn changes leave out `.omc/`, the state folder of the oh-my-claudecode plugin, which is never the agent's work.
+- A member's turn shows at once: the thinking orb with what it is doing, its steps, and Claude Code's reply streaming in word by word.
+- The message box is Code mode's: dictation with your choice of microphone, attachments with +, and pasted screenshots. Attached files go to the task folder, where every member can read them.
+- Each member has a model and an effort dropdown: Claude Code's Fable, Opus, Sonnet and Haiku with low to max, and every model your Codex account offers with its own levels.
+- A new task can work in the open project, a recent one, another folder, a new project that Neru creates with a Git repository, or none.
+- Turn changes no longer list the oh-my-claudecode plugin's .omc state files.
 
 ## 0.7.1 · No more flashing console windows
+*2026-10-03*
+
+On Windows, opening Neru no longer pops terminal windows open and shut.
 
 ### Fixes
 
-- **No more console windows flashing on Windows.** Opening the app no longer pops terminal windows open and shut. Git, GitHub CLI, PowerShell, hooks, version checks, dev servers and the other console programs Neru runs in the background now start without a window. Terminals you open yourself (a member's own terminal) still show.
+- Git, GitHub CLI, PowerShell, hooks, version checks, dev servers and the other console programs Neru runs in the background now start without a window. Terminals you open yourself still show.
 
 ## 0.7.0 · Team, a CLI that works like Claude Code's, and free models that last longer
+*2026-10-03*
 
-### The neru CLI, like Claude Code's
-
-- **Arguments.** `--flag=value` works, options may follow the prompt, and `--` ends them. A mistake prints to stderr and exits 1 instead of showing the help with exit 0. `--version` prints `0.7.0 (Neru)`.
-- **`--model` lasts one run**, as in Claude Code, and so does a switch after a rate limit: the saved default stays. A name your provider doesn't list gets a warning. `/model` and `neru login` still change the default.
-- **`--append-system-prompt`** now goes in the system prompt instead of being repeated in every message.
-- **Print mode (`-p`)**:
-  - A call that needs approval is refused and the model carries on, as `claude -p` does, instead of the run stopping with exit 3. Refusals are listed in `permission_denials`.
-  - `--output-format json` and `stream-json` have Claude Code's shapes: `result` with `success`, `error_during_execution` or `error_max_turns`, and `num_turns`; `assistant` and `user` messages with `tool_use` and `tool_result`; Claude's names for permission modes.
-  - `--max-turns` ends with `error_max_turns` and exit 1, and 0 is refused.
-  - `/init`, `/review`, `/security-review` and your own commands expand.
-  - A refused tool shows ✗.
-  - `-p -r <title or id>` finds a session by title too, and says so with exit 1 when nothing matches instead of starting a new one.
-- **`neru mcp add`** takes `claude mcp add`'s syntax:
-  - `--transport stdio|http`, `-s user|project` (project writes the project's `.mcp.json`), `-e`, and `-H`, also after a URL;
-  - the command's own flags stay with the command;
-  - `neru mcp add-json` is new;
-  - removing a connector that doesn't exist, or an unknown subcommand, now fails with an exit code.
-- **CI and scripts:** `NERU_API_KEY`, with `NERU_PROVIDER`, `NERU_MODEL` and `NERU_BASE_URL`, connects a model without `neru login`. Nothing is saved.
-- **Ctrl-C** stops a running reply, then exits cleanly (background commands stopped, session-end hooks run), even while a command runs after an approval. `NO_COLOR` turns colors off, and errors on a piped stderr are plain text.
-- **`/compact <instructions>`** tells the summary what to keep, in the CLI and the app.
-- **Linux without a display** (SSH, CI, containers): `neru` runs itself inside Xvfb when it is installed, and says what to install when it isn't. No Dock icon on macOS.
-- **`neru update`** knows Linux arm64 and Homebrew installs, and cleans up what an update leaves behind on Windows. The project path no longer reaches the model as `\\?\D:\…`.
-- **Install:**
-  - `install.sh` installs the native build under Rosetta and checks glibc (2.35 or later) and musl before downloading;
-  - it finds WebKitGTK on arm64 and suggests Xvfb on machines without a display;
-  - `install.sh --uninstall` and `NERU_UNINSTALL=1` for `install.ps1` remove the CLI and keep your settings;
-  - a prerelease tag no longer becomes the latest release.
-- **Settings → CLI** is back: the install, update and uninstall commands for your system (only ones that work today: the scripts and npm), and every command, flag, environment variable and shortcut.
-
-### Settings and session events, the Claude way
-
-- **Session events in the thread.** A model switch, a compaction, pacing, a rewind or plan mode now show as a quiet line in the conversation, where they happened ("Compacted conversation · saved 12.4k tokens"), instead of a bar across the top. A line still in progress has a spinner and is replaced by the outcome. Finished lines are saved in the session itself, so they are there when you reopen it, after a restart, for a session that ran in the background, and in `neru` exports. They are never sent to the model, and rewind and `/copy` skip them.
-- **Settings as a dialog.** Settings open over what you were doing, with a search box and a grouped list on the left (Settings, This computer, Customize), icons, a close button and Esc. On/off choices are switches.
-
-### Free models last longer
-
-- **A smaller working context on free plans.** Free quotas count tokens per minute and per day, and a model with a 1M-token window used to be sent its whole conversation every request. On a free provider or a free model, Neru now works within 64k tokens and summarizes beyond that. Tool results are cut at 12,000 characters, results older than the last eight shrink to a short excerpt, and the first message's project snapshot is half as big. This applies in Code, Chat and to Neru as a Team member.
-- **Pacing.** When a response says a model's per-minute requests or tokens are used up, Neru waits for the reset before sending, instead of spending a request on a refusal.
-- **Sub-agents on free plans.** At most four per turn. Reading sub-agents run on a quick sibling model of the same key, so they draw on a separate per-minute quota from the main conversation, and they get four rounds and 90 seconds. Older results shrink as they work. A sub-agent that hits a daily cap or a dead model switches to the next best model instead of failing, and each sub-agent's row names the model it ran on.
-- **A better next model.** Every saved key is considered at once, with model lists fetched in parallel and cached for ten minutes, so a switch takes moments instead of seconds per provider. Candidates are ranked by coding strength, recent failures and known quotas: a model whose daily quota is spent is left out, and the same key wins a tie. A failed model rests for as long as the provider asked, longer for each failure in a row, up to six hours. Rests and failure streaks are remembered across restarts and shared with the `neru` CLI.
-
-### Resizable Team columns
-
-- Drag the edge of the task list or the task panel (Members, Artifacts and the rest) to resize them; double-click resets. Arrow keys work when the edge has focus. Widths are remembered, and the thread always keeps its room.
-
-### Team, finished
-
-- **A message queue.** A message for a member that is still working waits in a queue above the message box. Edit, reorder, send now, remove, or pause the whole queue; it goes out in order as members finish.
-- **Auto access.** Between Edit files and Full access: Claude Code's auto mode and Codex's automatic reviewer approve or block each action. Gemini, Copilot and OpenCode may run safe read, build and test commands only.
-- **Members drive Neru's browser.** Claude Code, Codex, Gemini and OpenCode members get three tools from a local, token-protected MCP server: start the dev server, open a page in Neru's browser pane, and read a page's text and errors. Browser annotations and picked elements go to the Team message box while you are in Team.
-- **New task tabs.**
-  - **Changes**: every file the task changed, across the project and each member's worktree, as one diff in unified or split view, with "Review everything with @member".
-  - **Pull request**: the PR for the project's branch or a member's, its checks, and **Fix** to hand the failing log to a member.
-  - **Activity**: who is working and for how long, routing, the queue, side chats waiting, and **smart execution**: one member implements each open ticket in order and another reviews it, with a round limit.
-  - **Usage**: per-turn history, bar charts and CSV export. Codex's 5-hour and weekly windows now show too. The task header shows the most-used window; Ctrl+Shift+U opens it as a popover.
-  - **Map**: replay the hand-offs in order with play, pause and a timeline.
-- **Find and organise tasks.** Groups with collapsible headings, an icon and a colour per task, filters by repository, agent, label and unread (all or any), four sorts, and unread, failed and queued marks.
-- **Terminals.** Each task has its own terminal tabs, opened in its folder and reopened with it. A member's own CLI can open inside Neru's terminal on its session, or in a separate window.
-- **Setup cards** show each worktree setup run as it happens, with its output and Run again. **Deleting a task** lists what each worktree would lose and asks for the task's name before losing uncommitted work.
-- **Artifacts** get a formatting toolbar with shortcuts, list continuation, write/split/preview and PDF export.
-- **Models and commands.** Each member's model field offers its CLI's own models; `/model @codex …` switches it. `/` also lists each agent's own slash commands (Claude, Codex prompts, Gemini, OpenCode, Cursor); Neru fills in the arguments and sends them to that member. Each member's transcript is kept in the task folder, and the thread can show one member only.
-- **More agents.** Qwen Code, GitHub Copilot CLI, Amp, Factory Droid, Goose, Crush, Aider, Auggie, Kiro and Continue join Claude Code, Codex, OpenCode, Gemini and Cursor.
-- **Settings → Agents** shows each CLI's version and the newest one, updates or installs a chosen version, and lets you point Neru at a CLI somewhere else.
-- **Imports** group chats by project, show progress while importing, list sessions that could not be read with the reason, and list a resumed Codex session once.
-- **Getting started**: Team's start page has a checklist that ticks itself off and templates for a first task.
-- **Gemini CLI** works again. Google retired its free personal sign-in, so Neru gives it a free AI Studio key from Settings → Agents, kept with your other keys. Neru also tells it to trust the project folder and continues its sessions.
-- **Install**: a Homebrew cask and formula come with each release, Linux arm64 builds (WSL on ARM), and `install.sh` accepts Linux arm64.
-
-### Guided walkthroughs
-
-- A **spotlight walkthrough** points at one control at a time, explains it, and glides to the next. It covers the whole app the first time you open it (sessions, Team, chat or code, palette, terminal, files, changes, review, live preview, every message-box control and Settings), Team before your first task, and a task the first time you open one. Steps for controls that aren't on screen are left out. Skip it any time with Esc or **Skip tour**, and replay it from the sidebar's ⋯ menu, the palette, Help or Settings.
-- Onboarding has a new **Team** step that shows which agents are installed and signed in on this computer, and the feature tour has a Team tab.
-
-### Fixes
-
-- Switching between model providers no longer forgets their keys. Each saved key is reused when you pick that provider again, in Settings and onboarding, including when its base URL has changed.
-- A custom CLI agent that works in its own worktree now finds its script in the project's `.neru/cli-agents`, even when that folder isn't committed.
-- Onboarding's scroll bar is a slim rounded thumb in the app's colours instead of the default white one.
+Team runs the coding agents you already pay for (Claude Code, Codex, Gemini CLI, OpenCode, Cursor and ten more) in one shared thread, and imports your chats, skills and connectors from them. The neru CLI now takes Claude Code's flags and output formats, and installs on Windows, macOS and Linux, x64 and arm64. Free models use far fewer tokens per request, and switching to the next working model is quicker and smarter.
 
 ### Team: your agents, one thread
 
-- A new **Team** section runs the coding agents you already pay for side by side: Claude Code, Codex, OpenCode, Gemini CLI and Cursor Agent, each on its own sign-in, plus Neru's own agent on the model set up in Neru. Neru finds the installed CLIs and whether they are signed in. Settings → Agents opens each one's own sign-in in a terminal; Neru never reads their credentials.
-- Every member of a task sees one shared thread. A member's turn continues its own CLI session and starts with everything teammates posted since its last turn. The whole thread is also kept as `thread.md` in the task folder, for any agent to read.
-- Pick who answers with `@claude`, `@codex` or `@all`, or the To chips. Agents hand work to each other by starting a line with a teammate's handle; add `(fyi)` when no answer is needed. A message may cause at most six hand-offs before the team waits for you.
-- When a member hits its subscription limit, a card counts down and hands the request to a teammate with the whole thread. Keep it where it is with one click, or turn this off per task.
-- Team skills `/plan`, `/tickets`, `/execute`, `/review`, `/debate`, `/explain` and `/walkthrough` write specs, tickets, reviews and debates to the task's artifacts. The Artifacts tab shows them, lets you edit them, and keeps every earlier version to restore.
-- Each member's access is set per task. **Read-only** members can still write the task's artifacts but nothing in the project. **Edit files** and **Full access** go further. A member can also work in its own Git worktree, so parallel edits never collide.
-- The Usage tab (Ctrl+Shift+U) shows tokens, reported cost, and Claude Code's 5-hour and weekly limits. The Map tab draws who handed work to whom. Search finds past tasks. When a team finishes while Neru is in the background, you get a notification.
-- Every agent shows its own logo: Claude, Codex, OpenCode, Gemini CLI, Cursor, GitHub Copilot and VS Code.
-- As in Claude, inline code and file paths in replies show as coloured chips, links are underlined, and `@claude`-style mentions stand out from the text.
+- A new Team section runs Claude Code, Codex, OpenCode, Gemini CLI, Cursor Agent and ten more coding CLIs side by side, each on its own sign-in, plus Neru's own agent. They share one thread, hand work to each other with @mentions, and route around a member's usage limit.
+- Team skills write specs, tickets, reviews and debates to the task's artifacts, with versions, diagrams and wireframes. Members can work in their own Git worktrees, and Undo takes back a turn's file changes.
+- A message queue, side chats, forks, per-task terminals, a usage tab, and resizable task list and panel.
 
-### Team, closer to Traycer
+### The neru CLI, like Claude Code's
 
-- **Undo a turn.** Each reply that changed files in a Git project shows a Changes card listing them, and Undo puts those files back as they were. Untracked files are included.
-- **Side chats.** `/btw @codex question` asks one member on the side. It answers in a copy of its session, read-only, and the thread does not move on.
-- **Fork a member.** It gets a copy that continues from the same session, so you can try another direction.
-- **Open a member in its own terminal**, continuing the same session.
-- **Worktree scripts.** A member's worktree runs the repository's setup script when it is created and its teardown script before it is removed. Scripts come from `.neru/environment.json`, or Traycer's `.traycer/environment.json`.
-- **Sweep** removes members' worktrees whose work has landed and that have nothing uncommitted.
-- **Your own agents.** A script in `cli-agents/` gets the prompt in `NERU_PROMPT` and joins a team like any CLI.
-- **Find and organise tasks.** Pin tasks, label them, and search every task's messages from the task list.
-- **Typed artifacts.** Artifacts are specs, tickets, stories or reviews, and tickets have a status you can click through. Filter them by type, and export them as Markdown.
-- **Diagrams and wireframes.** Mermaid diagrams and live HTML wireframes render in artifacts and replies, with fullscreen and zoom.
-- **More team skills:** `/phases`, `/verify`, `/critique`, `/revise`, `/autobuild` and `/housekeeping`.
-- **Small things.** Messages for a busy member show as queued. The terminal, files, changes and browser panes open next to a Team task. The `@` menu shows each teammate's logo, name and whether it is free.
-- `TRAYCER_AUDIT.md` compares every Traycer feature with Neru.
+- Claude Code's flags and habits: --flag=value, options anywhere, usage errors on stderr with exit 1, --model for one run, --append-system-prompt in the system prompt, /compact with instructions.
+- Print mode refuses calls that need approval and carries on, and its json and stream-json output have Claude Code's shapes. --max-turns ends with error_max_turns.
+- neru mcp add takes claude mcp add's syntax (--transport, --scope, -e, -H) and there is neru mcp add-json.
+- NERU_API_KEY connects a model in CI without neru login. Ctrl-C stops a reply cleanly, NO_COLOR is respected, and Linux servers without a display run neru inside Xvfb.
+- Install and uninstall with one line on Windows, macOS and Linux (x64 and arm64), or with npm. Settings → CLI lists every command.
 
-### Import your chats, skills and settings
+### Free models last longer
 
-- Settings → Imports scans the machine for Claude Code, the Claude app, Codex (CLI, desktop app and IDE extension), Cursor, VS Code, OpenCode and Gemini CLI. **Import everything** brings over what it finds; or pick item by item:
-  - **Chats** from Claude Code, Codex, OpenCode, Gemini CLI, Cursor and VS Code Copilot become Team tasks, one per project. Claude Code, Codex and OpenCode chats can be continued, since the member resumes that very session.
-  - **Skills** from `~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`, `~/.cursor/skills`, `~/.gemini/skills` and OpenCode's skills folder.
-  - **MCP servers** from Claude Code, the Claude app, Cursor, VS Code, Codex, Gemini CLI and OpenCode become connectors.
-  - **Instructions** from Codex, Gemini and OpenCode join Neru's own `AGENTS.md`. A project's Cursor rules, `GEMINI.md` and Copilot instructions go to its `.neru/instructions.md`.
-- Imported chats read as they were written. The tags tools wrap messages in (`<user_query>`, time stamps, reminders, rules, command echoes) are removed, and messages the tool generated itself, such as Cursor's task notifications, are left out.
-- Neru only reads these tools' files and never changes them. Anything that would replace something of yours with the same name is skipped by **Import everything** and marked in the lists.
+- On free plans Neru works within 64k tokens, shortens old tool output and paces requests to per-minute limits, so a free quota lasts much longer.
+- Sub-agents on free plans run on a quick sibling model with its own quota, and switch models instead of failing.
+- The next working model is chosen from every saved key at once, ranked by strength, recent failures and quotas. Failed models rest as long as the provider asked, remembered across restarts.
 
-### Free models that fail clearly, then keep going
+### Settings and session events
 
-- A model refused with HTTP 402 (no credits) or 403 (no access) now switches to the next working model, like a 429 already did. A 403 about the key itself still stops, since another model would fail the same way.
-- OpenCode Zen's free models answer 403 "free tier can only be used from within OpenCode". Neru now says so in plain words, sets aside that provider's free models for the day, and moves on. A 402 sets aside its paid models the same way, instead of retrying them every 90 seconds.
-- `--fallback-model qwen3-coder,glm-4.6` names the models to switch to first, in order, before Neru picks one itself.
-- Health check: the app checks the model in use when it starts, and `neru login` checks the model you pick. `neru doctor` sends the model one small request, so a model that lists fine but refuses requests shows up there. Results are kept for a day, so starting up sends nothing new most of the time.
+- Model switches, compactions and similar events show as quiet lines in the conversation, saved with the session, instead of a bar across the top.
+- Settings open as a dialog with search and a grouped list, like Claude's.
 
-### Commands run in a sandbox
+### Imports, safety and more
 
-- The agent's shell commands now run inside the operating system's sandbox. On Linux (with bubblewrap) and macOS they can write only to the project, temporary folders and package caches, and cannot read cloud or GPG credentials. On Windows each command runs in a job object: everything it starts is ended with it, process count and memory are capped, and it cannot touch other apps' windows, read the clipboard or shut Windows down.
-- A command that must write elsewhere (a global install) can ask to run outside the sandbox; you are always asked first, except in Bypass mode.
-- A rules gate in front of the shell now refuses outright the commands that wipe a drive, your home folder or a system folder, format disks or fork-bomb, whatever the mode. `git reset --hard`, `git clean`, and deleting, moving or writing outside the project always ask, even in Bypass.
-- Auto mode runs a command on its own only when every part of it is allowlisted: `git status && curl …` now asks.
-- `neru doctor` shows which sandbox is in use. Turn it off with `"sandbox": {"enabled": false}` in `~/.claude/settings.json` or `NERU_SANDBOX=off`.
-
-### Sub-agents that edit
-
-- A custom agent in `.neru/agents` or `.claude/agents` whose `tools` line lists Edit, Write or Bash can now change files and run commands. It follows the session's permission mode and rules; anything that would need your approval shows under the agent's row (or as a prompt in the CLI) and waits for your answer. Agents without those tools stay read-only.
-- Rewinding a turn also takes back the edits its sub-agents made.
-
-### Smaller additions
-
-- Custom commands use their `model` (when the provider offers it) and `allowed-tools`, and fill in `` !`command` `` lines with the command's output, as in Claude Code. A project's commands do this only once the folder is trusted.
-- New CLI flags: `--system-prompt`, `--add-dir` and `--session-id`.
-- `/output-style` picks how Neru writes (default, explanatory, learning, or your own files in `output-styles`), and `/statusline <command>` shows a command's output in the CLI's status line. Both use the same settings keys as Claude Code.
-- Stop trusting a folder from Settings → Connectors, or with `/untrust` in the CLI.
-- Every release now runs a scripted first session of the CLI on Windows, macOS and Linux: a new project, an edit, a command and a resumed session.
+- Settings → Imports brings over chats, skills, MCP servers and instructions from Claude Code, the Claude app, Codex, Cursor, VS Code, OpenCode and Gemini CLI.
+- The agent's commands run in the operating system's sandbox, behind a rules gate that refuses destructive commands.
+- Custom agents can edit files and run commands under the session's permissions.
+- A guided walkthrough of every control, with a skip button.
 
 ## 0.6.0 · Free models that keep going, 23 new skills, and your choice of microphone
 *2026-10-01*

@@ -20,6 +20,9 @@ export function describeError(value: unknown): FriendlyError {
   const text = raw.toLowerCase()
   const withDetail = (error: Omit<FriendlyError, 'detail'>): FriendlyError => ({ ...error, detail: raw === error.title ? '' : raw })
 
+  // Tauri's reply when the window is newer than the running backend (dev reload, half-applied update).
+  if (/^command \S+ not found/.test(text))
+    return withDetail({ title: 'This part of Neru needs a restart.', hint: 'The window was updated but the app behind it was not. Quit Neru completely and open it again (in development, rebuild the Rust side).' })
   // OpenCode Zen: "Free tier can only be used from within OpenCode" (HTTP 403). The key is fine.
   const locked = /http 403|forbidden/.test(text) && /only (be used|available|works) (from within|within|in|with|through) ([^.,;"\n]{1,40})/.exec(raw)
   if (locked)

@@ -120,7 +120,7 @@ function CopyButton({ text }: { text: string }) {
   return <button type="button" className="icon-button small" onClick={copy} aria-label={copied ? 'Copied' : 'Copy command'} title={copied ? 'Copied' : 'Copy'}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
 }
 
-function CommandBlock({ label, command }: { label?: string; command: string }) {
+export function CommandBlock({ label, command }: { label?: string; command: string }) {
   return <div className="cli-command">{label && <span className="cli-command-label">{label}</span>}<div className="cli-command-line"><code>{command}</code><CopyButton text={command} /></div></div>
 }
 

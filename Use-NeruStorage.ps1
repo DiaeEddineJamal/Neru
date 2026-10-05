@@ -46,4 +46,8 @@ $env:PYTHONPYCACHEPREFIX = $neruPaths.PythonBytecode
 $env:GRADLE_USER_HOME = $neruPaths.Gradle
 $env:NERU_DATA_DIR = $neruPaths.Data
 
+# Neru mobile tests on a USB-connected phone; reuse the existing Android platform-tools for adb.
+$androidTools = Join-Path $env:LOCALAPPDATA 'Android\Sdk\platform-tools'
+if ((Test-Path $androidTools) -and ($env:PATH -notlike "*$androidTools*")) { $env:PATH = "$androidTools;$env:PATH" }
+
 Write-Host "Neru project storage is scoped to $neruLocal"

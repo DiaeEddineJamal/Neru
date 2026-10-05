@@ -279,6 +279,24 @@ fn all_for(root: &Path) -> Result<Vec<SessionSummary>, String> {
 }
 
 fn all_sessions() -> Result<Vec<SessionSummary>, String> {
+    Ok(scan()?.into_iter().map(|(summary, _)| summary).collect())
+}
+
+/// Every session, newest first, with whether it is waiting on an approval (Neru Remote's list).
+/// Loaded runtimes are read from memory, since they can be newer than their files.
+pub fn all_with_status(state: &AppState) -> Result<Vec<(SessionSummary, bool)>, String> {
+    let mut list = scan()?;
+    let map = state.sessions.lock().map_err(|e| e.to_string())?;
+    for (summary, waiting) in &mut list {
+        if let Some(runtime) = map.get(&summary.id).and_then(|shared| shared.lock().ok()) {
+            *summary = SessionSummary { running: runtime.running, ..runtime.summary.clone() };
+            *waiting = runtime.pending.is_some();
+        }
+    }
+    Ok(list)
+}
+
+fn scan() -> Result<Vec<(SessionSummary, bool)>, String> {
     let mut summaries = Vec::new();
     for entry in fs::read_dir(dir()?).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -295,9 +313,9 @@ fn all_sessions() -> Result<Vec<SessionSummary>, String> {
         let Ok(file) = serde_json::from_slice::<SessionFile>(&bytes) else {
             continue;
         };
-        summaries.push(file.summary);
+        summaries.push((file.summary, file.pending.is_some()));
     }
-    summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    summaries.sort_by(|a, b| b.0.updated_at.cmp(&a.0.updated_at));
     Ok(summaries)
 }
 

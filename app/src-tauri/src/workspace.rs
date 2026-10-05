@@ -917,16 +917,19 @@ pub fn session_changes(state: State<'_, AppState>) -> Result<Vec<SessionChange>,
 
 #[tauri::command]
 pub fn apply_pending(state: State<'_, AppState>) -> Result<String, String> {
-    let root = project_root(&state)?;
-    let shared = sessions::active(&state)?;
-    let mut runtime = sessions::lock(&shared)?;
+    apply_pending_in(&sessions::active(&state)?, &project_root(&state)?)
+}
+
+/// Applies the edit a session is waiting on, in `root` (that session's folder).
+pub fn apply_pending_in(shared: &sessions::Shared, root: &Path) -> Result<String, String> {
+    let mut runtime = sessions::lock(shared)?;
     let action = runtime.pending.clone().ok_or("No pending action")?;
     match action {
         PendingAction::Edit {
             proposal,
             tool_call_id,
         } => {
-            let (checkpoint_id, _) = apply_edit(&root, &proposal)?;
+            let (checkpoint_id, _) = apply_edit(root, &proposal)?;
             runtime.pending = None;
             let transcript_len = runtime.transcript.len();
             runtime.edits.push(sessions::EditRecord {
@@ -950,8 +953,11 @@ pub fn reject_pending(state: State<'_, AppState>) -> Result<(), String> {
 
 /// Answers the waiting call with `reason` instead of running it (`neru -p`, which cannot ask).
 pub fn deny_pending(state: &AppState, reason: &str) -> Result<(), String> {
-    let shared = sessions::active(state)?;
-    let mut runtime = sessions::lock(&shared)?;
+    deny_pending_in(&sessions::active(state)?, reason)
+}
+
+pub fn deny_pending_in(shared: &sessions::Shared, reason: &str) -> Result<(), String> {
+    let mut runtime = sessions::lock(shared)?;
     if let Some(action) = runtime.pending.take() {
         if let Some(id) = action.tool_call_id() {
             runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":reason}));

@@ -21,3 +21,6 @@ Thumbs.db
 
 # Claude Code plugin state
 .omc/
+
+# The mobile app lives in its own repo: github.com/DiaeEddineJamal/neru-mobile
+mobile/
