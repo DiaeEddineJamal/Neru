@@ -504,6 +504,15 @@ async fn handle(app: &AppHandle, cmd: &str, args: &Value) -> Result<Value, Strin
         "stop_team" => team::commands::stop_team(text(args, "id")?, args["handle"].as_str().map(str::to_string)).map(|_| Value::Null),
         "list_team_agents" => value(team::commands::list_team_agents(app.clone(), None).await),
         "list_agent_models" => value(crate::team_more::commands::list_agent_models(text(args, "kind")?).await),
+        "update_team_member" => {
+            let field = |name: &str| args[name].as_str().map(str::to_string);
+            value(team::commands::update_team_member(text(args, "id")?, text(args, "handle")?, field("model"), field("mode"), field("effort"), app.clone()))
+        }
+        // A generated image from a team post, by its file name in the task's images/ folder.
+        "team_image" => {
+            let (mime, base64) = team::image_data(&text(args, "id")?, &text(args, "name")?)?;
+            Ok(json!({ "mime": mime, "base64": base64 }))
+        }
         "create_team_task" => {
             let members = serde_json::from_value::<Vec<team::NewMember>>(args["members"].clone()).map_err(|_| "Missing members")?;
             let created = team::commands::create_team_task(text(args, "title")?, text(args, "projectPath")?, members, None)?;

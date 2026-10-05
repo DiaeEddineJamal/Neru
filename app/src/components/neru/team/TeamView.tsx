@@ -16,6 +16,7 @@ import { Mascot } from '../Mascot'
 import { Tour, useTour, type TourStep } from '../Tour'
 import { openTerminalTab, type TerminalScope } from '../TerminalPane'
 import { ArtifactEditor } from './ArtifactEditor'
+import { GridReveal } from '@/components/ui/grid-reveal'
 import { markdownToPrintHtml, printDoc } from '@/lib/printDoc'
 import { ActivityPanel, AppearanceMenu, ChangesPanel, Checklist, DeleteDialog, FilterMenu, NO_FILTER, PrPanel, QUICKSTARTS, QueueBar, Quickstart, ReplayBar, SetupCard, TaskGlyph, UsageDashboard, applyFilter, filterActive, usageReading, useAgentModels, useDragWidth, useReplay, type TaskFilter } from './TeamPanels'
 import { AgentStatus, RESPONSE_PROSE, ResponseMarkdown, ToolSteps, agentPhase, type LiveTool } from '../Conversation'
@@ -152,7 +153,7 @@ function ChangesCard({ changes, onUndo }: { changes: TeamChanges; onUndo: () => 
   </div>
 }
 
-function PostView({ post, member, handles, onOpenSettings, onUndo, onRerun }: { post: TeamPost; member?: TeamMember; handles: string[]; onOpenSettings: () => void; onUndo: (postId: string) => void; onRerun: (handle: string) => void }) {
+function PostView({ taskId, post, member, handles, onOpenSettings, onUndo, onRerun }: { taskId: string; post: TeamPost; member?: TeamMember; handles: string[]; onOpenSettings: () => void; onUndo: (postId: string) => void; onRerun: (handle: string) => void }) {
   if (post.kind === 'setup') return <SetupCard post={post} onRerun={() => onRerun(post.author)} />
   if (post.kind === 'notice') return <div className="team-notice" role="status"><ResponseMarkdown content={post.text} sources={[]} idPrefix={`notice-${post.id.slice(0, 8)}`} onCite={() => undefined} /></div>
   if (post.author === 'you') return <article className={cn('message user team-user', post.kind === 'side' && 'is-side')} data-from="user">
@@ -173,6 +174,7 @@ function PostView({ post, member, handles, onOpenSettings, onUndo, onRerun }: { 
           <StreamingResponse status="complete" copyText={post.text} announce={false} contentClassName={RESPONSE_PROSE}>
             <ResponseMarkdown content={post.text} sources={[]} idPrefix={`team-${post.id.slice(0, 8)}`} onCite={() => undefined} mentions={handles} />
           </StreamingResponse>
+          {post.images?.map(name => <PostImage key={name} taskId={taskId} name={name} />)}
           {post.changes && <ChangesCard changes={post.changes} onUndo={() => onUndo(post.id)} />}
         </>}
     </div>
@@ -181,7 +183,16 @@ function PostView({ post, member, handles, onOpenSettings, onUndo, onRerun }: { 
 
 /** A member at work, drawn like a reply in Code mode: its steps, its reply as it streams, and the
  * thinking orb with what it is doing now. */
-function LivePost({ member, live, handles }: { member: TeamMember; live?: { text: string; steps: string[] }; handles: string[] }) {
+/** A generated image: Grid Reveal while it loads, then the picture, which opens at full size. */
+function PostImage({ taskId, name }: { taskId: string; name: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => { let live = true; void api.teamImage(taskId, name).then(uri => live && setSrc(uri)).catch(() => {}); return () => { live = false } }, [taskId, name])
+  return <a className="team-image" href={src ?? undefined} target="_blank" rel="noreferrer" onClick={event => { if (!src) event.preventDefault() }}>
+    <GridReveal src={src} alt="Generated image" caption="Loading image" estimatedDuration={3000} />
+  </a>
+}
+
+function LivePost({ member, live, handles }: { member: TeamMember; live?: { text: string; steps: string[]; drawing?: boolean }; handles: string[] }) {
   const tools = stepsAsTools(live?.steps ?? [], !live?.text)
   const phase = agentPhase({ text: live?.text ?? '', tools, sources: [], drafts: [], reasoning: 0 }, member.mode === 'plan' ? 'plan' : 'code')
   return <article className="team-post is-live" data-from="agent" aria-busy>
@@ -192,6 +203,7 @@ function LivePost({ member, live, handles }: { member: TeamMember; live?: { text
       {live?.text && <StreamingResponse status="streaming" copyText={live.text} announce={false} showActions={false} contentClassName={RESPONSE_PROSE}>
         <ResponseMarkdown content={live.text} sources={[]} idPrefix={`live-${member.handle}`} onCite={() => undefined} mentions={handles} />
       </StreamingResponse>}
+      {live?.drawing && <div className="team-image"><GridReveal src={null} caption="Creating image" estimatedDuration={45000} /></div>}
       <AgentStatus phase={phase} />
     </div>
   </article>
@@ -480,7 +492,7 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
   const [tasks, setTasks] = useState<TeamTaskSummary[]>([])
   const [activeId, setActiveId] = useState<string | null>(() => readStored<string | null>('neru.team.active', null))
   const [task, setTask] = useState<TeamTask | null>(null)
-  const [live, setLive] = useState<Record<string, { text: string; steps: string[] }>>({})
+  const [live, setLive] = useState<Record<string, { text: string; steps: string[]; drawing?: boolean }>>({})
   const [since, setSince] = useState<Record<string, number>>({})
   const [routing, setRouting] = useState<{ from: string; to: string; until: number } | null>(null)
   const [draft, setDraft] = useState('')
@@ -575,7 +587,7 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
         if (event.member.status === 'working') setSince(current => current[event.member.handle] ? current : { ...current, [event.member.handle]: Date.now() })
         else setSince(current => { const next = { ...current }; delete next[event.member.handle]; return next })
         setTask(current => current && { ...current, members: current.members.map(member => member.handle === event.member.handle ? event.member : member).concat(current.members.some(member => member.handle === event.member.handle) ? [] : [event.member]) })
-      } else if (event.type === 'live') setLive(current => ({ ...current, [event.handle]: { text: event.text, steps: event.steps } }))
+      } else if (event.type === 'live') setLive(current => ({ ...current, [event.handle]: { text: event.text, steps: event.steps, drawing: event.drawing } }))
       else if (event.type === 'post') {
         setTask(current => current && (current.posts.some(post => post.id === event.post.id) ? current : { ...current, posts: [...current.posts, event.post], updatedAt: event.post.at }))
         setLive(current => { const next = { ...current }; delete next[event.post.author]; return next })
@@ -846,7 +858,7 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
         {only && <div className="team-only" role="status"><Eye size={13} /><span>Showing @{only}’s transcript: its posts and what was sent to it.</span><button className="team-link" onClick={() => void api.revealPath(`${task.folder}/transcripts/${only}.md`).catch(cause => onError(errorText(cause)))}>Open the file</button><button className="team-link" onClick={() => setOnly(null)}>Show everyone</button></div>}
         <MessageScroller data-tour="thread" className="team-thread" label="Team thread" busy={working.length > 0} contentClassName="team-thread-content">
           {task.posts.length === 0 && <div className="team-thread-empty"><p>Say what you need. Mention <code>@{handles[0]}</code> to pick who answers, <code>@all</code> for everyone, or try <code>/plan</code>, <code>/debate</code>, <code>/review</code>. Ask on the side with <code>/btw @{handles[0]} …</code>.</p></div>}
-          {shownPosts.map(post => <div key={post.id} id={`team-post-${post.id}`}><PostView post={post} member={task.members.find(member => member.handle === post.author)} handles={handles} onOpenSettings={() => onOpenSettings('agents')} onUndo={undo} onRerun={handle => void api.rerunTeamSetup(task.id, handle).catch(cause => onError(errorText(cause)))} /></div>)}
+          {shownPosts.map(post => <div key={post.id} id={`team-post-${post.id}`}><PostView taskId={task.id} post={post} member={task.members.find(member => member.handle === post.author)} handles={handles} onOpenSettings={() => onOpenSettings('agents')} onUndo={undo} onRerun={handle => void api.rerunTeamSetup(task.id, handle).catch(cause => onError(errorText(cause)))} /></div>)}
           {working.filter(member => !only || member.handle === only).map(member => <LivePost key={member.handle} member={member} live={live[member.handle]} handles={handles} />)}
           {routing && <RoutingCard routing={routing} onCancel={() => void api.cancelTeamRouting(task.id).catch(cause => onError(errorText(cause)))} />}
         </MessageScroller>

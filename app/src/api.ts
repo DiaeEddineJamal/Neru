@@ -12,6 +12,7 @@ export const api = {
   teamAttach: (id: string, paths: string[], data?: [string, string][]) => invoke<string[]>('team_attach', { id, paths, data: data ?? null }),
   teamSnapshot: (id: string) => invoke<TeamTask>('team_snapshot', { id }),
   addTeamMember: (id: string, member: { kind: string; model?: string; mode?: string }) => invoke<TeamTask>('add_team_member', { id, member }),
+  teamImage: (id: string, name: string) => invoke<string>('team_image', { id, name }),
   updateTeamMember: (id: string, handle: string, change: { model?: string; mode?: string; effort?: string }) => invoke<TeamTask>('update_team_member', { id, handle, model: change.model ?? null, mode: change.mode ?? null, effort: change.effort ?? null }),
   setTeamWorktree: (id: string, handle: string, enabled: boolean) => invoke<TeamTask>('set_team_worktree', { id, handle, enabled }),
   removeTeamMember: (id: string, handle: string) => invoke<TeamTask>('remove_team_member', { id, handle }),

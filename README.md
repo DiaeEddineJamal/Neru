@@ -84,3 +84,5 @@ The installer artwork is generated from the app's design tokens: `python tools/b
 ## Credits
 
 Kneaded into shape by [Luziv](https://github.com/DiaeEddineJamal/Neru).
+
+The image loading animation in Team (desktop and phone) is [Grid Reveal](https://www.rareui.com/components/gridreveal) by [Rare UI](https://www.rareui.com).

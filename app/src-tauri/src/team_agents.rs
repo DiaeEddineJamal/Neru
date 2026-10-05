@@ -699,6 +699,8 @@ pub enum Event {
     Usage { input: u64, output: u64, cost: f64 },
     /// How much of a subscription window is used, 0–100.
     Limit { label: String, used: f64, resets_at: Option<u64> },
+    /// The agent started generating an image.
+    ImageStart,
     Error(String),
     Done,
 }
@@ -810,7 +812,14 @@ fn parse_codex(value: &Value, events: &mut Vec<Event>) {
                 events.push(Event::Session(id.into()));
             }
         }
-        ("item.started", "command_execution") => events.push(Event::Step(format!("Ran {}", shell_command(&text(&item["command"]))))),
+        ("item.started", "command_execution") => {
+            let command = text(&item["command"]);
+            // Codex reads its imagegen skill right before it draws, the only sign of an image on the way.
+            if command.contains("imagegen") {
+                events.push(Event::ImageStart);
+            }
+            events.push(Event::Step(format!("Ran {}", shell_command(&command))));
+        }
         ("item.completed", "agent_message") => events.push(Event::Text(text(&item["text"]))),
         ("item.completed", "file_change") => {
             for change in item["changes"].as_array().into_iter().flatten() {
@@ -895,6 +904,52 @@ pub fn parse_line(kind: Kind, line: &str) -> Vec<Event> {
         _ => {}
     }
     events
+}
+
+fn codex_home() -> PathBuf {
+    std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".codex"))
+}
+
+/// The model a Codex member set to "Agent default" runs with. Left alone, Codex reads the model from
+/// its config.toml, which the Codex desktop app may have set to a model this CLI does not know or a
+/// ChatGPT sign-in cannot use ("gpt-6.1-sol … not supported when using Codex with a ChatGPT account").
+/// So: that model when the CLI's own list (models_cache.json, the signed-in account's models) has it,
+/// else the list's first pick. None when there is no list, which keeps Codex's own choice.
+pub fn codex_default_model() -> Option<String> {
+    let codex = codex_home();
+    let cache: Value = std::fs::read(codex.join("models_cache.json")).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok())?;
+    let mut listed: Vec<&Value> = cache["models"].as_array()?.iter().filter(|model| model["visibility"] != "hide" && model["slug"].is_string()).collect();
+    listed.sort_by_key(|model| model["priority"].as_i64().unwrap_or(i64::MAX));
+    let configured = std::fs::read_to_string(codex.join("config.toml")).ok().and_then(|config| {
+        // The top-level `model = "…"`, before any [table].
+        config.lines().take_while(|line| !line.trim_start().starts_with('[')).find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == "model").then(|| value.trim().trim_matches('"').to_string())
+        })
+    });
+    if let Some(model) = configured.filter(|model| listed.iter().any(|known| known["slug"] == model.as_str())) {
+        return Some(model);
+    }
+    listed.first().and_then(|model| model["slug"].as_str()).map(String::from)
+}
+
+/// Images Codex's image tool saved during session `id` since `since` (ms): it writes them to
+/// generated_images/<session>/ and its JSON stream does not mention them.
+pub fn codex_images(id: &str, since: u64) -> Vec<PathBuf> {
+    let mut images: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(codex_home().join("generated_images").join(id))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            let ms = modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+            let path = entry.path();
+            let image = matches!(path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("png" | "jpg" | "jpeg" | "webp"));
+            (image && ms + 2_000 >= since).then_some((modified, path))
+        })
+        .collect();
+    images.sort();
+    images.into_iter().map(|(_, path)| path).collect()
 }
 
 /// Codex's subscription windows ("5-hour", "Weekly") from the newest `rate_limits` in the log of

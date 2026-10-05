@@ -2,6 +2,24 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.11.0 · Images in Team
+*2026-10-05*
+
+Codex draws for your Team, Codex with a ChatGPT sign-in works out of the box, and your phone can tune each member's model and effort.
+
+### Images
+
+- Ask Codex for an image in a Team and it appears in the thread. While it draws, a grid of soft cells splits finer and finer until the picture lands (Grid Reveal by Rare UI). Click an image to open it at full size.
+- Images also reach the Neru phone app, where they can be saved to the gallery.
+
+### Fixes
+
+- Codex members on Agent default no longer fail with "model is not supported when using Codex with a ChatGPT account". Neru now picks a model your Codex and your sign-in support, instead of whatever the Codex desktop app wrote to Codex's settings.
+
+### Phone
+
+- The phone app can change each Team member's model and reasoning effort, and every open window shows the change right away.
+
 ## 0.10.0 · Neru knows your name
 *2026-10-05*
 

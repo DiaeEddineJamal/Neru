@@ -235,7 +235,7 @@ export function PrPanel({ task, onError, onSend }: { task: TeamTask; onError: (m
 
 /** What is happening now: working members, the queue, side chats waiting, and smart execution. */
 export function ActivityPanel({ task, live, since, routing, onStop, onChange, onError, names }: {
-  task: TeamTask; live: Record<string, { text: string; steps: string[] }>; since: Record<string, number>; routing: { from: string; to: string; until: number } | null
+  task: TeamTask; live: Record<string, { text: string; steps: string[]; drawing?: boolean }>; since: Record<string, number>; routing: { from: string; to: string; until: number } | null
   onStop: (handle?: string) => void; onChange: (task: TeamTask) => void; onError: (message: string) => void; names: (kind: string) => string
 }) {
   const [now, setNow] = useState(Date.now())

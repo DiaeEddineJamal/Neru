@@ -180,6 +180,9 @@ pub struct Post {
     /// A "setup" card's state: "running", "ok" or "failed".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Images the turn generated, as file names in the task's images/ folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
 }
 
 pub(crate) fn message_kind() -> String {
@@ -188,12 +191,12 @@ pub(crate) fn message_kind() -> String {
 
 impl Post {
     pub fn notice(text: String) -> Post {
-        Post { changes: None, status: None, id: Uuid::new_v4().to_string(), author: "you".into(), to: vec![], text, steps: vec![], at: now(), kind: "notice".into() }
+        Post { changes: None, status: None, images: vec![], id: Uuid::new_v4().to_string(), author: "you".into(), to: vec![], text, steps: vec![], at: now(), kind: "notice".into() }
     }
 
     /// A message brought in from another tool's history.
     pub fn imported(author: &str, text: String) -> Post {
-        Post { changes: None, status: None, id: Uuid::new_v4().to_string(), author: author.into(), to: vec![], text, steps: vec![], at: now(), kind: message_kind() }
+        Post { changes: None, status: None, images: vec![], id: Uuid::new_v4().to_string(), author: author.into(), to: vec![], text, steps: vec![], at: now(), kind: message_kind() }
     }
 }
 
@@ -282,6 +285,9 @@ pub struct NewMember {
     pub model: String,
     #[serde(default)]
     pub mode: String,
+    /// Reasoning effort, empty for the model's default.
+    #[serde(default)]
+    pub effort: String,
 }
 
 type Shared = Arc<Mutex<Task>>;
@@ -297,6 +303,21 @@ static STOPPED: LazyLock<Mutex<HashMap<String, u64>>> = LazyLock::new(Default::d
 
 fn stopped_since(task: &str, since: u64) -> bool {
     STOPPED.lock().is_ok_and(|stops| stops.get(task).is_some_and(|at| *at >= since))
+}
+
+/// A generated image of a task's post, by its file name in the task's images/ folder: (MIME type, base64).
+pub(crate) fn image_data(id: &str, name: &str) -> Result<(&'static str, String), String> {
+    use base64::Engine;
+    if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+        return Err("Invalid image name".into());
+    }
+    let bytes = fs::read(folder(id)?.join("images").join(name)).map_err(|_| "That image is gone")?;
+    let mime = match name.rsplit('.').next().map(str::to_ascii_lowercase).as_deref() {
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    };
+    Ok((mime, base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
 pub(crate) fn now() -> u64 {
@@ -426,7 +447,7 @@ fn new_member(members: &[Member], spec: NewMember) -> Result<Member, String> {
         handle: new_handle(members, spec.kind.trim_start_matches("custom:")),
         kind: spec.kind,
         model: spec.model,
-        effort: String::new(),
+        effort: spec.effort,
         mode: if spec.mode.is_empty() { "accept_edits".into() } else { spec.mode },
         upstream: None,
         seen: 0,
@@ -615,6 +636,7 @@ fn friendly(kind: &str, error: &str) -> String {
 struct Reply {
     text: String,
     steps: Vec<String>,
+    images: Vec<String>,
 }
 
 /// Runs one member's turn. Returns the teammates it handed off to.
@@ -723,13 +745,13 @@ fn finish(app: &AppHandle, task_id: &str, shared: &Shared, handle: &str, kind: &
             let (next, fyi) = mentions(&reply.text, &handles, handle, false);
             let text = if reply.text.trim().is_empty() { "(No reply text.)".to_string() } else { reply.text };
             let to = next.iter().chain(fyi.iter()).cloned().collect();
-            let post = Post { changes: None, status: None, id: Uuid::new_v4().to_string(), author: handle.into(), to, text, steps: reply.steps, at: now(), kind: message_kind() };
+            let post = Post { changes: None, status: None, images: reply.images, id: Uuid::new_v4().to_string(), author: handle.into(), to, text, steps: reply.steps, at: now(), kind: message_kind() };
             (Finished::Next(next), post, "idle")
         }
         Err(error) => {
             let stopped = error == "Stopped";
             let text = if stopped { format!("@{handle} was stopped.") } else { friendly(kind, &error) };
-            let post = Post { changes: None, status: None, id: Uuid::new_v4().to_string(), author: handle.into(), to: vec![], text, steps: vec![], at: now(), kind: if stopped { "notice".into() } else { "error".into() } };
+            let post = Post { changes: None, status: None, images: vec![], id: Uuid::new_v4().to_string(), author: handle.into(), to: vec![], text, steps: vec![], at: now(), kind: if stopped { "notice".into() } else { "error".into() } };
             let other = task
                 .members
                 .iter()
@@ -795,9 +817,14 @@ async fn run_cli(
     } else {
         None
     };
+    // "Agent default" on Codex: a model this CLI and sign-in support, not whatever its config.toml says.
+    let model = match (kind, member.model.trim().is_empty()) {
+        (Kind::Codex, true) => team_agents::codex_default_model().unwrap_or_default(),
+        _ => member.model.clone(),
+    };
     let turn = team_agents::Turn {
         kind,
-        model: &member.model,
+        model: &model,
         effort: &member.effort,
         access: if side { Access::ReadOnly } else { Access::from_mode(&member.mode) },
         resume: if kind.resumes() { member.upstream.as_deref() } else { None },
@@ -809,7 +836,9 @@ async fn run_cli(
         env: if kind == Kind::Gemini { gemini_env(app, mcp.as_ref()) } else { Vec::new() },
         mcp: mcp.clone(),
     };
-    let mut reply = Reply { text: String::new(), steps: Vec::new() };
+    let mut reply = Reply { text: String::new(), steps: Vec::new(), images: Vec::new() };
+    let started = now();
+    let mut drawing = false;
     let mut usage = Usage::default();
     let mut session = None;
     let mut limits: Vec<Limit> = Vec::new();
@@ -833,13 +862,27 @@ async fn run_cli(
                 limits.retain(|limit| limit.label != label);
                 limits.push(Limit { label, used, resets_at });
             }
+            Event::ImageStart => drawing = true,
             Event::Error(_) | Event::Done => return,
         }
         if !side {
-            emit(app, task_id, "live", json!({ "handle": member.handle, "text": reply.text, "steps": reply.steps }));
+            emit(app, task_id, "live", json!({ "handle": member.handle, "text": reply.text, "steps": reply.steps, "drawing": drawing }));
         }
     })
     .await;
+    // Codex saves generated images in its own folder; copy them into the task so the thread (and the
+    // phone) can show them.
+    if kind == Kind::Codex && !side {
+        if let Some(id) = session.as_deref().or(member.upstream.as_deref()) {
+            let images = dir.join("images");
+            for source in team_agents::codex_images(id, started) {
+                let name = format!("{}.{}", Uuid::new_v4(), source.extension().and_then(|e| e.to_str()).unwrap_or("png"));
+                if std::fs::create_dir_all(&images).is_ok() && std::fs::copy(&source, images.join(&name)).is_ok() {
+                    reply.images.push(name);
+                }
+            }
+        }
+    }
     // Codex reports its subscription windows only in its own session log.
     if kind == Kind::Codex {
         if let Some(id) = session.as_deref().or(member.upstream.as_deref()) {
@@ -905,7 +948,7 @@ async fn run_neru(app: &AppHandle, task_id: &str, member: &Member, prompt: Strin
             if response.pending.is_some() {
                 text.push_str("\n\n(Waiting for your approval in this member's Neru session.)");
             }
-            Ok(Reply { text, steps: response.steps })
+            Ok(Reply { text, steps: response.steps, images: Vec::new() })
         }
         _ = cancel.notified() => {
             let _ = crate::agent::stop_chat(Some(session), app.state::<AppState>());
@@ -925,7 +968,7 @@ async fn run_custom(app: &AppHandle, task_id: &str, member: &Member, prompt: Str
         emit(app, task_id, "live", json!({ "handle": member.handle, "text": text, "steps": Vec::<String>::new() }));
     })
     .await?;
-    Ok(Reply { text, steps: Vec::new() })
+    Ok(Reply { text, steps: Vec::new(), images: Vec::new() })
 }
 
 /// Runs turns until nobody is handed the conversation, or the hop limit is reached.
@@ -937,6 +980,7 @@ pub(crate) async fn route(app: AppHandle, task_id: String, mut targets: Vec<Stri
             let post = Post {
                 changes: None,
                 status: None,
+                images: vec![],
                 id: Uuid::new_v4().to_string(),
                 author: "you".into(),
                 to: vec![],
@@ -1418,8 +1462,15 @@ pub mod commands {
         view(&task)
     }
 
+    /// A generated image of a team post, as a data URI for the thread.
     #[tauri::command]
-    pub fn update_team_member(id: String, handle: String, model: Option<String>, mode: Option<String>, effort: Option<String>) -> Result<TaskView, String> {
+    pub fn team_image(id: String, name: String) -> Result<String, String> {
+        let (mime, data) = image_data(&id, &name)?;
+        Ok(format!("data:{mime};base64,{data}"))
+    }
+
+    #[tauri::command]
+    pub fn update_team_member(id: String, handle: String, model: Option<String>, mode: Option<String>, effort: Option<String>, app: AppHandle) -> Result<TaskView, String> {
         let shared = load(&id)?;
         let mut task = lock(&shared)?;
         let member = task.members.iter_mut().find(|m| m.handle == handle).ok_or("No such member")?;
@@ -1433,6 +1484,8 @@ pub mod commands {
             member.mode = mode;
         }
         save(&task)?;
+        // Every open view (the desktop's other windows, a paired phone) shows the change right away.
+        emit_member(&app, &task, &handle);
         view(&task)
     }
 
@@ -1911,7 +1964,7 @@ pub mod commands {
                 emit(&app, &id, "queue", json!({ "queue": task.queue, "paused": task.queue_paused }));
                 return Ok(Post { id: item.id, to: item.to, kind: "queued".into(), ..Post::notice(item.text) });
             }
-            let post = Post { changes: None, status: None, id: Uuid::new_v4().to_string(), author: "you".into(), to: targets.clone(), text: text.trim().into(), steps: vec![], at: now(), kind: message_kind() };
+            let post = Post { changes: None, status: None, images: vec![], id: Uuid::new_v4().to_string(), author: "you".into(), to: targets.clone(), text: text.trim().into(), steps: vec![], at: now(), kind: message_kind() };
             task.posts.push(post.clone());
             task.updated_at = now();
             save(&task)?;
@@ -1979,7 +2032,7 @@ mod tests {
     use super::*;
 
     fn post(author: &str, text: &str) -> Post {
-        Post { changes: None, status: None, id: Uuid::new_v4().to_string(), author: author.into(), to: vec![], text: text.into(), steps: vec![], at: 0, kind: message_kind() }
+        Post { changes: None, status: None, images: vec![], id: Uuid::new_v4().to_string(), author: author.into(), to: vec![], text: text.into(), steps: vec![], at: 0, kind: message_kind() }
     }
 
     #[test]
@@ -2021,12 +2074,12 @@ mod tests {
     fn handles_are_unique_and_prompts_name_the_team() {
         let mut members = Vec::new();
         for kind in ["claude", "claude", "codex"] {
-            let member = new_member(&members, NewMember { kind: kind.into(), model: String::new(), mode: String::new() }).unwrap();
+            let member = new_member(&members, NewMember { kind: kind.into(), model: String::new(), mode: String::new(), effort: String::new() }).unwrap();
             members.push(member);
         }
         let handles: Vec<&str> = members.iter().map(|m| m.handle.as_str()).collect();
         assert_eq!(handles, ["claude", "claude-2", "codex"]);
-        assert!(new_member(&members, NewMember { kind: "nope".into(), model: String::new(), mode: String::new() }).is_err());
+        assert!(new_member(&members, NewMember { kind: "nope".into(), model: String::new(), mode: String::new(), effort: String::new() }).is_err());
         let task = Task {
             id: Uuid::new_v4().to_string(),
             title: "t".into(),

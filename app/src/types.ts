@@ -258,7 +258,7 @@ export type TeamMemberStatus = 'idle' | 'working' | 'failed' | 'stopped' | ''
 export interface AgentModel { id: string; label: string; efforts: string[]; defaultEffort: string | null }
 export interface TeamMember { handle: string; kind: string; model: string; effort?: string; mode: string; upstream: string | null; seen: number; status: TeamMemberStatus; error: string | null; usage: TeamUsage; worktree: { path: string; branch: string; base: string } | null; forkNext?: boolean }
 export interface TeamChanges { root: string; before: string; after: string; files: { path: string; status: string }[]; undone: boolean }
-export interface TeamPost { id: string; author: string; to: string[]; text: string; steps: string[]; at: number; kind: 'message' | 'notice' | 'error' | 'side' | 'setup' | 'queued'; changes?: TeamChanges; status?: 'running' | 'ok' | 'failed' }
+export interface TeamPost { id: string; author: string; to: string[]; text: string; steps: string[]; at: number; kind: 'message' | 'notice' | 'error' | 'side' | 'setup' | 'queued'; changes?: TeamChanges; status?: 'running' | 'ok' | 'failed'; /** Generated images: file names in the task's images/ folder. */ images?: string[] }
 export interface TeamQueued { id: string; text: string; to: string[]; at: number }
 export interface TeamExecution { executor: string; reviewer: string; maxRounds: number; running: boolean }
 export interface TeamTask { id: string; title: string; projectPath: string; createdAt: number; updatedAt: number; members: TeamMember[]; posts: TeamPost[]; routeOnLimit: boolean; pinned: boolean; labels: string[]; folder: string; group: string; icon: string; color: string; queue: TeamQueued[]; queuePaused: boolean; execution: TeamExecution }
@@ -272,7 +272,7 @@ export interface TeamSearchHit { taskId: string; taskTitle: string; postId: stri
 export interface CustomAgent { kind: string; name: string; path: string }
 export type TeamEvent = { taskId: string } & (
   | { type: 'member'; member: TeamMember }
-  | { type: 'live'; handle: string; text: string; steps: string[] }
+  | { type: 'live'; handle: string; text: string; steps: string[]; /** Generating an image right now. */ drawing?: boolean }
   | { type: 'post'; post: TeamPost }
   | { type: 'routing'; from: string; to: string; seconds: number; moved?: boolean }
   | { type: 'error'; error: string }

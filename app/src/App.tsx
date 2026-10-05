@@ -1567,6 +1567,7 @@ function App() {
             </section>
             <section className="settings-section"><h2>Credits</h2>
               <div className="settings-row"><div><strong>{author.handle}</strong><p>{author.line}</p></div><a className="button subtle" href={author.url}>{author.handle}</a></div>
+              <div className="settings-row"><div><strong>Grid Reveal</strong><p>The image loading animation in Team, by Rare UI.</p></div><a className="button subtle" href="https://www.rareui.com/components/gridreveal">rareui.com</a></div>
             </section>
             <section className="settings-section"><h2>Keyboard shortcuts</h2>
               {[['New session', 'N'], ['Command palette', 'K'], ['Toggle sidebar', 'B'], ['Settings', ',']].map(([label, key]) => <div className="settings-row" key={label}><div><strong>{label}</strong></div><kbd>{modKey} {key}</kbd></div>)}
