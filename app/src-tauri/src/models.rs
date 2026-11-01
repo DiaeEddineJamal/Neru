@@ -462,7 +462,7 @@ pub fn remember(provider_id: &str, models: &[ModelInfo]) {
 pub fn reads_images(provider_id: &str, model: &str) -> bool {
     let known = KNOWN.lock().ok().and_then(|known| known.get(&known_key(provider_id, model)).copied());
     match known {
-        Some((vision, _)) => vision,
+        Some((vision, _, _)) => vision,
         None => traits_from_name(model).vision,
     }
 }

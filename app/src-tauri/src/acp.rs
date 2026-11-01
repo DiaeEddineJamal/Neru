@@ -300,7 +300,7 @@ impl Backend for Neru {
             let (done_tx, done_rx) = mpsc::channel();
             let (app, request, id) = (self.app.clone(), std::mem::take(&mut prompt), session.to_string());
             tauri::async_runtime::spawn(async move {
-                let _ = done_tx.send(crate::agent::ai_chat(request, vec![], "manual".into(), Some(true), None, None, None, Some(id), None, Some("code".into()), app).await);
+                let _ = done_tx.send(crate::agent::ai_chat(request, vec![], "manual".into(), Some(true), None, None, None, Some(id), None, Some("code".into()), None, app).await);
             });
             let mut streamed = false;
             let response = loop {
