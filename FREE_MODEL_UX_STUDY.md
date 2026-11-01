@@ -65,7 +65,10 @@ Original plan:
 
 ### P3. Fewer requests per task
 - **3a. Context pack for medium and large projects (M).** Before the first request, run semantic search plus symbol search on the user's message and attach the top file ranges within a budget (about 4–8K tokens, scaled to the model's window). Give lean models a cut-down map plus the pack, since they need context most. Expected: 3–6 fewer exploration requests per task.
-- **3b. Failed edits and tool calls that need no extra request (S).** Also map common argument aliases (`pattern`→`query`, `file`→`path`) before falling back to the repair request. On a miss, match against the whole `old_string` block, not only its first line, and return the best region with a few lines either side and line numbers, so the model can retry right away.
+- **3b. Failed edits and tool calls that need no extra request (S).** ✅ done
+  - `toolproto::fill_aliases` renames misnamed arguments (`pattern`→`query`, `filePath`→`path`, `old`→`old_string`, …) before asking for a repair request. It only renames when exactly one argument fits and the name is not one of the tool's own parameters.
+  - `tools::not_found_message` scores whole blocks, anchored on their first, last and longest lines, and returns the closest block with two lines either side, numbered, telling the model it can copy from there without reading the file.
+  - Eval: two new scenarios (`alias-args`, `edit-miss-block`) each cost one request less: 3→2 and 4→3, in both profiles. Across the 24 runs: 62→58.
 - **3c. File summaries cached by content hash (M).** Store a one-line purpose and key exports per file, written on the small-model lane or from tree-sitter, keyed by hash and reused across sessions. These feed the map and the context pack.
 
 ### P4. Model registry updated without a release (M)

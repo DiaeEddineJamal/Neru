@@ -42,6 +42,24 @@ const SCENARIOS = {
   'rate-limit': { fail: { status: 429, headers: { 'retry-after': '1' }, body: { error: { message: 'Rate limit reached for requests per minute', type: 'rate_limit_error' } } }, steps: [answer] },
   'server-error': { fail: { status: 500, headers: {}, body: { error: { message: 'Internal server error' } } }, steps: [answer] },
   'multi-step': { steps: [{ tool: 'list_directory', args: { path: '.' } }, read('a.txt'), { tool: 'propose_edit', args: { path: 'a.txt', old_string: 'alpha', new_string: 'alpha one' } }, { tool: 'run_shell_command', args: { command: 'echo eval-ok' } }, answer] },
+  // A model calling a parameter by another name: `pattern` for search_text's `query`.
+  'alias-args': { steps: [{ tool: 'search_text', args: { pattern: 'beta' } }, answer] },
+}
+
+// edit-miss-block: a function whose first line the model miscopies. Like a real model, the script
+// retries at once only when the error showed it every line it has to copy; otherwise it reads the file.
+const BLOCK = ['function total(items) {', '  let sum = 0', '  for (const item of items) {', '    sum += item.price * item.quantity', '  }', '  return sum', '}']
+const blockEdit = first => ({ tool: 'propose_edit', args: { path: 'c.js', old_string: [first, ...BLOCK.slice(1)].join('\n'), new_string: BLOCK.join('\n').replace('sum = 0', 'sum = 0 // running total') } })
+SCENARIOS['edit-miss-block'] = {
+  files: { 'c.js': `// cart\n\n${BLOCK.join('\n')}\n\nexport { total }\n` },
+  script: messages => {
+    const last = messages.filter(message => message.role === 'tool').map(text).at(-1)
+    if (last === undefined) return blockEdit('export async function computeTotal(cartItems = []) {')
+    if (last.startsWith('Applied')) return answer
+    if (last.startsWith('Error')) return BLOCK.every(line => last.includes(line)) ? blockEdit(BLOCK[0]) : read('c.js')
+    // The file was read: now the model can copy the block.
+    return blockEdit(BLOCK[0])
+  },
 }
 
 // Large: a name the lean check does not treat as small. Local servers otherwise always run lean.
@@ -61,7 +79,8 @@ function reply(payload) {
   if (system && text(system).startsWith('You repair tool-call arguments')) return { text: '{"path": "a.txt"}', kind: 'repair' }
   if (!payload.tools?.length && !messages.some(message => text(message).includes('EVAL-'))) return { text: 'Eval', kind: 'chore' }
   const step = messages.filter(message => message.role === 'assistant').length
-  return { ...(SCENARIOS[scenario].steps[step] ?? { text: `EVAL-OVERRAN at step ${step}` }), kind: 'main' }
+  const next = step > 12 ? null : SCENARIOS[scenario].script?.(messages) ?? SCENARIOS[scenario].steps[step]
+  return { ...(next ?? { text: `EVAL-OVERRAN at step ${step}` }), kind: 'main' }
 }
 
 function chunk(delta, finish = null) {
@@ -150,6 +169,7 @@ try {
       mkdirSync(data, { recursive: true })
       writeFileSync(join(project, 'a.txt'), 'alpha\n')
       writeFileSync(join(project, 'b.txt'), 'beta\n')
+      for (const [file, content] of Object.entries(SCENARIOS[name].files ?? {})) writeFileSync(join(project, file), content)
       writeFileSync(join(data, 'settings.json'), JSON.stringify({ providerId: 'local', apiFormat: 'openai-chat', baseUrl: `http://127.0.0.1:${port}/v1`, model }))
       const run = await neru(['-p', `EVAL-${name}: do the scripted task`, '--permission-mode', 'bypass', '--output-format', 'json'], project, { ...process.env, NERU_DATA_DIR: data, NO_COLOR: '1' })
       let result = {}

@@ -29,6 +29,12 @@
   "lean/multi-step": {
     "requests": 5
   },
+  "lean/alias-args": {
+    "requests": 2
+  },
+  "lean/edit-miss-block": {
+    "requests": 3
+  },
   "full/answer": {
     "requests": 1
   },
@@ -58,5 +64,11 @@
   },
   "full/multi-step": {
     "requests": 5
+  },
+  "full/alias-args": {
+    "requests": 2
+  },
+  "full/edit-miss-block": {
+    "requests": 3
   }
 }

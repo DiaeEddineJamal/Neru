@@ -349,6 +349,51 @@ pub fn missing_required(tools: &[Value], name: &str, args: &Value) -> Vec<String
         .collect()
 }
 
+/// Other names models use for a parameter, beyond spelling (`filePath`, `file-path`), which
+/// `fill_aliases` already matches.
+const PARAM_ALIASES: &[(&str, &[&str])] = &[
+    ("query", &["pattern", "search", "q", "text", "term", "keyword", "search_term"]),
+    ("path", &["file", "file_path", "filepath", "filename", "file_name", "target", "dir", "directory", "folder"]),
+    ("paths", &["files", "file_paths"]),
+    ("files", &["paths", "file_paths"]),
+    ("old_string", &["old", "old_str", "old_text", "find", "search", "original", "before"]),
+    ("new_string", &["new", "new_str", "new_text", "replace", "replacement", "after"]),
+    ("content", &["contents", "text", "code", "body", "data", "file_content"]),
+    ("command", &["cmd", "shell", "script", "commandline", "command_line"]),
+    ("url", &["link", "uri", "href"]),
+];
+
+fn squash(name: &str) -> String {
+    name.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase()
+}
+
+/// Renames arguments a model called by another name (`pattern` for `query`, `filePath` for `path`) to
+/// the required parameters they stand for, so the call runs without a repair request. A name is only
+/// moved when it is not a parameter of the tool itself and exactly one argument fits. Returns the renames.
+pub fn fill_aliases(tools: &[Value], name: &str, args: &mut Value) -> Vec<(String, String)> {
+    let missing = missing_required(tools, name, args);
+    let Some(spec) = spec_of(tools, name) else { return Vec::new() };
+    let known: Vec<String> = spec["function"]["parameters"]["properties"].as_object().map(|props| props.keys().cloned().collect()).unwrap_or_default();
+    let Some(object) = args.as_object_mut() else { return Vec::new() };
+    let mut renamed = Vec::new();
+    for param in missing {
+        let aliases: &[&str] = PARAM_ALIASES.iter().find(|(target, _)| *target == param).map(|(_, aliases)| *aliases).unwrap_or_default();
+        let fits: Vec<String> = object
+            .keys()
+            .filter(|key| !known.contains(key) && !object[key.as_str()].is_null())
+            .filter(|key| squash(key) == squash(&param) || aliases.iter().any(|alias| squash(alias) == squash(key)))
+            .cloned()
+            .collect();
+        if let [key] = fits.as_slice() {
+            if let Some(value) = object.remove(key) {
+                object.insert(param.clone(), value);
+                renamed.push((key.clone(), param));
+            }
+        }
+    }
+    renamed
+}
+
 /// The tool definition the repair request shows the small model.
 pub fn spec_of<'a>(tools: &'a [Value], name: &str) -> Option<&'a Value> {
     tools.iter().find(|tool| tool["function"]["name"] == name)
@@ -468,6 +513,26 @@ mod tests {
         assert!(note_edit_failure(&config).is_some());
         assert!(whole_file_only(&config));
         assert!(whole_file_tools(&Value::Array(tools())).as_array().unwrap().iter().all(|tool| tool["function"]["name"] != "propose_edit"));
+    }
+
+    #[test]
+    fn misnamed_arguments_are_renamed_without_a_repair() {
+        let tools = vec![
+            json!({"type":"function","function":{"name":"search_text","parameters":{"type":"object","properties":{"query":{"type":"string"},"regex":{"type":"boolean"}},"required":["query"]}}}),
+            json!({"type":"function","function":{"name":"propose_edit","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}}}),
+        ];
+        let mut args = json!({"pattern":"beta","regex":true});
+        assert_eq!(fill_aliases(&tools, "search_text", &mut args), vec![("pattern".to_string(), "query".to_string())]);
+        assert_eq!(args, json!({"query":"beta","regex":true}));
+
+        let mut args = json!({"filePath":"a.txt","oldString":"x","new":"y"});
+        assert_eq!(fill_aliases(&tools, "propose_edit", &mut args).len(), 3);
+        assert_eq!(args, json!({"path":"a.txt","old_string":"x","new_string":"y"}));
+
+        // Two arguments could be the query: nothing is guessed, and the repair request decides.
+        let mut args = json!({"pattern":"a","search":"b"});
+        assert!(fill_aliases(&tools, "search_text", &mut args).is_empty());
+        assert!(missing_required(&tools, "search_text", &args).contains(&"query".to_string()));
     }
 
     #[test]

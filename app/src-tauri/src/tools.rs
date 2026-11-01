@@ -472,27 +472,51 @@ fn fuzzy_replace(original: &str, old: &str, new: &str, all: bool) -> Result<Opti
     Ok(Some(result))
 }
 
-/// Explains a failed match and shows the closest text in the file, so the model can fix its snippet.
+/// Explains a failed match and shows the closest block in the file, with a few lines around it, so the
+/// model can copy its snippet from there and retry without reading the file again (one request fewer).
 fn not_found_message(original: &str, old: &str) -> String {
-    let base = "old_string was not found. Read the file again and copy the snippet exactly, including whitespace";
-    let Some(first) = old.lines().map(normalize_line).find(|l| l.len() >= 4) else { return base.into() };
-    let lines: Vec<&str> = original.lines().collect();
-    let mut best: Option<(f32, usize)> = None;
-    for (i, line) in lines.iter().enumerate().take(6_000) {
-        let candidate = normalize_line(line);
-        if candidate.len() < 4 {
-            continue;
-        }
-        let ratio = similar::TextDiff::from_chars(first.as_str(), candidate.as_str()).ratio();
-        if best.is_none_or(|(score, _)| ratio > score) {
-            best = Some((ratio, i));
-        }
+    let base = "old_string was not found. Copy the snippet exactly, including whitespace";
+    let wanted: Vec<String> = old.lines().map(normalize_line).collect();
+    let lines: Vec<&str> = original.lines().take(20_000).collect();
+    let normalized: Vec<String> = lines.iter().map(|line| normalize_line(line)).collect();
+    let ratio = |a: &str, b: &str| if a == b { 1.0 } else { similar::TextDiff::from_chars(a, b).ratio() };
+    // Anchors: the block's first, last and longest lines. Each points at where the block would start
+    // if that line matched, and only those starts are scored as whole blocks.
+    let filled: Vec<usize> = (0..wanted.len()).filter(|&k| wanted[k].len() >= 4).collect();
+    let (Some(&first), Some(&last)) = (filled.first(), filled.last()) else { return format!("{base}. Read the file again") };
+    let longest = filled.iter().copied().max_by_key(|&k| wanted[k].len()).unwrap_or(first);
+    let mut starts: Vec<usize> = Vec::new();
+    for offset in [first, last, longest] {
+        let mut best: Vec<(f32, usize)> = normalized
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.len() >= 4)
+            .map(|(i, line)| (ratio(&wanted[offset], line), i))
+            .filter(|(score, i)| *score >= 0.5 && *i >= offset)
+            .collect();
+        best.sort_by(|a, b| b.0.total_cmp(&a.0));
+        starts.extend(best.iter().take(3).map(|(_, i)| i - offset));
     }
+    starts.sort_unstable();
+    starts.dedup();
+    let size = wanted.len().max(1);
+    let score = |start: usize| -> f32 {
+        let scored: Vec<f32> = filled.iter().map(|&k| normalized.get(start + k).map_or(0.0, |line| ratio(&wanted[k], line))).collect();
+        scored.iter().sum::<f32>() / scored.len().max(1) as f32
+    };
+    let best = starts.into_iter().map(|start| (score(start), start)).max_by(|a, b| a.0.total_cmp(&b.0));
     match best {
-        Some((ratio, at)) if ratio >= 0.6 => {
-            let count = old.lines().count().clamp(1, 4);
-            let shown: Vec<String> = lines[at..(at + count).min(lines.len())].iter().enumerate().map(|(k, line)| format!("{}| {}", at + k + 1, line)).collect();
-            format!("{base}. The closest text in the file starts at line {}:\n{}", at + 1, shown.join("\n"))
+        Some((score, at)) if score >= 0.5 => {
+            let end = (at + size).min(lines.len());
+            let (from, to) = (at.saturating_sub(2), (end + 2).min(lines.len()).min(at.saturating_sub(2) + 60));
+            let shown: Vec<String> = (from..to).map(|i| format!("{}| {}", i + 1, lines[i])).collect();
+            format!(
+                "{base}. The closest text in the file starts at line {} and runs to line {end}; here it is with the lines around it. Copy old_string from these lines (without the line numbers) and try again; there is no need to read the file first:
+{}",
+                at + 1,
+                shown.join("
+")
+            )
         }
         _ => format!("{base}. Nothing similar was found; the code may have changed, so read the file again"),
     }
@@ -541,6 +565,27 @@ mod tests {
         assert!(error.contains("line 2") && error.contains("renderTree"), "{error}");
         let none = apply_snippet(file, "completely different words here", "x", false).unwrap_err();
         assert!(none.contains("Nothing similar"), "{none}");
+    }
+
+    #[test]
+    fn failed_edits_show_the_whole_closest_block_with_context() {
+        let file = "use std::fs;
+
+fn load(path: &str) -> String {
+    let text = fs::read_to_string(path).unwrap();
+    text.trim().to_string()
+}
+
+fn save() {}
+";
+        // The first line is badly miscopied, so only the other lines can find the block.
+        let error = apply_snippet(file, "pub async fn load_file(p: &Path) -> Result<String> {
+    let text = fs::read_to_string(path).unwrap();
+    text.trim().to_string()
+}", "x", false).unwrap_err();
+        assert!(error.contains("starts at line 3 and runs to line 6"), "{error}");
+        assert!(error.contains("1| use std::fs;") && error.contains("8| fn save() {}"), "two lines either side: {error}");
+        assert!(error.contains("no need to read the file"), "{error}");
     }
 
     #[test]

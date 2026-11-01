@@ -877,7 +877,11 @@ async fn repair_arguments(state: &AppState, config: &ProviderConfig, rule: &str,
         let Some(spec) = crate::toolproto::spec_of(tools, &name) else { continue };
         let raw = call["function"]["arguments"].as_str().unwrap_or("{}").to_string();
         let problem = match parse_arguments(&raw) {
-            Ok(args) => {
+            Ok(mut args) => {
+                // Arguments under another name (`pattern` for `query`) are renamed here, without a request.
+                if !crate::toolproto::fill_aliases(tools, &name, &mut args).is_empty() {
+                    call["function"]["arguments"] = json!(args.to_string());
+                }
                 let missing = crate::toolproto::missing_required(tools, &name, &args);
                 if missing.is_empty() {
                     continue;
