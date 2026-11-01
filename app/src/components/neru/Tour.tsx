@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, X } from 'lucide-react'
 import { EASE_OUT, SPRING_LAYOUT } from '@/lib/ease'
 import { cn } from '@/lib/utils'
 import './Tour.css'
+import { t } from '../../i18n'
 
 /** One stop on a walkthrough. `target` is a `data-tour` name; without one the card sits centred. */
 export type TourStep = {
@@ -63,7 +64,7 @@ function place(spot: Rect | null, cardH: number, side?: TourStep['side']) {
  * beside it, then glides to the next. Steps whose element is not on screen are skipped.
  * Keys: → or Enter next, ← back, Esc skip.
  */
-export function Tour({ steps, onClose, label = 'Walkthrough' }: { steps: TourStep[]; onClose: (finished: boolean) => void; label?: string }) {
+export function Tour({ steps, onClose, label = t('Walkthrough') }: { steps: TourStep[]; onClose: (finished: boolean) => void; label?: string }) {
   const reduce = useReducedMotion() ?? false
   const [index, setIndex] = useState(0)
   const [spot, setSpot] = useState<Rect | null>(null)
@@ -129,19 +130,19 @@ export function Tour({ steps, onClose, label = 'Walkthrough' }: { steps: TourSte
     <motion.div ref={cardRef} className="tour-card" initial={reduce ? false : { opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1, left: position.left, top: position.top, width: position.width }} transition={glide}>
       <AnimatePresence mode="wait" initial={false}>
         <motion.div key={index} initial={reduce ? false : { opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: EASE_OUT }}>
-          <p className="tour-eyebrow">{index + 1} of {steps.length}</p>
+          <p className="tour-eyebrow">{t('{n} of {total}', { n: index + 1, total: steps.length })}</p>
           <h2 className="tour-title">{step.title}</h2>
           <div className="tour-body">{step.body}</div>
         </motion.div>
       </AnimatePresence>
       <div className="tour-progress" aria-hidden>{steps.map((_, i) => <i key={i} className={cn(i === index && 'on', i < index && 'done')} />)}</div>
       <footer className="tour-actions">
-        {!last && <button type="button" className="tour-skip" onClick={() => onClose(false)}>Skip tour</button>}
+        {!last && <button type="button" className="tour-skip" onClick={() => onClose(false)}>{t('Skip tour')}</button>}
         <span className="tour-spacer" />
-        {index > 0 && <button type="button" className="button subtle small" onClick={() => go(index - 1, -1)} aria-label="Back"><ArrowLeft size={14} /></button>}
-        <button ref={nextRef} type="button" className="button primary small" onClick={() => go(index + 1, 1)}>{last ? 'Done' : index === 0 && !step.target ? 'Show me around' : 'Next'}{!last && <ArrowRight size={14} />}</button>
+        {index > 0 && <button type="button" className="button subtle small" onClick={() => go(index - 1, -1)} aria-label={t('Back')}><ArrowLeft size={14} /></button>}
+        <button ref={nextRef} type="button" className="button primary small" onClick={() => go(index + 1, 1)}>{last ? t('Done') : index === 0 && !step.target ? t('Show me around') : t('Next')}{!last && <ArrowRight size={14} />}</button>
       </footer>
-      <button type="button" className="tour-close" onClick={() => onClose(false)} aria-label="Close the walkthrough"><X size={14} /></button>
+      <button type="button" className="tour-close" onClick={() => onClose(false)} aria-label={t('Close the walkthrough')}><X size={14} /></button>
     </motion.div>
   </div>, document.body)
 }

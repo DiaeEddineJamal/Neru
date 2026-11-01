@@ -54,7 +54,66 @@ export interface PendingView {
   /** Kept on a settled card: what the user answered or asked to change. */
   answers?: string[]
   feedback?: string
+  /** A second model's review of an edit, from a different model family. */
+  review?: Review
 }
+
+/**
+ * A second opinion on a proposed change, from a model of another family than the one that wrote it.
+ * `running` while it reads; `agree` or `concerns` with its notes; `skipped` when no other model is available.
+ */
+export interface Review {
+  status: 'running' | 'agree' | 'concerns' | 'skipped' | 'failed'
+  /** The reviewing model, e.g. "gemini-3.8-flash". */
+  reviewer: string
+  /** One line: what the reviewer thinks. */
+  summary: string
+  notes: string[]
+}
+
+/** Tokens Neru used: on free keys, local and on-device models (`free`) and on paid keys (`paid`), since `since`. */
+export interface UsageTotals {
+  free: { input: number; output: number; replies: number }
+  paid: { input: number; output: number; replies: number }
+  since: number
+}
+
+/** A task waiting to run on the desktop, or one that ran. `at` is when it starts (epoch ms). */
+export interface QueuedTask {
+  id: string
+  title: string
+  prompt: string
+  projectPath: string
+  at: number
+  createdAt: number
+  mode: string
+  /** `waiting`: it ran and stopped at a change or command for you to approve. */
+  status: 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'canceled'
+  sessionId?: string
+  error?: string
+  /** Photos sent with it. */
+  images: number
+}
+
+/** One session's work while you were away, for the morning summary. */
+export interface DigestItem {
+  sessionId: string
+  title: string
+  project: string
+  projectPath: string
+  status: 'done' | 'waiting' | 'failed' | 'running'
+  /** The agent's last reply, shortened. */
+  summary: string
+  /** Changes applied, commands run, and commands that failed since `Digest.since`. */
+  edits: number
+  commands: number
+  failedCommands: number
+  /** Started from the task queue. */
+  queued: boolean
+  updatedAt: number
+}
+
+export interface Digest { since: number; items: DigestItem[]; usage: UsageTotals }
 
 /** One rate limit on the API key, as the provider last reported it. */
 export interface Quota { label: string; limit: number | null; remaining: number | null; resetsIn: string | null }
@@ -144,7 +203,9 @@ export type AgentEvent = { sessionId: string } & (
   | { type: 'rewind'; text: string; drafts: string[]; thinking: number }
   | { type: 'todos'; todos: Todo[] }
   | { type: 'steered'; text: string }
-  | ({ type: 'subagent' } & SubagentProgress))
+  | ({ type: 'subagent' } & SubagentProgress)
+  /** Added: a second model's review of the edit waiting for approval. */
+  | { type: 'review'; review: Review })
 
 /** Live state of one sub-agent, sent while it works and shown nested under its `task` tool call. */
 export interface SubagentProgress { id: string; role: string; description: string; status: 'running' | 'done'; tools: number; rounds: number; elapsedMs: number; current: string; steps: string[]; approval?: SubagentApproval }
@@ -222,6 +283,9 @@ export interface ShellView {
 }
 
 /** One model a provider offers, classified from the provider's own metadata or, failing that, its name. */
+/** Who the user is, for every model's system prompt. The About you part can be switched off without losing it. */
+export interface Profile { name: string; gender: '' | 'male' | 'female'; occupation: string; about: string; style: string; personalize: boolean }
+
 export interface ModelInfo {
   id: string
   name?: string

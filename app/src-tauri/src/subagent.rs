@@ -403,7 +403,7 @@ async fn ask(job: &Job, progress: &Progress<'_>, config: &mut ProviderConfig, me
             }
             Err(error) if switches < 2 && (crate::fallback::is_rate_limited(&error) || crate::fallback::is_unavailable(&error)) => {
                 let state = job.app.state::<AppState>();
-                let Some(next) = crate::fallback::next_model(&state, config, &error).await else { return Err(error) };
+                let Some(next) = crate::fallback::next_model(&state, config, &error, &crate::privacy::rule_for(Some(&job.root))).await else { return Err(error) };
                 progress.emit("running", &format!("{} {}; switched to {}", config.model, crate::fallback::reason(&error), next.model));
                 *config = next;
                 switches += 1;

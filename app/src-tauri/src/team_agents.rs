@@ -804,8 +804,25 @@ fn parse_claude(value: &Value, events: &mut Vec<Event>, partial: bool) {
     }
 }
 
+/// Codex says it is about to draw ("I'll create a dark, futuristic image…") before the image tool
+/// runs, and the tool call itself never reaches `codex exec --json`.
+fn announces_image(text: &str) -> bool {
+    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    PATTERN
+        .get_or_init(|| regex::Regex::new(r"(?i)\b(i'll|i will|i’ll|let me|i'm going to|i’m going to|now)\s+(create|generate|draw|render|make|design|paint|produce)\b[^.\n]{0,60}\b(image|picture|illustration|artwork|logo|icon|wallpaper|poster|banner|photo|graphic)s?\b").unwrap())
+        .is_match(text)
+}
+
 fn parse_codex(value: &Value, events: &mut Vec<Event>) {
     let item = &value["item"];
+    // Any item that touches the image tool (the imagegen skill, `tools.image_gen__imagegen`, an image
+    // extension item) means a picture is on the way.
+    if value["type"].as_str().is_some_and(|t| t.starts_with("item.")) {
+        let raw = item.to_string();
+        if raw.contains("imagegen") || raw.contains("image_gen") {
+            events.push(Event::ImageStart);
+        }
+    }
     match (value["type"].as_str().unwrap_or_default(), item["type"].as_str().unwrap_or_default()) {
         ("thread.started", _) => {
             if let Some(id) = value["thread_id"].as_str() {
@@ -814,13 +831,15 @@ fn parse_codex(value: &Value, events: &mut Vec<Event>) {
         }
         ("item.started", "command_execution") => {
             let command = text(&item["command"]);
-            // Codex reads its imagegen skill right before it draws, the only sign of an image on the way.
-            if command.contains("imagegen") {
-                events.push(Event::ImageStart);
-            }
             events.push(Event::Step(format!("Ran {}", shell_command(&command))));
         }
-        ("item.completed", "agent_message") => events.push(Event::Text(text(&item["text"]))),
+        ("item.completed", "agent_message") => {
+            let message = text(&item["text"]);
+            if announces_image(&message) {
+                events.push(Event::ImageStart);
+            }
+            events.push(Event::Text(message));
+        }
         ("item.completed", "file_change") => {
             for change in item["changes"].as_array().into_iter().flatten() {
                 events.push(Event::Step(format!("Edited {}", text(&change["path"]))));
@@ -1166,6 +1185,16 @@ mod tests {
             ]
         );
         assert_eq!(parse_line(Kind::Codex, r#"{"type":"turn.failed","error":{"message":"You've hit your usage limit"}}"#), vec![Event::Error("You've hit your usage limit".into())]);
+    }
+
+    #[test]
+    fn codex_image_on_the_way() {
+        let says = r#"{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"I’ll create a dark, futuristic image inspired by your portfolio."}}"#;
+        assert_eq!(parse_line(Kind::Codex, says)[0], Event::ImageStart);
+        let tool = r#"{"type":"item.started","item":{"id":"i","type":"command_execution","command":"cat ~/.codex/skills/imagegen/SKILL.md"}}"#;
+        assert_eq!(parse_line(Kind::Codex, tool)[0], Event::ImageStart);
+        let plain = r#"{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"I'll check the image path in the config."}}"#;
+        assert_eq!(parse_line(Kind::Codex, plain), vec![Event::Text("I'll check the image path in the config.".into())]);
     }
 
     #[test]

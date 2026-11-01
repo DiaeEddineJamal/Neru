@@ -1,6 +1,16 @@
 @echo off
 setlocal
-call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" >nul
+rem Find the C++ tools in any Visual Studio edition (Community, Build Tools, ...), wherever it is installed.
+set "VSINSTALLER=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer"
+set "PATH=%VSINSTALLER%;%PATH%"
+set "VCVARS="
+if exist "%VSINSTALLER%\vswhere.exe" for /f "usebackq delims=" %%i in (`"%VSINSTALLER%\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find VC\Auxiliary\Build\vcvars64.bat`) do set "VCVARS=%%i"
+for %%r in ("%ProgramFiles%" "%ProgramFiles(x86)%") do for %%e in (Community Professional Enterprise BuildTools) do if not defined VCVARS if exist "%%~r\Microsoft Visual Studio\18\%%e\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%%~r\Microsoft Visual Studio\18\%%e\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS (
+  echo Visual Studio C++ build tools were not found. Install "Desktop development with C++" or the VS Build Tools.
+  exit /b 1
+)
+call "%VCVARS%" >nul
 if errorlevel 1 exit /b 1
 set "SDKROOT=D:\Neru\.local\sdk"
 set "SDKVER=10.0.28000.0"

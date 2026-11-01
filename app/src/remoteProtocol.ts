@@ -16,7 +16,7 @@
  * Resetting the pairing on the desktop rotates the key and closes every connection; turning Remote off
  * closes them too.
  */
-import type { AgentEvent, AgentMode, AgentModel, SessionSnapshot, TeamAgent, TeamEvent, TeamPost, TeamTask, TeamTaskSummary } from './types'
+import type { AgentEvent, AgentMode, AgentModel, Digest, QueuedTask, SessionSnapshot, TeamAgent, TeamEvent, TeamPost, TeamTask, TeamTaskSummary, UsageTotals } from './types'
 
 export const PROTOCOL_VERSION = 1
 export const DEFAULT_PORT = 47613
@@ -62,6 +62,23 @@ export interface SessionSummaryForPhone {
   waiting: boolean
 }
 
+/** A folder the desktop has worked in, most recent first. */
+export interface ProjectForPhone { path: string; name: string; updatedAt: number }
+
+/** A photo sent with a prompt, as the desktop's composer attaches one. */
+export interface PhoneImage { name: string; dataUrl: string }
+
+/**
+ * When queued work runs by default: the next 00:15 UTC, just after most free plans reset their daily quota
+ * (OpenRouter, Groq, Cerebras, NVIDIA count by UTC day). Returned in epoch ms.
+ */
+export function nextQuotaReset(now = Date.now()): number {
+  const at = new Date(now)
+  at.setUTCHours(0, 15, 0, 0)
+  if (at.getTime() <= now) at.setUTCDate(at.getUTCDate() + 1)
+  return at.getTime()
+}
+
 /** Every command, its args and the `data` of a successful reply. */
 export interface RemoteCommands {
   hello: { args: Record<string, never>; result: { name: string; version: string } }
@@ -72,7 +89,7 @@ export interface RemoteCommands {
    * Steers a running session (read by the agent before its next step), or starts a reply in an idle one.
    * `mode` applies to a reply it starts; default 'manual' (ask every time). Fails while a call is waiting for approval.
    */
-  send_prompt: { args: { sessionId: string; text: string; mode?: AgentMode }; result: { steered: boolean } }
+  send_prompt: { args: { sessionId: string; text: string; mode?: AgentMode; /** Added: photos for the model to see. */ images?: PhoneImage[] }; result: { steered: boolean } }
   /**
    * The desktop's Approve button: applies the edit, runs the command / task / connector call, or approves the plan,
    * then the agent continues (in `mode`, default 'manual'; for a plan, the mode to build in). `always` also remembers
@@ -80,8 +97,11 @@ export interface RemoteCommands {
    * Resolves once the call ran; the continued reply streams as agent events.
    */
   approve: { args: { sessionId: string; always?: boolean; mode?: AgentMode }; result: null }
-  /** The desktop's Deny button. The agent is told and the run does not continue. */
-  deny: { args: { sessionId: string }; result: null }
+  /**
+   * The desktop's Deny button. The agent is told and the run does not continue.
+   * Added: `reason` goes to the agent; with `remember`, it is also saved as a project rule the agent reads in every later session.
+   */
+  deny: { args: { sessionId: string; reason?: string; remember?: boolean }; result: null }
   /** Added: answers a pending ask_user_question card (one answer per question; several choices joined by ", "), then continues. */
   answer: { args: { sessionId: string; answers: string[]; mode?: AgentMode }; result: null }
   /** Added: approves or denies a sub-agent's edit or command (AgentEvent type 'subagent' with an `approval`). */
@@ -101,8 +121,33 @@ export interface RemoteCommands {
    * Added: starts a team task like the desktop's New task dialog (an empty projectPath is a task with no folder).
    * A non-empty `text` goes out as the first message, to `to` (handles or 'all'; empty: whoever it mentions, else the first member).
    */
-  create_team_task: { args: { title: string; projectPath: string; members: { kind: string; model?: string; mode?: string }[]; text?: string; to?: string[] }; result: TeamTask }
+  create_team_task: { args: { title: string; projectPath: string; members: { kind: string; model?: string; mode?: string; effort?: string }[]; text?: string; to?: string[] }; result: TeamTask }
+  /** Added: changes one member's model, permission mode or reasoning effort (omitted fields stay; '' is the agent default). */
+  update_team_member: { args: { id: string; handle: string; model?: string; mode?: string; effort?: string }; result: TeamTask }
+  /** Added: a generated image from a team post (`name` from `TeamPost.images`). */
+  team_image: { args: { id: string; name: string }; result: { mime: string; base64: string } }
+  /** Added: folders the desktop has worked in (sessions and team tasks), most recent first. */
+  list_projects: { args: Record<string, never>; result: ProjectForPhone[] }
+  /** Added: starts a new Code session in `projectPath` with `text` (and photos) as its first message. */
+  new_session: { args: { projectPath: string; text: string; images?: PhoneImage[]; mode?: AgentMode }; result: { sessionId: string } }
+  /** Added: queues a task to start at `at` (epoch ms; now or earlier runs it right away). Queued tasks run one at a time. */
+  queue_task: { args: { projectPath: string; text: string; images?: PhoneImage[]; at: number; mode?: AgentMode }; result: QueuedTask }
+  /** Added: queued tasks, and the ones that ran in the last week. */
+  list_queue: { args: Record<string, never>; result: QueuedTask[] }
+  /** Added: cancels a task that has not started. */
+  cancel_task: { args: { id: string }; result: null }
+  /** Added: what sessions did since `since` (epoch ms), and the usage totals. */
+  digest: { args: { since: number }; result: Digest }
+  /** Added: tokens the desktop has used on free and paid models. */
+  usage_summary: { args: Record<string, never>; result: UsageTotals }
+  /** Added: the desktop's connector tools, so the phone's own chats can use them while paired. */
+  mcp_tools: { args: Record<string, never>; result: DesktopMcpTool[] }
+  /** Added: calls one of those tools on the desktop; `text` is its flattened result. */
+  mcp_call: { args: { server: string; tool: string; arguments: Record<string, unknown> }; result: { text: string } }
 }
+
+/** A tool of a connector running on the desktop. `name` is the function name the desktop gives models. */
+export interface DesktopMcpTool { name: string; server: string; tool: string; description: string; inputSchema: Record<string, unknown>; readOnly: boolean }
 export type RemoteCommand = keyof RemoteCommands
 
 export type ClientRequest<C extends RemoteCommand = RemoteCommand> = { id: number; cmd: C; args: RemoteCommands[C]['args'] }
@@ -119,6 +164,8 @@ export type ServerPush =
   | { event: 'agent'; payload: AgentEvent }
   | { event: 'team'; payload: TeamEvent }
   | { event: 'sessions'; payload: SessionSummaryForPhone[] }
+  /** Added: the task queue, whenever a task is added, starts, finishes or is canceled. */
+  | { event: 'queue'; payload: QueuedTask[] }
 
 export type ServerMessage = ServerReply | ServerPush
 export const isPush = (message: ServerMessage): message is ServerPush => 'event' in message

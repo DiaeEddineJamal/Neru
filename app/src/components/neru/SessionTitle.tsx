@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, Laptop, MessageCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { t } from '../../i18n'
 
 export type TitleMenuItem =
   | { label: string; shortcut?: string; danger?: boolean; disabled?: boolean; onSelect: () => void }
@@ -85,17 +86,17 @@ export function SessionTitle(props: SessionTitleProps) {
   return <div className="session-title" data-tauri-drag-region>
     <div className="title-anchor" ref={session.box}>
       {props.renaming
-        ? <div className="title-trigger renaming"><Icon size={16} strokeWidth={1.75} aria-hidden /><input autoFocus className="title-rename" aria-label="Session name" value={draft} onChange={event => setDraft(event.target.value)} onFocus={event => event.currentTarget.select()} onBlur={finish} onKeyDown={event => { if (event.key === 'Enter') finish(); if (event.key === 'Escape') props.onCancelRename() }} /></div>
+        ? <div className="title-trigger renaming"><Icon size={16} strokeWidth={1.75} aria-hidden /><input autoFocus className="title-rename" aria-label={t('Session name')} value={draft} onChange={event => setDraft(event.target.value)} onFocus={event => event.currentTarget.select()} onBlur={finish} onKeyDown={event => { if (event.key === 'Enter') finish(); if (event.key === 'Escape') props.onCancelRename() }} /></div>
         : <button type="button" className={cn('title-trigger', session.open && 'open')} aria-haspopup="menu" aria-expanded={session.open} disabled={props.disabled} title={props.title} onClick={() => { project.setOpen(false); session.setOpen(value => !value) }}>
           <Icon size={16} strokeWidth={1.75} aria-hidden /><strong className="truncate">{props.title}</strong><ChevronDown size={14} aria-hidden />
         </button>}
       {session.open && <TitleMenu items={props.sessionItems} onClose={() => session.setOpen(false)} />}
     </div>
     {props.projectName && <div className="title-anchor" ref={project.box}>
-      <button type="button" className={cn('title-chip', project.open && 'open')} aria-haspopup="menu" aria-expanded={project.open} title="Project" onClick={() => { session.setOpen(false); project.setOpen(value => !value) }}>{props.projectName}</button>
+      <button type="button" className={cn('title-chip', project.open && 'open')} aria-haspopup="menu" aria-expanded={project.open} title={t('Project')} onClick={() => { session.setOpen(false); project.setOpen(value => !value) }}>{props.projectName}</button>
       {project.open && <TitleMenu items={props.projectItems} onClose={() => project.setOpen(false)} />}
     </div>}
-    {props.branch && <span className="title-chip branch" title={`Working in its own worktree on ${props.branch}`}>{props.branch}</span>}
+    {props.branch && <span className="title-chip branch" title={t('Working in its own worktree on {branch}', { branch: props.branch })}>{props.branch}</span>}
     {props.trailing}
   </div>
 }

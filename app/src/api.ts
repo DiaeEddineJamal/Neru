@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
-import type { ApiFormat } from './providerCatalog'
+import type { ApiFormat, PrivacyRule } from './providerCatalog'
+import type { Digest, Profile, QueuedTask, UsageTotals } from './types'
 import type { Route } from './lib/browser'
 
 export const api = {
@@ -140,6 +141,26 @@ export const api = {
   proposeFile: (path: string, content: string) => invoke<{ diff: string }>('propose_file', { path, content }),
   applyPending: () => invoke<string>('apply_pending'),
   rejectPending: () => invoke<void>('reject_pending'),
+  /** Denies the waiting call with a reason; `remember` keeps it as a project rule. Returns the saved rule. */
+  rejectPendingBecause: (reason: string, remember: boolean) => invoke<string | null>('reject_pending_because', { reason, remember }),
+  projectMemoryFacts: () => invoke<string[]>('project_memory_facts'),
+  forgetProjectFact: (fact: string) => invoke<string[]>('forget_project_fact', { fact }),
+  rememberProjectFact: (fact: string) => invoke<string[]>('remember_project_fact', { fact }),
+  privacyPrefs: () => invoke<PrivacyPrefs>('get_privacy_prefs'),
+  setPrivacyPrefs: (prefs: PrivacyPrefs) => invoke<PrivacyPrefs>('set_privacy_prefs', { prefs }),
+  projectPrivacy: () => invoke<{ rule: PrivacyRule | null; global: PrivacyRule }>('get_project_privacy'),
+  setProjectPrivacy: (rule: PrivacyRule | null) => invoke<{ rule: PrivacyRule | null; global: PrivacyRule }>('set_project_privacy', { rule }),
+  usageTotals: () => invoke<UsageTotals>('usage_totals'),
+  resetUsage: () => invoke<UsageTotals>('reset_usage'),
+  queueList: () => invoke<QueuedTask[]>('queue_list'),
+  queueAdd: (projectPath: string, prompt: string, at: number, mode: AgentMode, images?: { name: string; dataUrl: string }[]) => invoke<QueuedTask>('queue_add', { projectPath, prompt, at, mode, images: images ?? null }),
+  queueCancel: (id: string) => invoke<void>('queue_cancel', { id }),
+  /** Just after most free plans reset their daily quota (epoch ms). */
+  queueTonight: () => invoke<number>('queue_tonight'),
+  onQueue: (handler: (queue: QueuedTask[]) => void) => listen<QueuedTask[]>('queue://changed', event => handler(event.payload)),
+  digest: (since: number) => invoke<Digest>('activity_digest', { since }),
+  exportReplay: (sessionId: string) => invoke<string>('export_replay', { sessionId }),
+  shareReplayGist: (sessionId: string) => invoke<string>('share_replay_gist', { sessionId }),
   /** Answers a plan from exit_plan_mode; returns the mode the session continues in. */
   resolvePlan: (sessionId: string | null, approve: boolean, mode: AgentMode | null, feedback: string | null) => invoke<AgentMode>('resolve_plan', { sessionId, approve, mode, feedback }),
   /** One answer per question; several choices joined by ", ". */
@@ -147,8 +168,9 @@ export const api = {
   restoreCheckpoint: (id: string) => invoke<void>('restore_checkpoint', { id }),
   configureProvider: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string, model: string) => invoke<ProviderView>('configure_provider', { providerId, apiFormat, baseUrl, apiKey, model }),
   providerStatus: () => invoke<ProviderView>('provider_status'),
-  getProfile: () => invoke<{ name: string; gender: '' | 'male' | 'female' }>('get_profile'),
+  getProfile: () => invoke<Profile>('get_profile'),
   setProfile: (name: string, gender: string) => invoke<void>('set_profile', { name, gender }),
+  setPersonalization: (occupation: string, about: string, style: string, personalize: boolean) => invoke<void>('set_personalization', { occupation, about, style, personalize }),
   newChat: () => invoke<void>('new_chat'),
   forkSession: (id: string) => invoke<SessionSnapshot>('fork_session', { id }),
   listModels: (providerId: string, apiFormat: ApiFormat, baseUrl: string, apiKey: string) => invoke<ModelInfo[]>('list_models', { providerId, apiFormat, baseUrl, apiKey }),
@@ -211,3 +233,6 @@ export const api = {
   /** The phone started a reply in a session, or settled one (approved, denied, answered, reply finished). */
   onRemoteSession: (handler: (event: { sessionId: string; phase: 'started' | 'settled' }) => void) => listen<{ sessionId: string; phase: 'started' | 'settled' }>('remote://session', event => handler(event.payload)),
 }
+
+/** Settings → Privacy: the rule for chats and projects without their own, secret hiding, second opinions. */
+export interface PrivacyPrefs { privacy: PrivacyRule; redact: boolean; secondOpinion: boolean }

@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '../../api'
 import { playBanner } from '@/lib/terminalBanner'
+import { t } from '../../i18n'
 
 let agentFeed = ''
 const listeners = new Set<(text: string) => void>()
@@ -44,9 +45,9 @@ function TerminalSession({ projectKey, first, active, onTitle, cwd, launch }: { 
     if (!host.current) return
     const terminal = new Terminal({
       theme: {
-        background: '#151515', foreground: '#e9e8e1', cursor: '#8ea291', cursorAccent: '#151515', selectionBackground: '#344a3999',
-        black: '#1b1d19', red: '#e0786b', green: '#8ea291', yellow: '#d9b870', blue: '#7fa3c7', magenta: '#b99bc9', cyan: '#7fb5ad', white: '#d8d6ce',
-        brightBlack: '#6c7068', brightRed: '#f0968a', brightGreen: '#a9c2ac', brightYellow: '#ecd08f', brightBlue: '#9dbde0', brightMagenta: '#d0b5de', brightCyan: '#9dcfc7', brightWhite: '#f5f4ef',
+        background: '#1a1a1a', foreground: '#e9e8e1', cursor: '#8ea291', cursorAccent: '#1a1a1a', selectionBackground: '#4a4a4a99',
+        black: '#232323', red: '#e0786b', green: '#8ea291', yellow: '#d9b870', blue: '#7fa3c7', magenta: '#b99bc9', cyan: '#7fb5ad', white: '#d8d6ce',
+        brightBlack: '#6e6e6e', brightRed: '#f0968a', brightGreen: '#a9c2ac', brightYellow: '#ecd08f', brightBlue: '#9dbde0', brightMagenta: '#d0b5de', brightCyan: '#9dcfc7', brightWhite: '#f5f4ef',
       },
       fontFamily: "'JetBrains Mono', Consolas, monospace", fontSize: 13, lineHeight: 1, letterSpacing: 0,
       cursorBlink: true, cursorStyle: 'bar', cursorWidth: 2, scrollback: 5000, allowProposedApi: true,
@@ -79,13 +80,13 @@ function TerminalSession({ projectKey, first, active, onTitle, cwd, launch }: { 
       try {
         const stopOutput = await listen<{ id: string; data: string }>('terminal-output', event => { if (event.payload.id === id) out(event.payload.data) })
         stops.push(stopOutput)
-        const stopExit = await listen<string>('terminal-exit', event => { if (event.payload === id) out('\r\n\x1b[2m[session ended — close this tab or open a new one]\x1b[0m\r\n') })
+        const stopExit = await listen<string>('terminal-exit', event => { if (event.payload === id) out(`\r\n\x1b[2m[${t('session ended — close this tab or open a new one')}]\x1b[0m\r\n`) })
         stops.push(stopExit)
         if (disposed) return
         id = await api.terminalStart(cwd, launch)
         await api.terminalResize(id, terminal.cols, terminal.rows)
         terminal.onData(data => { if (id) void api.terminalWrite(id, data) })
-      } catch (cause) { setError(`The shell could not start: ${String(cause)}. Check that PowerShell is installed, then open a new tab.`) }
+      } catch (cause) { setError(t('The shell could not start: {error}. Check that PowerShell is installed, then open a new tab.', { error: String(cause) })) }
     })()
     return () => { disposed = true; listeners.delete(onAgent); resize.disconnect(); stops.forEach(stop => stop()); if (id) void api.terminalStop(id); terminal.dispose() }
     // Mounted once; props only change which tab is shown.
@@ -159,13 +160,13 @@ export function TerminalPane({ projectKey, scope = { key: projectKey } }: { proj
     return () => window.removeEventListener('keydown', onKey)
   })
   return <div className="terminal-shell">
-    <div className="terminal-tabs" role="tablist" aria-label={scope.label ? `Terminals for ${scope.label}` : 'Terminals'}>
+    <div className="terminal-tabs" role="tablist" aria-label={scope.label ? t('Terminals for {name}', { name: scope.label }) : t('Terminals')}>
       {scope.label && <span className="terminal-scope" title={scope.cwd}>{scope.label}</span>}
       {shown.map(tab => { const mirror = tab.id === mirrorId; return <div key={tab.id} className={`terminal-tab${tab.id === active ? ' active' : ''}`} role="tab" aria-selected={tab.id === active}>
-        <button type="button" className="terminal-tab-label" onClick={() => setActive(tab.id)} title={mirror ? 'Project shell; Neru\'s commands appear here' : tab.cwd ?? tab.title}><SquareTerminal size={13} aria-hidden /><span className="truncate">{mirror ? `${tab.title} · Neru` : tab.title}</span></button>
-        <button type="button" className="terminal-tab-close" aria-label={`Close ${tab.title}`} onClick={() => close(tab.id)}><X size={12} /></button>
+        <button type="button" className="terminal-tab-label" onClick={() => setActive(tab.id)} title={mirror ? t('Project shell; Neru’s commands appear here') : tab.cwd ?? tab.title}><SquareTerminal size={13} aria-hidden /><span className="truncate">{mirror ? `${tab.title} · Neru` : tab.title}</span></button>
+        <button type="button" className="terminal-tab-close" aria-label={t('Close {name}', { name: tab.title })} onClick={() => close(tab.id)}><X size={12} /></button>
       </div> })}
-      <button type="button" className="terminal-tab-add" aria-label="New terminal" title="New terminal (Ctrl+Shift+T)" onClick={() => add()}><Plus size={14} /></button>
+      <button type="button" className="terminal-tab-add" aria-label={t('New terminal')} title={`${t('New terminal')} (Ctrl+Shift+T)`} onClick={() => add()}><Plus size={14} /></button>
     </div>
     {tabs.map(tab => <TerminalSession key={tab.id} projectKey={projectKey} cwd={tab.cwd} launch={tab.launch} first={tab.id === mirrorId} active={tab.id === active && tab.scope === scope.key} onTitle={title => setTabs(current => current.map(item => item.id === tab.id && !item.launch ? { ...item, title } : item))} />)}
   </div>

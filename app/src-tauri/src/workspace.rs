@@ -930,6 +930,7 @@ pub fn apply_pending_in(shared: &sessions::Shared, root: &Path) -> Result<String
             tool_call_id,
         } => {
             let (checkpoint_id, _) = apply_edit(root, &proposal)?;
+            crate::activity::note(&runtime.summary.id, crate::activity::Kind::Edit, &proposal.path);
             runtime.pending = None;
             let transcript_len = runtime.transcript.len();
             runtime.edits.push(sessions::EditRecord {
@@ -954,6 +955,40 @@ pub fn reject_pending(state: State<'_, AppState>) -> Result<(), String> {
 /// Answers the waiting call with `reason` instead of running it (`neru -p`, which cannot ask).
 pub fn deny_pending(state: &AppState, reason: &str) -> Result<(), String> {
     deny_pending_in(&sessions::active(state)?, reason)
+}
+
+/// Denies the active session's waiting call. A reason goes to the agent; with `remember` it is also kept as a
+/// project rule in .neru/memory.md, which every later session reads. Returns the saved rule, if any.
+#[tauri::command]
+pub fn reject_pending_because(reason: String, remember: bool, state: State<'_, AppState>) -> Result<Option<String>, String> {
+    deny_with_reason(&sessions::active(&state)?, &reason, remember)
+}
+
+pub fn deny_with_reason(shared: &sessions::Shared, reason: &str, remember: bool) -> Result<Option<String>, String> {
+    let reason = reason.trim();
+    let (root, label) = {
+        let runtime = sessions::lock(shared)?;
+        let label = runtime.pending.as_ref().map(|action| sessions::pending_view(action).0.label).unwrap_or_default();
+        (runtime.summary.project_path.clone(), label)
+    };
+    if reason.is_empty() {
+        deny_pending_in(shared, "User rejected this operation")?;
+        return Ok(None);
+    }
+    deny_pending_in(shared, &format!("User rejected this operation. Their reason: {reason}"))?;
+    if !remember || root.is_empty() {
+        return Ok(None);
+    }
+    let rule = rule_from_rejection(&label, reason);
+    crate::extras::save_memory(Some(Path::new(&root)), &rule, "project")?;
+    Ok(Some(rule))
+}
+
+/// The project rule a rejection becomes, e.g. "When changing src/db.ts: never drop the users table".
+pub fn rule_from_rejection(label: &str, reason: &str) -> String {
+    let reason: String = reason.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(600).collect();
+    let target = label.split_whitespace().last().filter(|word| word.contains('/') || word.contains('.')).unwrap_or("");
+    if target.is_empty() { format!("Learned from a rejected change: {reason}") } else { format!("Learned from a rejected change to {target}: {reason}") }
 }
 
 pub fn deny_pending_in(shared: &sessions::Shared, reason: &str) -> Result<(), String> {

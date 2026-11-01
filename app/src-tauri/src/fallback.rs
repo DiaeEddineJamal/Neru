@@ -390,7 +390,8 @@ fn allowed(current: &ProviderConfig, candidate: &ProviderConfig, model: &str) ->
 /// The next model to use after `current` failed with `error`, or None when nothing else is available.
 /// Every key the user saved is considered at once (lists fetched in parallel and cached), and the
 /// candidates are ranked by [`switch_score`].
-pub async fn next_model(state: &AppState, current: &ProviderConfig, error: &str) -> Option<ProviderConfig> {
+/// Only models `rule` allows (privacy.rs) are considered.
+pub async fn next_model(state: &AppState, current: &ProviderConfig, error: &str, rule: &str) -> Option<ProviderConfig> {
     // A model the provider says it does not serve must not come back through the rotation.
     crate::models::note_failure(current, error);
     let account = is_client_locked(error) || needs_credits(error);
@@ -407,7 +408,7 @@ pub async fn next_model(state: &AppState, current: &ProviderConfig, error: &str)
     }
     // Models the user named with --fallback-model come first, in their order.
     for wanted in crate::run_options::get().fallback_models {
-        if let Some(model) = fallback_choice(current, &wanted).await {
+        if let Some(model) = fallback_choice(current, &wanted).await.filter(|_| crate::privacy::allows(rule, current)) {
             return Some(ProviderConfig { model, ..current.clone() });
         }
     }
@@ -428,10 +429,50 @@ pub async fn next_model(state: &AppState, current: &ProviderConfig, error: &str)
     let mut best: Option<(i64, ProviderConfig)> = None;
     while let Some(Ok((index, models))) = lists.join_next().await {
         let candidate = &candidates[index];
+        if !crate::privacy::allows(rule, candidate) {
+            continue;
+        }
         for model in models.into_iter().filter(|model| allowed(current, candidate, model)) {
             let score = switch_score(current, candidate, &model);
             // Ties go to the earlier key: the current one, then the order of the saved keys.
             if best.as_ref().is_none_or(|(top, chosen)| score > *top || (score == *top && candidate_rank(&candidates, chosen) > index)) {
+                best = Some((score, ProviderConfig { model, ..candidate.clone() }));
+            }
+        }
+    }
+    best.map(|(_, config)| config)
+}
+
+/// A model of another family than `family` to review an edit: the strongest free one on the saved keys
+/// (and on the author's own key), quick ones preferred, never a paid OpenRouter model. None when every model
+/// on the keys is of the same family.
+pub async fn reviewer_model(state: &AppState, author: &ProviderConfig, family: &str, rule: &str) -> Option<ProviderConfig> {
+    let mut candidates = vec![author.clone()];
+    if let Ok(keys) = state.provider_keys.lock() {
+        for (id, key) in keys.iter() {
+            let Some((provider_id, base_url)) = id.split_once('\n') else { continue };
+            if !FREE_PROVIDERS.contains(&provider_id) || (provider_id == author.provider_id && base_url == author.base_url) {
+                continue;
+            }
+            candidates.push(ProviderConfig { provider_id: provider_id.into(), api_format: "openai-chat".into(), base_url: base_url.into(), api_key: key.clone(), model: String::new() });
+        }
+    }
+    candidates.retain(|candidate| crate::privacy::allows(rule, candidate));
+    let mut lists = tokio::task::JoinSet::new();
+    for (index, candidate) in candidates.iter().cloned().enumerate() {
+        lists.spawn(async move { (index, listed_models(&candidate).await) });
+    }
+    let mut best: Option<(i64, ProviderConfig)> = None;
+    while let Some(Ok((index, models))) = lists.join_next().await {
+        let candidate = &candidates[index];
+        // On a paid key only its free models review, so a second opinion never adds to the bill.
+        let paid_key = !is_free_plan(&ProviderConfig { model: String::new(), ..candidate.clone() }) && !crate::privacy::is_local(candidate);
+        for model in models {
+            if !allowed(author, candidate, &model) || crate::review::family(&model) == family || (paid_key && !is_free_model(&model)) {
+                continue;
+            }
+            let score = coding_score(&model) + helper_speed(&model) / 3;
+            if best.as_ref().is_none_or(|(top, _)| score > *top) {
                 best = Some((score, ProviderConfig { model, ..candidate.clone() }));
             }
         }

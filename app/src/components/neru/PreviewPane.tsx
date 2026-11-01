@@ -8,6 +8,7 @@ import {
 } from '../../lib/browser'
 import type { BrowserTabs } from '../../lib/useBrowserTabs'
 import { MarkupBoard } from './Markup'
+import { t as tx } from '../../i18n'
 
 type Mode = 'off' | 'inspect' | 'annotate'
 type Drawer = 'console' | 'network' | 'notes' | 'element' | null
@@ -28,7 +29,7 @@ function PreviewFrame({ src, frameRef, onLoad }: { src: string; frameRef: RefObj
     node.setAttribute('credentialless', '')
     node.src = src
   }, [src, frameRef])
-  return <iframe ref={frameRef} className="pv-frame" title="App preview" allow="clipboard-write; fullscreen" onLoad={() => { if (frameRef.current?.getAttribute('src')) onLoad() }} />
+  return <iframe ref={frameRef} className="pv-frame" title={tx('App preview')} allow="clipboard-write; fullscreen" onLoad={() => { if (frameRef.current?.getAttribute('src')) onLoad() }} />
 }
 
 /** A small anchored menu that closes on outside click and Escape. */
@@ -136,7 +137,7 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
 
   const shoot = useCallback(() => new Promise<Shot>((resolve, reject) => {
     const id = ++snapId.current
-    const timer = window.setTimeout(() => { snaps.current.delete(id); reject(new Error('The page took too long to capture')) }, 15000)
+    const timer = window.setTimeout(() => { snaps.current.delete(id); reject(new Error(tx('The page took too long to capture'))) }, 15000)
     snaps.current.set(id, { resolve: value => { window.clearTimeout(timer); resolve(value) }, reject: cause => { window.clearTimeout(timer); reject(cause) } })
     command('snapshot', { id })
   }), [command])
@@ -147,7 +148,7 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
   // ---------- navigation ----------
   const go = useCallback(async (raw: string) => {
     const url = normalizeUrl(raw)
-    if (!url) { setError('Type a localhost address (like localhost:3000) or an https address.'); return }
+    if (!url) { setError(tx('Type a localhost address (like localhost:3000) or an https address.')); return }
     setError(''); setLoading(true); setBridgeReady(false); setBridgeMissing(false); setMode('off')
     try {
       const next = await api.previewRoute(url)
@@ -177,7 +178,7 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
   }, [projectKey])
 
   const start = useCallback(async () => {
-    setBusy(true); setError(''); setProgress('Getting the preview ready…')
+    setBusy(true); setError(''); setProgress(tx('Getting the preview ready…'))
     try {
       const value = await api.previewStart()
       await go(value.url); setHint(value.command)
@@ -328,7 +329,7 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
     onSendToAgent(notesMessage(pageNotes, realUrl, viewportLabel), images)
   }
 
-  const copy = async (name: string, text: string) => { try { await navigator.clipboard.writeText(text); flash(name) } catch { setError('Copying was blocked') } }
+  const copy = async (name: string, text: string) => { try { await navigator.clipboard.writeText(text); flash(name) } catch { setError(tx('Copying was blocked')) } }
 
   const visibleLogs = logs.filter(item => (level === 'all' || (level === 'error' ? item.level === 'error' : item.level === 'warn' || item.level === 'error')) && (!filter || item.text.toLowerCase().includes(filter.toLowerCase())))
   const visibleRequests = requests.filter(item => (!failedOnly || !item.ok) && (!filter || item.url.toLowerCase().includes(filter.toLowerCase())))
@@ -336,69 +337,69 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
   const logEnd = useRef<HTMLDivElement>(null)
   useEffect(() => { if (drawer === 'console') logEnd.current?.scrollIntoView({ block: 'end' }) }, [logs.length, drawer])
 
-  const closeDrawer = <button type="button" className="icon-button pv-drawer-close" aria-label="Close panel" title="Close panel" onClick={() => setDrawer(null)}><X size={14} /></button>
+  const closeDrawer = <button type="button" className="icon-button pv-drawer-close" aria-label={tx('Close panel')} title={tx('Close panel')} onClick={() => setDrawer(null)}><X size={14} /></button>
 
-  const disabledTip = !route ? 'Open a page first' : !route.bridged ? 'Page tools work on local pages. This is an external site.' : !bridgeReady ? 'Waiting for the page…' : ''
+  const disabledTip = !route ? tx('Open a page first') : !route.bridged ? tx('Page tools work on local pages. This is an external site.') : !bridgeReady ? tx('Waiting for the page…') : ''
 
   const port = (() => { try { return new URL(hintUrl).port } catch { return '' } })()
 
   return <div className="pv" data-mode={mode} hidden={!active}>
     <div className="pv-bar">
-      <button className="icon-button" aria-label="Back" title="Back" disabled={!canBack || !tools} onClick={() => command('back')}><ArrowLeft size={16} /></button>
-      <button className="icon-button" aria-label="Forward" title="Forward" disabled={!canForward || !tools} onClick={() => command('forward')}><ArrowRight size={16} /></button>
+      <button className="icon-button" aria-label={tx('Back')} title={tx('Back')} disabled={!canBack || !tools} onClick={() => command('back')}><ArrowLeft size={16} /></button>
+      <button className="icon-button" aria-label={tx('Forward')} title={tx('Forward')} disabled={!canForward || !tools} onClick={() => command('forward')}><ArrowRight size={16} /></button>
       {loading
-        ? <button className="icon-button" aria-label="Stop loading" title="Stop loading" onClick={() => { command('stop'); setLoading(false) }}><X size={16} /></button>
-        : <button className="icon-button" aria-label="Reload" title="Reload (Ctrl+R)" disabled={!route} onClick={reload}><RotateCw size={15} /></button>}
+        ? <button className="icon-button" aria-label={tx('Stop loading')} title={tx('Stop loading')} onClick={() => { command('stop'); setLoading(false) }}><X size={16} /></button>
+        : <button className="icon-button" aria-label={tx('Reload')} title={`${tx('Reload')} (Ctrl+R)`} disabled={!route} onClick={reload}><RotateCw size={15} /></button>}
       <label className="pv-url" title={title || undefined}>
         {secure && <Lock size={12} />}
-        <input ref={urlRef} value={urlInput} onChange={event => setUrlInput(event.target.value)} spellCheck={false} aria-label="Address" placeholder="Type a URL"
+        <input ref={urlRef} value={urlInput} onChange={event => setUrlInput(event.target.value)} spellCheck={false} aria-label={tx('Address')} placeholder={tx('Type a URL')}
           onFocus={event => { urlFocused.current = true; event.currentTarget.select() }}
           onBlur={() => { urlFocused.current = false; if (realUrl) setUrlInput(realUrl) }}
           onKeyDown={event => { if (event.key === 'Enter') { void go(urlInput); event.currentTarget.blur() } else if (event.key === 'Escape') { setUrlInput(realUrl); event.currentTarget.blur() } }} />
       </label>
-      <button type="button" className={`icon-button pv-icon${mode === 'inspect' ? ' on' : ''}`} disabled={!tools} title={disabledTip || 'Select an element to inspect it or send it to the agent'} aria-label="Select an element" aria-pressed={mode === 'inspect'} onClick={() => toggleMode('inspect')}><MousePointer2 size={15} /></button>
-      <button type="button" className={`icon-button pv-icon${mode === 'annotate' ? ' on' : ''}`} disabled={!tools} title={disabledTip || 'Comment on an element or an area'} aria-label="Annotate" aria-pressed={mode === 'annotate'} onClick={() => toggleMode('annotate')}><MessageSquarePlus size={15} />{pageNotes.length > 0 && <b className="pv-badge">{pageNotes.length}</b>}</button>
-      <button type="button" className={`icon-button pv-icon${markup ? ' on' : ''}`} disabled={!tools || shooting} title={disabledTip || 'Draw on the page: pen, shapes, arrows and text'} aria-label="Draw on the page" aria-pressed={Boolean(markup)} onClick={() => markup ? setMarkup(null) : void draw()}><PenLine size={15} /></button>
-      <button type="button" className="icon-button pv-icon" disabled={!tools || shooting} title={disabledTip || 'Capture a screenshot of the page'} aria-label="Screenshot" onClick={() => void capture()}>{shooting ? <LoaderCircle size={15} className="animate-spin" /> : <Camera size={15} />}</button>
-      <Menu variant="icon" icon={<EllipsisVertical size={16} />} title="More" badge={errorCount > 0}>
+      <button type="button" className={`icon-button pv-icon${mode === 'inspect' ? ' on' : ''}`} disabled={!tools} title={disabledTip || tx('Select an element to inspect it or send it to the agent')} aria-label={tx('Select an element')} aria-pressed={mode === 'inspect'} onClick={() => toggleMode('inspect')}><MousePointer2 size={15} /></button>
+      <button type="button" className={`icon-button pv-icon${mode === 'annotate' ? ' on' : ''}`} disabled={!tools} title={disabledTip || tx('Comment on an element or an area')} aria-label={tx('Annotate')} aria-pressed={mode === 'annotate'} onClick={() => toggleMode('annotate')}><MessageSquarePlus size={15} />{pageNotes.length > 0 && <b className="pv-badge">{pageNotes.length}</b>}</button>
+      <button type="button" className={`icon-button pv-icon${markup ? ' on' : ''}`} disabled={!tools || shooting} title={disabledTip || tx('Draw on the page: pen, shapes, arrows and text')} aria-label={tx('Draw on the page')} aria-pressed={Boolean(markup)} onClick={() => markup ? setMarkup(null) : void draw()}><PenLine size={15} /></button>
+      <button type="button" className="icon-button pv-icon" disabled={!tools || shooting} title={disabledTip || tx('Capture a screenshot of the page')} aria-label={tx('Screenshot')} onClick={() => void capture()}>{shooting ? <LoaderCircle size={15} className="animate-spin" /> : <Camera size={15} />}</button>
+      <Menu variant="icon" icon={<EllipsisVertical size={16} />} title={tx('More')} badge={errorCount > 0}>
         {close => <>
-          <div className="pv-menu-label">Device</div>
-          {DEVICES.map(item => <button key={item.id} role="menuitemradio" aria-checked={deviceId === item.id} className={deviceId === item.id ? 'on' : ''} onClick={() => { choose(item.id); close() }}>{deviceIcon(item)}<span>{item.name}</span>{item.w > 0 && <em>{item.w}×{item.h}</em>}{deviceId === item.id && <Check size={13} />}</button>)}
-          <div className="pv-custom"><span>Custom</span>
-            <input type="number" min={200} max={4000} value={custom.w} aria-label="Width" onChange={event => { const next = { ...custom, w: Number(event.target.value) || 0 }; setCustom(next); writePref('neru.browser.custom', next) }} />
+          <div className="pv-menu-label">{tx('Device')}</div>
+          {DEVICES.map(item => <button key={item.id} role="menuitemradio" aria-checked={deviceId === item.id} className={deviceId === item.id ? 'on' : ''} onClick={() => { choose(item.id); close() }}>{deviceIcon(item)}<span>{tx(item.name)}</span>{item.w > 0 && <em>{item.w}×{item.h}</em>}{deviceId === item.id && <Check size={13} />}</button>)}
+          <div className="pv-custom"><span>{tx('Custom')}</span>
+            <input type="number" min={200} max={4000} value={custom.w} aria-label={tx('Width')} onChange={event => { const next = { ...custom, w: Number(event.target.value) || 0 }; setCustom(next); writePref('neru.browser.custom', next) }} />
             <i>×</i>
-            <input type="number" min={200} max={4000} value={custom.h} aria-label="Height" onChange={event => { const next = { ...custom, h: Number(event.target.value) || 0 }; setCustom(next); writePref('neru.browser.custom', next) }} />
-            <button onClick={() => { if (custom.w >= 200 && custom.h >= 200) { choose('custom'); close() } }}>Use</button>
+            <input type="number" min={200} max={4000} value={custom.h} aria-label={tx('Height')} onChange={event => { const next = { ...custom, h: Number(event.target.value) || 0 }; setCustom(next); writePref('neru.browser.custom', next) }} />
+            <button onClick={() => { if (custom.w >= 200 && custom.h >= 200) { choose('custom'); close() } }}>{tx('Use')}</button>
           </div>
-          {!fill && <button role="menuitem" onClick={() => { rotate(); close() }}><RotateCw size={13} /><span>Rotate</span><em>{landscape ? 'Landscape' : 'Portrait'}</em></button>}
-          <div className="pv-menu-label">Zoom</div>
+          {!fill && <button role="menuitem" onClick={() => { rotate(); close() }}><RotateCw size={13} /><span>{tx('Rotate')}</span><em>{landscape ? tx('Landscape') : tx('Portrait')}</em></button>}
+          <div className="pv-menu-label">{tx('Zoom')}</div>
           <div className="pv-zooms">
-            <button role="menuitemradio" aria-checked={zoom === 'fit'} className={zoom === 'fit' ? 'on' : ''} onClick={() => { chooseZoom('fit'); close() }}>Fit</button>
+            <button role="menuitemradio" aria-checked={zoom === 'fit'} className={zoom === 'fit' ? 'on' : ''} onClick={() => { chooseZoom('fit'); close() }}>{tx('Fit')}</button>
             {ZOOMS.map(value => <button key={value} role="menuitemradio" aria-checked={zoom === value} className={zoom === value ? 'on' : ''} onClick={() => { chooseZoom(value); close() }}>{Math.round(value * 100)}%</button>)}
           </div>
-          <div className="pv-menu-label">Panels</div>
-          <button role="menuitem" disabled={!route} onClick={() => { openDrawer('console'); close() }}><Terminal size={13} /><span>Console</span>{errorCount > 0 && <b className="pv-count bad">{errorCount > 99 ? '99+' : errorCount}</b>}</button>
-          <button role="menuitem" disabled={!route} onClick={() => { openDrawer('network'); close() }}><Network size={13} /><span>Network</span></button>
-          <button role="menuitem" disabled={!route} onClick={() => { openDrawer('notes'); close() }}><StickyNote size={13} /><span>Annotations</span>{notes.length > 0 && <b className="pv-count">{notes.length}</b>}</button>
-          <button role="menuitem" disabled={!picked} onClick={() => { openDrawer('element'); close() }}><Bug size={13} /><span>Selected element</span></button>
+          <div className="pv-menu-label">{tx('Panels')}</div>
+          <button role="menuitem" disabled={!route} onClick={() => { openDrawer('console'); close() }}><Terminal size={13} /><span>{tx('Console')}</span>{errorCount > 0 && <b className="pv-count bad">{errorCount > 99 ? '99+' : errorCount}</b>}</button>
+          <button role="menuitem" disabled={!route} onClick={() => { openDrawer('network'); close() }}><Network size={13} /><span>{tx('Network')}</span></button>
+          <button role="menuitem" disabled={!route} onClick={() => { openDrawer('notes'); close() }}><StickyNote size={13} /><span>{tx('Annotations')}</span>{notes.length > 0 && <b className="pv-count">{notes.length}</b>}</button>
+          <button role="menuitem" disabled={!picked} onClick={() => { openDrawer('element'); close() }}><Bug size={13} /><span>{tx('Selected element')}</span></button>
           <div className="pv-menu-sep" />
-          <button role="menuitem" disabled={!(realUrl || urlInput)} onClick={() => { onOpenExternal(realUrl || normalizeUrl(urlInput)); close() }}><ExternalLink size={13} /><span>Open in your browser</span></button>
-          <button role="menuitem" disabled={busy} onClick={() => { void start(); close() }}><Play size={13} /><span>{route ? 'Restart the preview' : 'Run the preview'}</span></button>
-          <button role="menuitem" onClick={() => { void stopServer(); close() }}><Square size={13} /><span>Stop the preview server</span></button>
+          <button role="menuitem" disabled={!(realUrl || urlInput)} onClick={() => { onOpenExternal(realUrl || normalizeUrl(urlInput)); close() }}><ExternalLink size={13} /><span>{tx('Open in your browser')}</span></button>
+          <button role="menuitem" disabled={busy} onClick={() => { void start(); close() }}><Play size={13} /><span>{route ? tx('Restart the preview') : tx('Run the preview')}</span></button>
+          <button role="menuitem" onClick={() => { void stopServer(); close() }}><Square size={13} /><span>{tx('Stop the preview server')}</span></button>
         </>}
       </Menu>
     </div>
 
     {loading && <div className="pv-loading" aria-hidden />}
     {progress && route && <p className="preview-hint">{progress}</p>}
-    {error && <div className="pv-error"><CircleAlert size={14} /><pre className="preview-error">{error}</pre><button className="icon-button" aria-label="Dismiss" onClick={() => setError('')}><X size={14} /></button></div>}
-    {route && route.bridged && bridgeMissing && !bridgeReady && <p className="pv-note"><TriangleAlert size={13} /> The page loaded without Neru’s page tools, so Inspect, Annotate and the console are unavailable here. It may not be an HTML page.</p>}
-    {route && !route.bridged && <p className="pv-note"><Globe size={13} /> External site. Inspect, Annotate and the console work on local pages. Some sites refuse to load in a frame; use “Open in your browser” for those.</p>}
+    {error && <div className="pv-error"><CircleAlert size={14} /><pre className="preview-error">{error}</pre><button className="icon-button" aria-label={tx('Dismiss')} onClick={() => setError('')}><X size={14} /></button></div>}
+    {route && route.bridged && bridgeMissing && !bridgeReady && <p className="pv-note"><TriangleAlert size={13} /> {tx('The page loaded without Neru’s page tools, so Inspect, Annotate and the console are unavailable here. It may not be an HTML page.')}</p>}
+    {route && !route.bridged && <p className="pv-note"><Globe size={13} /> {tx('External site. Inspect, Annotate and the console work on local pages. Some sites refuse to load in a frame; use “Open in your browser” for those.')}</p>}
 
     <div className={`pv-stage${fill ? ' fill' : ' device'}${mode !== 'off' ? ' armed' : ''}`} ref={stageRef}>
       {route
         ? <div className="pv-device">
-          {!fill && <div className="pv-caption">{device.name} · {size.w} × {size.h} · {percent}</div>}
+          {!fill && <div className="pv-caption">{tx(device.name)} · {size.w} × {size.h} · {percent}</div>}
           <div className="pv-viewport" style={{ width: Math.floor(view.w * scale), height: Math.floor(view.h * scale) }}>
             <div className="pv-scaler" style={{ width: view.w, height: view.h, transform: scale === 1 ? undefined : `scale(${scale})` }}>
               <PreviewFrame key={nonce} src={route.frameUrl} frameRef={frameRef} onLoad={onFrameLoad} />
@@ -407,61 +408,61 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
         </div>
         : <div className="pv-empty-state">
           {busy
-            ? <><LoaderCircle size={22} className="animate-spin" /><p>{progress || 'Starting…'}</p></>
+            ? <><LoaderCircle size={22} className="animate-spin" /><p>{progress || tx('Starting…')}</p></>
             : <>
-              <button type="button" className="pv-server" disabled={busy} onClick={() => void start()} title={hint ? `Runs ${hint}` : 'Start the preview'}>
+              <button type="button" className="pv-server" disabled={busy} onClick={() => void start()} title={hint ? tx('Runs {command}', { command: hint }) : tx('Start the preview')}>
                 <Server size={15} /><strong className="truncate">{projectName}</strong>{port && <em>:{port}</em>}<span className="pv-server-run"><Play size={13} /></span>
               </button>
-              <p>Run a server to preview your app, or enter a URL.</p>
+              <p>{tx('Run a server to preview your app, or enter a URL.')}</p>
             </>}
         </div>}
-      {mode !== 'off' && <div className="pv-mode-banner" role="status">{mode === 'inspect' ? 'Click an element to inspect it' : 'Click an element or drag an area to comment · Esc to stop'}<button onClick={() => setMode('off')}>Done</button></div>}
+      {mode !== 'off' && <div className="pv-mode-banner" role="status">{mode === 'inspect' ? tx('Click an element to inspect it') : tx('Click an element or drag an area to comment · Esc to stop')}<button onClick={() => setMode('off')}>{tx('Done')}</button></div>}
       {markup && <MarkupBoard shot={markup} onClose={() => setMarkup(null)} onSelect={() => { setMarkup(null); setMode('inspect') }}
         onSend={onSendToAgent ? dataUrl => onSendToAgent('', [{ name: 'preview-markup.jpg', dataUrl }]) : undefined} />}
       {shot && <div className="pv-shot">
-        <img src={shot.dataUrl} alt="Screenshot of the page" />
+        <img src={shot.dataUrl} alt={tx('Screenshot of the page')} />
         <div className="pv-shot-actions">
-          <button onClick={() => { onSendToAgent?.('Screenshot of the running preview' + (realUrl ? ` (${realUrl})` : '') + '.\n\n', [{ name: 'preview.jpg', dataUrl: shot.dataUrl }]); setShot(null) }} disabled={!onSendToAgent}><Send size={13} /> Add to chat</button>
-          <button onClick={() => { setMarkup(shot); setShot(null) }}><PenLine size={13} /> Mark up</button>
-          <a href={shot.dataUrl} download={`preview-${Date.now()}.jpg`}><Download size={13} /> Save</a>
-          <button className="icon-button" aria-label="Close screenshot" onClick={() => setShot(null)}><X size={14} /></button>
+          <button onClick={() => { onSendToAgent?.('Screenshot of the running preview' + (realUrl ? ` (${realUrl})` : '') + '.\n\n', [{ name: 'preview.jpg', dataUrl: shot.dataUrl }]); setShot(null) }} disabled={!onSendToAgent}><Send size={13} /> {tx('Add to chat')}</button>
+          <button onClick={() => { setMarkup(shot); setShot(null) }}><PenLine size={13} /> {tx('Mark up')}</button>
+          <a href={shot.dataUrl} download={`preview-${Date.now()}.jpg`}><Download size={13} /> {tx('Save')}</a>
+          <button className="icon-button" aria-label={tx('Close screenshot')} onClick={() => setShot(null)}><X size={14} /></button>
         </div>
       </div>}
     </div>
 
     {drawer && route && <div className="pv-drawer" style={{ height: drawerHeight }}>
-      <div className="pv-drag" onPointerDown={dragDrawer} role="separator" aria-orientation="horizontal" aria-label="Resize panel" />
+      <div className="pv-drag" onPointerDown={dragDrawer} role="separator" aria-orientation="horizontal" aria-label={tx('Resize panel')} />
       {drawer === 'console' && <>
         <div className="pv-drawer-bar">
-          <strong>Console</strong>
-          <div className="pv-chips">{(['all', 'warn', 'error'] as const).map(item => <button key={item} className={level === item ? 'on' : ''} onClick={() => setLevel(item)}>{item === 'all' ? 'All' : item === 'warn' ? 'Warnings' : 'Errors'}</button>)}</div>
-          <input className="pv-filter" placeholder="Filter" value={filter} onChange={event => setFilter(event.target.value)} aria-label="Filter console" />
-          <label className="pv-check"><input type="checkbox" checked={preserve} onChange={event => setPreserve(event.target.checked)} /> Keep on reload</label>
+          <strong>{tx('Console')}</strong>
+          <div className="pv-chips">{(['all', 'warn', 'error'] as const).map(item => <button key={item} className={level === item ? 'on' : ''} onClick={() => setLevel(item)}>{item === 'all' ? tx('All') : item === 'warn' ? tx('Warnings') : tx('Errors')}</button>)}</div>
+          <input className="pv-filter" placeholder={tx('Filter')} value={filter} onChange={event => setFilter(event.target.value)} aria-label={tx('Filter console')} />
+          <label className="pv-check"><input type="checkbox" checked={preserve} onChange={event => setPreserve(event.target.checked)} /> {tx('Keep on reload')}</label>
           <span className="pv-grow" />
-          <button className="pv-link" disabled={!problems.length || !onSendToAgent} onClick={() => onSendToAgent?.(errorsMessage(problems, realUrl), [])}><Send size={12} /> Send errors to agent</button>
-          <button className="pv-link" onClick={() => setLogs([])}><Trash2 size={12} /> Clear</button>
+          <button className="pv-link" disabled={!problems.length || !onSendToAgent} onClick={() => onSendToAgent?.(errorsMessage(problems, realUrl), [])}><Send size={12} /> {tx('Send errors to agent')}</button>
+          <button className="pv-link" onClick={() => setLogs([])}><Trash2 size={12} /> {tx('Clear')}</button>
           {closeDrawer}
         </div>
         <div className="pv-lines">
-          {visibleLogs.length === 0 && <p className="pv-empty">{tools ? 'Nothing logged yet.' : 'The console fills in for local pages.'}</p>}
+          {visibleLogs.length === 0 && <p className="pv-empty">{tools ? tx('Nothing logged yet.') : tx('The console fills in for local pages.')}</p>}
           {visibleLogs.map(item => <div key={item.id} className={`pv-line ${item.level}`}>
             <time>{clock(item.t)}</time>
-            <span className="pv-msg">{item.kind && <em>{item.kind}</em>}{item.text}{item.stack && <details><summary>Stack</summary><pre>{item.stack}</pre></details>}</span>
+            <span className="pv-msg">{item.kind && <em>{item.kind}</em>}{item.text}{item.stack && <details><summary>{tx('Stack')}</summary><pre>{item.stack}</pre></details>}</span>
           </div>)}
           <div ref={logEnd} />
         </div>
       </>}
       {drawer === 'network' && <>
         <div className="pv-drawer-bar">
-          <strong>Network</strong>
-          <input className="pv-filter" placeholder="Filter by URL" value={filter} onChange={event => setFilter(event.target.value)} aria-label="Filter requests" />
-          <label className="pv-check"><input type="checkbox" checked={failedOnly} onChange={event => setFailedOnly(event.target.checked)} /> Failed only</label>
+          <strong>{tx('Network')}</strong>
+          <input className="pv-filter" placeholder={tx('Filter by URL')} value={filter} onChange={event => setFilter(event.target.value)} aria-label={tx('Filter requests')} />
+          <label className="pv-check"><input type="checkbox" checked={failedOnly} onChange={event => setFailedOnly(event.target.checked)} /> {tx('Failed only')}</label>
           <span className="pv-grow" />
-          <button className="pv-link" onClick={() => setRequests([])}><Trash2 size={12} /> Clear</button>
+          <button className="pv-link" onClick={() => setRequests([])}><Trash2 size={12} /> {tx('Clear')}</button>
           {closeDrawer}
         </div>
         <div className="pv-lines">
-          {visibleRequests.length === 0 && <p className="pv-empty">{tools ? 'No fetch or XHR requests yet.' : 'Requests appear for local pages.'}</p>}
+          {visibleRequests.length === 0 && <p className="pv-empty">{tools ? tx('No fetch or XHR requests yet.') : tx('Requests appear for local pages.')}</p>}
           {visibleRequests.map(item => <div key={item.id} className={`pv-req${item.ok ? '' : ' bad'}`} title={item.url + (item.failure ? `\n${item.failure}` : '')}>
             <b>{item.status || 'ERR'}</b><span>{item.method}</span><code className="truncate">{shortUrl(item.url)}</code><em>{item.ms} ms</em>
           </div>)}
@@ -469,40 +470,40 @@ export function BrowserTab({ id, projectKey, projectName, active, request, onMet
       </>}
       {drawer === 'notes' && <>
         <div className="pv-drawer-bar">
-          <strong>Annotations</strong><span className="pv-sub">{notes.length ? `${notes.length} on this project` : 'Use Annotate, then click an element'}</span>
+          <strong>{tx('Annotations')}</strong><span className="pv-sub">{notes.length ? tx('{n} on this project', { n: notes.length }) : tx('Use Annotate, then click an element')}</span>
           <span className="pv-grow" />
-          <label className="pv-check" title="Sends a picture of the page with your numbered markers. Needs a model that can see images."><input type="checkbox" checked={attachShot} onChange={event => setAttachShot(event.target.checked)} /> Attach screenshot</label>
-          <button className="pv-link" disabled={!notes.length} onClick={() => { setNotes([]) }}><Trash2 size={12} /> Clear all</button>
-          <button className="button primary pv-send" disabled={!pageNotes.length || !onSendToAgent} onClick={() => void sendNotes()}><Send size={13} /> Send {pageNotes.length || ''} to agent</button>
+          <label className="pv-check" title={tx('Sends a picture of the page with your numbered markers. Needs a model that can see images.')}><input type="checkbox" checked={attachShot} onChange={event => setAttachShot(event.target.checked)} /> {tx('Attach screenshot')}</label>
+          <button className="pv-link" disabled={!notes.length} onClick={() => { setNotes([]) }}><Trash2 size={12} /> {tx('Clear all')}</button>
+          <button className="button primary pv-send" disabled={!pageNotes.length || !onSendToAgent} onClick={() => void sendNotes()}><Send size={13} /> {pageNotes.length ? tx('Send {n} to agent', { n: pageNotes.length }) : tx('Send to agent')}</button>
           {closeDrawer}
         </div>
         <div className="pv-lines">
-          {notes.length === 0 && <p className="pv-empty">No annotations yet. Turn on Annotate, click an element (or drag an area) and say what should change. Then send them all to the agent at once.</p>}
+          {notes.length === 0 && <p className="pv-empty">{tx('No annotations yet. Turn on Annotate, click an element (or drag an area) and say what should change. Then send them all to the agent at once.')}</p>}
           {notes.map(note => <div key={note.id} className={`pv-note-row${note.page === page ? '' : ' other'}`}>
-            <button className="pv-pin" title="Show on the page" disabled={note.page !== page || !tools} onClick={() => command('focus', { id: note.id })}>{note.n}</button>
+            <button className="pv-pin" title={tx('Show on the page')} disabled={note.page !== page || !tools} onClick={() => command('focus', { id: note.id })}>{note.n}</button>
             <div>
               <code className="truncate">{note.selector || note.text}</code>
-              <textarea rows={2} value={note.comment} aria-label={`Comment ${note.n}`} onChange={event => setNotes(items => items.map(item => item.id === note.id ? { ...item, comment: event.target.value } : item))} />
-              {note.page !== page && <span className="pv-sub">On {note.page || 'another page'}</span>}
+              <textarea rows={2} value={note.comment} aria-label={tx('Comment {n}', { n: note.n })} onChange={event => setNotes(items => items.map(item => item.id === note.id ? { ...item, comment: event.target.value } : item))} />
+              {note.page !== page && <span className="pv-sub">{note.page ? tx('On {page}', { page: note.page }) : tx('On another page')}</span>}
             </div>
-            <button className="icon-button" aria-label="Delete annotation" onClick={() => setNotes(items => items.filter(item => item.id !== note.id).map((item, index) => ({ ...item, n: index + 1 })))}><Trash2 size={14} /></button>
+            <button className="icon-button" aria-label={tx('Delete annotation')} onClick={() => setNotes(items => items.filter(item => item.id !== note.id).map((item, index) => ({ ...item, n: index + 1 })))}><Trash2 size={14} /></button>
           </div>)}
         </div>
       </>}
       {drawer === 'element' && picked && <>
         <div className="pv-drawer-bar">
-          <strong>Element</strong><code className="pv-tag">{elementName(picked)}</code>
+          <strong>{tx('Element')}</strong><code className="pv-tag">{elementName(picked)}</code>
           <span className="pv-grow" />
-          <button className="pv-link" onClick={() => void copy('selector', picked.selector)}>{copied === 'selector' ? <Check size={12} /> : <Copy size={12} />} Copy selector</button>
-          <button className="button primary pv-send" disabled={!onSendToAgent} onClick={() => onSendToAgent?.('', [], { label: elementChipLabel(picked), detail: pickedMessage(picked, realUrl).trim() })}><Send size={13} /> Add to chat</button>
+          <button className="pv-link" onClick={() => void copy('selector', picked.selector)}>{copied === 'selector' ? <Check size={12} /> : <Copy size={12} />} {tx('Copy selector')}</button>
+          <button className="button primary pv-send" disabled={!onSendToAgent} onClick={() => onSendToAgent?.('', [], { label: elementChipLabel(picked), detail: pickedMessage(picked, realUrl).trim() })}><Send size={13} /> {tx('Add to chat')}</button>
           {closeDrawer}
         </div>
         <div className="pv-lines pv-inspect">
           <dl>
-            <dt>Selector</dt><dd><code>{picked.selector}</code></dd>
-            {picked.components.length > 0 && <><dt>Component</dt><dd>{picked.components.join(' ← ')}</dd></>}
-            <dt>Size</dt><dd>{picked.rect.w} × {picked.rect.h} px · at {picked.page.x}, {picked.page.y}</dd>
-            {picked.text && <><dt>Text</dt><dd>{picked.text}</dd></>}
+            <dt>{tx('Selector')}</dt><dd><code>{picked.selector}</code></dd>
+            {picked.components.length > 0 && <><dt>{tx('Component')}</dt><dd>{picked.components.join(' ← ')}</dd></>}
+            <dt>{tx('Size')}</dt><dd>{tx('{w} × {h} px · at {x}, {y}', { w: picked.rect.w, h: picked.rect.h, x: picked.page.x, y: picked.page.y })}</dd>
+            {picked.text && <><dt>{tx('Text')}</dt><dd>{picked.text}</dd></>}
             {Object.entries(picked.attrs).map(([key, value]) => <div key={key} className="pv-kv"><dt>{key}</dt><dd>{value}</dd></div>)}
           </dl>
           <div className="pv-styles">{Object.entries(picked.styles).map(([key, value]) => <div key={key} className="pv-kv"><dt>{key}</dt><dd>{/color/i.test(key) && <i style={{ background: value }} />}{value}</dd></div>)}</div>
@@ -517,18 +518,18 @@ const hostOf = (url: string) => { try { return new URL(url).host } catch { retur
 
 /** The browser's tab strip, shown in the dock header: “New tab +” until a page is open. */
 export function BrowserTabStrip({ browser }: { browser: BrowserTabs }) {
-  return <div className="bt-strip" role="tablist" aria-label="Browser tabs">
+  return <div className="bt-strip" role="tablist" aria-label={tx('Browser tabs')}>
     {browser.tabs.map(tab => {
-      const label = tab.title || (tab.url ? hostOf(tab.url) : 'New tab')
+      const label = tab.title || (tab.url ? hostOf(tab.url) : tx('New tab'))
       return <div key={tab.id} className={`bt-tab${tab.id === browser.activeId ? ' active' : ''}`} role="tab" aria-selected={tab.id === browser.activeId}>
         <button type="button" className="bt-label" title={tab.url || label} onClick={() => browser.select(tab.id)}>
           {tab.loading ? <LoaderCircle size={13} className="animate-spin" aria-hidden /> : tab.url ? <Globe size={13} aria-hidden /> : null}
           <span className="truncate">{label}</span>
         </button>
-        {(browser.tabs.length > 1 || tab.url) && <button type="button" className="bt-close" aria-label={`Close ${label}`} onClick={() => browser.close(tab.id)}><X size={12} /></button>}
+        {(browser.tabs.length > 1 || tab.url) && <button type="button" className="bt-close" aria-label={tx('Close {name}', { name: label })} onClick={() => browser.close(tab.id)}><X size={12} /></button>}
       </div>
     })}
-    <button type="button" className="bt-add" aria-label="New tab" title="New tab" onClick={() => browser.add()}><Plus size={15} /></button>
+    <button type="button" className="bt-add" aria-label={tx('New tab')} title={tx('New tab')} onClick={() => browser.add()}><Plus size={15} /></button>
   </div>
 }
 

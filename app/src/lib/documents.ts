@@ -4,6 +4,8 @@
  * DecompressionStream and their XML flattened to text; RTF has its control words stripped.
  */
 
+import { t as tx } from '../i18n'
+
 const MAX_CHARS = 200_000
 
 async function pdfText(bytes: ArrayBuffer): Promise<string> {
@@ -30,7 +32,7 @@ async function pdfText(bytes: ArrayBuffer): Promise<string> {
       total += text.length
     }
     const body = pages.join('\n\n')
-    if (!body.replace(/\[Page \d+\]/g, '').trim()) throw new Error('This PDF has no selectable text (it may be a scan). Attach page images instead.')
+    if (!body.replace(/\[Page \d+\]/g, '').trim()) throw new Error(tx('This PDF has no selectable text (it may be a scan). Attach page images instead.'))
     return body.slice(0, MAX_CHARS)
   } finally {
     void task.destroy()
@@ -49,7 +51,7 @@ async function unzip(bytes: ArrayBuffer, wanted: (name: string) => boolean): Pro
   for (let offset = bytes.byteLength - 22; offset >= Math.max(0, bytes.byteLength - 65_557); offset -= 1) {
     if (view.getUint32(offset, true) === 0x06054b50) { end = offset; break }
   }
-  if (end < 0) throw new Error('This file is damaged or is not an Office document.')
+  if (end < 0) throw new Error(tx('This file is damaged or is not an Office document.'))
   const count = view.getUint16(end + 10, true)
   let pointer = view.getUint32(end + 16, true)
   const decoder = new TextDecoder()
@@ -68,7 +70,7 @@ async function unzip(bytes: ArrayBuffer, wanted: (name: string) => boolean): Pro
       const data = new Uint8Array(bytes, start, size)
       if (method === 0) files.set(name, data)
       else if (method === 8) files.set(name, await inflateRaw(data))
-      else throw new Error('This document uses a compression Neru cannot read.')
+      else throw new Error(tx('This document uses a compression Neru cannot read.'))
     }
     pointer += 46 + nameLength + extraLength + commentLength
   }
@@ -104,15 +106,15 @@ function tidy(text: string, empty: string) {
 
 async function docxText(bytes: ArrayBuffer): Promise<string> {
   const xml = (await unzip(bytes, name => name === 'word/document.xml')).get('word/document.xml')
-  if (!xml) throw new Error('This file has no Word document inside.')
-  return tidy(paragraphs(xmlOf(xml), 'w:p', 'w:t', 'w:tab', ['w:br', 'w:cr']).join('\n'), 'This Word document has no text.')
+  if (!xml) throw new Error(tx('This file has no Word document inside.'))
+  return tidy(paragraphs(xmlOf(xml), 'w:p', 'w:t', 'w:tab', ['w:br', 'w:cr']).join('\n'), tx('This Word document has no text.'))
 }
 
 /** PowerPoint: each slide's text in order, with its speaker notes. */
 async function pptxText(bytes: ArrayBuffer): Promise<string> {
   const files = await unzip(bytes, name => /^ppt\/(slides\/slide|notesSlides\/notesSlide)\d+\.xml$/.test(name))
   const slides = [...files.keys()].filter(name => name.startsWith('ppt/slides/')).sort((a, b) => numberIn(a) - numberIn(b))
-  if (slides.length === 0) throw new Error('This presentation has no slides.')
+  if (slides.length === 0) throw new Error(tx('This presentation has no slides.'))
   const lines = (data: Uint8Array) => paragraphs(xmlOf(data), 'a:p', 'a:t', 'a:tab', ['a:br']).filter(line => line.trim())
   const parts = slides.map(name => {
     const number = numberIn(name)
@@ -121,7 +123,7 @@ async function pptxText(bytes: ArrayBuffer): Promise<string> {
     const noteText = notes ? lines(notes).filter(line => !/^\d+$/.test(line.trim())).join('\n') : ''
     return `[Slide ${number}]\n${lines(files.get(name)!).join('\n') || '(no text)'}${noteText ? `\nSpeaker notes: ${noteText}` : ''}`
   })
-  return tidy(parts.join('\n\n'), 'This presentation has no text.')
+  return tidy(parts.join('\n\n'), tx('This presentation has no text.'))
 }
 
 /** Excel: every sheet as tab-separated rows, with shared strings resolved. */
@@ -139,16 +141,16 @@ async function xlsxText(bytes: ArrayBuffer): Promise<string> {
     }).join('\t'))
     return `[Sheet ${names[index] || index + 1}]\n${rows.join('\n')}`
   })
-  return tidy(parts.join('\n\n'), 'This spreadsheet is empty.')
+  return tidy(parts.join('\n\n'), tx('This spreadsheet is empty.'))
 }
 
 /** OpenDocument text, slides and sheets keep their text in content.xml. */
 async function openDocumentText(bytes: ArrayBuffer): Promise<string> {
   const xml = (await unzip(bytes, name => name === 'content.xml')).get('content.xml')
-  if (!xml) throw new Error('This OpenDocument file has no content.')
+  if (!xml) throw new Error(tx('This OpenDocument file has no content.'))
   const doc = xmlOf(xml)
   const blocks = [...Array.from(doc.getElementsByTagName('text:h')), ...Array.from(doc.getElementsByTagName('text:p'))]
-  return tidy(blocks.map(node => node.textContent ?? '').join('\n'), 'This document has no text.')
+  return tidy(blocks.map(node => node.textContent ?? '').join('\n'), tx('This document has no text.'))
 }
 
 /** RTF: control words dropped, text kept. */
@@ -162,7 +164,7 @@ function rtfText(bytes: ArrayBuffer): string {
     .replace(/\{\\\*[^{}]*\}/g, '')
     .replace(/\\[a-z]+-?\d* ?/gi, '')
     .replace(/[{}]/g, '')
-  return tidy(text, 'This RTF document has no text.')
+  return tidy(text, tx('This RTF document has no text.'))
 }
 
 export type ReadableDocument = 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'odt' | 'odp' | 'ods' | 'rtf'
@@ -183,12 +185,12 @@ export async function extractDocumentText(kind: ReadableDocument, bytes: ArrayBu
 
 /** Reads a pasted or dropped image as a data URL, refusing anything over 5 MB. */
 export function imageDataUrl(file: Blob): Promise<string> {
-  if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) return Promise.reject(new Error('Paste a PNG, JPEG, GIF or WebP image.'))
-  if (file.size > 5_000_000) return Promise.reject(new Error('Images can be up to 5 MB.'))
+  if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) return Promise.reject(new Error(tx('Paste a PNG, JPEG, GIF or WebP image.')))
+  if (file.size > 5_000_000) return Promise.reject(new Error(tx('Images can be up to 5 MB.')))
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('Could not read the image.'))
+    reader.onerror = () => reject(reader.error ?? new Error(tx('Could not read the image.')))
     reader.readAsDataURL(file)
   })
 }

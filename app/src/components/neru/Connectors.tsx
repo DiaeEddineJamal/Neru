@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { BookOpen, Brain, Cloud, Download, FolderOpen, Globe, LoaderCircle, LogIn, LogOut, Monitor, Plus, RotateCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { BookOpen, Brain, Bug, Cloud, Search, Download, FolderOpen, Globe, LoaderCircle, LogIn, LogOut, Monitor, Plus, RotateCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { api } from '../../api'
 import type { McpServer } from '../../types'
+import { t } from '../../i18n'
 import { cn } from '@/lib/utils'
 
 type Auth = 'oauth' | 'token' | 'none'
@@ -20,6 +21,22 @@ interface CatalogEntry {
  * brands Simple Icons does not carry.
  */
 const HOSTED: CatalogEntry[] = [
+  { id: 'atlassian', name: 'Atlassian', description: 'Jira issues and Confluence pages', url: 'https://mcp.atlassian.com/v1/mcp', auth: 'oauth', logo: 'atlassian' },
+  { id: 'gitlab', name: 'GitLab', description: 'Projects, issues and merge requests', url: 'https://gitlab.com/api/v4/mcp', auth: 'oauth', logo: 'gitlab' },
+  { id: 'asana', name: 'Asana', description: 'Tasks, projects and goals', url: 'https://mcp.asana.com/v2/mcp', auth: 'oauth', logo: 'asana' },
+  { id: 'canva', name: 'Canva', description: 'Search, create and edit designs', url: 'https://mcp.canva.com/mcp', auth: 'oauth', logo: 'canva' },
+  { id: 'intercom', name: 'Intercom', description: 'Conversations, contacts and help articles', url: 'https://mcp.intercom.com/mcp', auth: 'oauth', logo: 'intercom' },
+  { id: 'paypal', name: 'PayPal', description: 'Invoices, orders and transactions', url: 'https://mcp.paypal.com/mcp', auth: 'oauth', logo: 'paypal' },
+  { id: 'square', name: 'Square', description: 'Payments, catalog and customers', url: 'https://mcp.squareup.com/sse', auth: 'oauth', logo: 'square' },
+  { id: 'webflow', name: 'Webflow', description: 'Sites, CMS collections and pages', url: 'https://mcp.webflow.com/mcp', auth: 'oauth', logo: 'webflow' },
+  { id: 'wix', name: 'Wix', description: 'Sites, stores and bookings', url: 'https://mcp.wix.com/mcp', auth: 'oauth', logo: 'wix' },
+  { id: 'neon', name: 'Neon', description: 'Postgres projects, branches and SQL', url: 'https://mcp.neon.tech/mcp', auth: 'oauth', logo: 'neon' },
+  { id: 'netlify', name: 'Netlify', description: 'Sites, deploys and environment variables', url: 'https://netlify-mcp.netlify.app/mcp', auth: 'oauth', logo: 'netlify' },
+  { id: 'cloudflare', name: 'Cloudflare', description: 'Workers, KV, R2 and D1 in your account', url: 'https://bindings.mcp.cloudflare.com/mcp', auth: 'oauth', logo: 'cloudflare' },
+  { id: 'prisma', name: 'Prisma Postgres', description: 'Databases, migrations and queries', url: 'https://mcp.prisma.io/mcp', auth: 'oauth', logo: 'prisma' },
+  { id: 'jam', name: 'Jam', description: 'Bug reports with console logs and repro steps', url: 'https://mcp.jam.dev/mcp', auth: 'oauth', glyph: <Bug size={18} /> },
+  { id: 'zapier', name: 'Zapier', description: 'Thousands of apps through your Zapier actions', url: 'https://mcp.zapier.com/api/mcp/mcp', auth: 'oauth', logo: 'zapier' },
+  { id: 'exa', name: 'Exa', description: 'Web search and code search for agents', url: 'https://mcp.exa.ai/mcp', auth: 'none', glyph: <Search size={18} /> },
   { id: 'linear', name: 'Linear', description: 'Issues, projects and cycles', url: 'https://mcp.linear.app/mcp', auth: 'oauth', logo: 'linear' },
   { id: 'notion', name: 'Notion', description: 'Search, read and update pages and databases', url: 'https://mcp.notion.com/mcp', auth: 'oauth', logo: 'notion' },
   { id: 'figma', name: 'Figma', description: 'Designs, frames and variables for building UI', url: 'https://mcp.figma.com/mcp', auth: 'oauth', logo: 'figma' },
@@ -35,6 +52,7 @@ const HOSTED: CatalogEntry[] = [
 ]
 
 const LOCAL: CatalogEntry[] = [
+  { id: 'google-workspace', name: 'Google Workspace', description: 'Gmail, Calendar, Drive, Docs and Sheets. Needs a Google OAuth client (Desktop app) and uv', command: 'uvx', args: 'workspace-mcp --tool-tier core', env: ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'], logo: 'gmail' },
   { id: 'filesystem', name: 'Filesystem', description: 'Read and search files in folders you choose', command: 'npx', args: '-y @modelcontextprotocol/server-filesystem D:\\Neru\\projects', glyph: <FolderOpen size={18} /> },
   { id: 'playwright', name: 'Playwright', description: 'Drive a real browser: click, type, screenshot', command: 'npx', args: '-y @playwright/mcp@latest', logoUrl: 'https://playwright.dev/img/playwright-logo.svg', glyph: <Globe size={18} /> },
   { id: 'postgres', name: 'PostgreSQL', description: 'Inspect schemas and run read-only queries', command: 'npx', args: '-y @modelcontextprotocol/server-postgres postgresql://localhost/mydb', logo: 'postgresql' },
@@ -65,8 +83,8 @@ const formatPairs = (pairs: Record<string, string>, separator: string) => Object
 interface Draft { previous?: string; kind: 'local' | 'hosted'; name: string; command: string; args: string; env: string; url: string; headers: string; enabled: boolean }
 const blank: Draft = { kind: 'hosted', name: '', command: 'npx', args: '', env: '', url: 'https://', headers: '', enabled: true }
 
-const statusText = (server: McpServer) => server.status === 'connected' ? `${server.tools.length} tool${server.tools.length === 1 ? '' : 's'}`
-  : server.status === 'starting' ? 'Connecting…' : server.status === 'off' ? 'Off' : server.status === 'needs_auth' ? 'Sign-in needed' : server.status === 'needs_trust' ? 'Waiting for trust' : 'Not running'
+const statusText = (server: McpServer) => server.status === 'connected' ? (server.tools.length === 1 ? t('1 tool') : t('{n} tools', { n: server.tools.length }))
+  : server.status === 'starting' ? t('Connecting…') : server.status === 'off' ? t('Off') : server.status === 'needs_auth' ? t('Sign-in needed') : server.status === 'needs_trust' ? t('Waiting for trust') : t('Not running')
 
 /** Settings → Connectors: MCP servers, hosted or local, that Neru offers to the model as tools. */
 export function Connectors({ onError }: { onError: (message: string) => void }) {
@@ -126,59 +144,59 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
     : { ...blank, kind: 'local', name: entry.id, command: entry.command ?? 'npx', args: entry.args ?? '', env: (entry.env ?? []).map(key => `${key}=`).join('\n') })
   const catalog = (tab === 'hosted' ? HOSTED : LOCAL).filter(entry => !servers?.some(server => server.name === entry.id))
 
-  return <section className="settings-section provider-settings"><h2>Connectors</h2>
-    <p className="settings-lede">Give Neru more tools with Model Context Protocol servers: hosted services you sign in to, or programs that run on this PC. Neru asks before every connector call unless you always allow it or choose a permission mode that does.</p>
-    {servers === null && <p className="settings-note"><LoaderCircle size={14} className="animate-spin" /> Loading connectors…</p>}
+  return <section className="settings-section provider-settings"><h2>{t('Connectors')}</h2>
+    <p className="settings-lede">{t('Give Neru more tools with Model Context Protocol servers: hosted services you sign in to, or programs that run on this PC. Neru asks before every connector call unless you always allow it or choose a permission mode that does.')}</p>
+    {servers === null && <p className="settings-note"><LoaderCircle size={14} className="animate-spin" /> {t('Loading connectors…')}</p>}
     {servers && servers.length > 0 && <div className="connector-list">{servers.map(server => <div key={server.name} className="connector">
       <div className="connector-head">
         <span className={cn('connector-dot', server.status)} aria-hidden />
-        <div className="connector-title"><strong>{server.name}</strong><code>{server.url ?? `${server.command} ${joinArgs(server.args)}`}</code>{server.source === 'project' && <small className="connector-source">From this project (.mcp.json)</small>}</div>
+        <div className="connector-title"><strong>{server.name}</strong><code>{server.url ?? `${server.command} ${joinArgs(server.args)}`}</code>{server.source === 'project' && <small className="connector-source">{t('From this project (.mcp.json)')}</small>}</div>
         <span className="connector-status">{server.url ? <Cloud size={12} /> : <Monitor size={12} />} {statusText(server)}</span>
         <div className="connector-actions">
-          {server.status === 'needs_trust' && <button className="button primary small" disabled={working !== null} onClick={() => void act(server.name, async () => { await api.trustProject(); return api.mcpServers() })} title="Trust this project folder and start the connectors in its .mcp.json">{working === server.name ? <LoaderCircle size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Trust project</button>}
-          {server.url && server.status === 'needs_auth' && <button className="button primary small" disabled={working === server.name} onClick={() => void act(server.name, () => api.mcpSignIn(server.name))}>{working === server.name ? <LoaderCircle size={13} className="animate-spin" /> : <LogIn size={13} />} Sign in</button>}
-          {server.url && server.signedIn && <button className="icon-button small" disabled={working === server.name} onClick={() => void act(server.name, () => api.mcpSignOut(server.name))} title="Sign out" aria-label={`Sign out of ${server.name}`}><LogOut size={14} /></button>}
-          {server.source !== 'project' && <button className="icon-button small" disabled={working === server.name} onClick={() => void toggle(server)} title={server.enabled ? 'Turn off' : 'Turn on'} aria-label={server.enabled ? `Turn off ${server.name}` : `Turn on ${server.name}`}><span className={cn('switch', server.enabled && 'on')} /></button>}
-          {server.status !== 'needs_trust' && <button className="icon-button small" disabled={!server.enabled || working === server.name} onClick={() => void act(server.name, () => api.mcpRestart(server.name))} title="Reconnect" aria-label={`Reconnect ${server.name}`}>{working === server.name && server.status !== 'needs_auth' ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCw size={14} />}</button>}
-          {server.source !== 'project' && <><button className="button subtle small" onClick={() => setDraft({ previous: server.name, kind: server.url ? 'hosted' : 'local', name: server.name, command: server.command || 'npx', args: joinArgs(server.args), env: formatPairs(server.env, '='), url: server.url ?? 'https://', headers: formatPairs(server.headers ?? {}, ': '), enabled: server.enabled })}>Edit</button>
-          <button className="icon-button small" onClick={() => { if (window.confirm(`Remove the ${server.name} connector${server.signedIn ? ' and its sign-in' : ''}?`)) void act(server.name, () => api.mcpRemoveServer(server.name)) }} title="Remove" aria-label={`Remove ${server.name}`}><Trash2 size={14} /></button></>}
+          {server.status === 'needs_trust' && <button className="button primary small" disabled={working !== null} onClick={() => void act(server.name, async () => { await api.trustProject(); return api.mcpServers() })} title={t('Trust this project folder and start the connectors in its .mcp.json')}>{working === server.name ? <LoaderCircle size={13} className="animate-spin" /> : <ShieldCheck size={13} />} {t('Trust project')}</button>}
+          {server.url && server.status === 'needs_auth' && <button className="button primary small" disabled={working === server.name} onClick={() => void act(server.name, () => api.mcpSignIn(server.name))}>{working === server.name ? <LoaderCircle size={13} className="animate-spin" /> : <LogIn size={13} />} {t('Sign in')}</button>}
+          {server.url && server.signedIn && <button className="icon-button small" disabled={working === server.name} onClick={() => void act(server.name, () => api.mcpSignOut(server.name))} title={t('Sign out')} aria-label={t('Sign out of {name}', { name: server.name })}><LogOut size={14} /></button>}
+          {server.source !== 'project' && <button className="icon-button small" disabled={working === server.name} onClick={() => void toggle(server)} title={server.enabled ? t('Turn off') : t('Turn on')} aria-label={server.enabled ? t('Turn off {name}', { name: server.name }) : t('Turn on {name}', { name: server.name })}><span className={cn('switch', server.enabled && 'on')} /></button>}
+          {server.status !== 'needs_trust' && <button className="icon-button small" disabled={!server.enabled || working === server.name} onClick={() => void act(server.name, () => api.mcpRestart(server.name))} title={t('Reconnect')} aria-label={t('Reconnect {name}', { name: server.name })}>{working === server.name && server.status !== 'needs_auth' ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCw size={14} />}</button>}
+          {server.source !== 'project' && <><button className="button subtle small" onClick={() => setDraft({ previous: server.name, kind: server.url ? 'hosted' : 'local', name: server.name, command: server.command || 'npx', args: joinArgs(server.args), env: formatPairs(server.env, '='), url: server.url ?? 'https://', headers: formatPairs(server.headers ?? {}, ': '), enabled: server.enabled })}>{t('Edit')}</button>
+          <button className="icon-button small" onClick={() => { if (window.confirm(server.signedIn ? t('Remove the {name} connector and its sign-in?', { name: server.name }) : t('Remove the {name} connector?', { name: server.name }))) void act(server.name, () => api.mcpRemoveServer(server.name)) }} title={t('Remove')} aria-label={t('Remove {name}', { name: server.name })}><Trash2 size={14} /></button></>}
         </div>
       </div>
       {server.status === 'error' && server.error && <pre className="connector-error">{server.error}</pre>}
-      {server.status === 'needs_trust' && <p className="connector-note">Not started yet: this project's .mcp.json asks for it. Trust the folder if you know where the project came from.</p>}
-      {server.status === 'connected' && server.tools.length > 0 && <div className="connector-tools">{server.tools.map(tool => <span key={tool.name} title={tool.description}>{tool.name}{tool.readOnly && <small>read-only</small>}</span>)}</div>}
+      {server.status === 'needs_trust' && <p className="connector-note">{t("Not started yet: this project's .mcp.json asks for it. Trust the folder if you know where the project came from.")}</p>}
+      {server.status === 'connected' && server.tools.length > 0 && <div className="connector-tools">{server.tools.map(tool => <span key={tool.name} title={tool.description}>{tool.name}{tool.readOnly && <small>{t('read-only')}</small>}</span>)}</div>}
     </div>)}</div>}
 
     {draft ? <div className="connector-form">
-      <div className="segmented" role="tablist" aria-label="Connector type">
-        <button role="tab" aria-selected={draft.kind === 'hosted'} className={draft.kind === 'hosted' ? 'active' : ''} onClick={() => setDraft({ ...draft, kind: 'hosted' })}><Cloud size={14} /> Hosted (URL)</button>
-        <button role="tab" aria-selected={draft.kind === 'local'} className={draft.kind === 'local' ? 'active' : ''} onClick={() => setDraft({ ...draft, kind: 'local' })}><Monitor size={14} /> Runs on this PC</button>
+      <div className="segmented" role="tablist" aria-label={t('Connector type')}>
+        <button role="tab" aria-selected={draft.kind === 'hosted'} className={draft.kind === 'hosted' ? 'active' : ''} onClick={() => setDraft({ ...draft, kind: 'hosted' })}><Cloud size={14} /> {t('Hosted (URL)')}</button>
+        <button role="tab" aria-selected={draft.kind === 'local'} className={draft.kind === 'local' ? 'active' : ''} onClick={() => setDraft({ ...draft, kind: 'local' })}><Monitor size={14} /> {t('Runs on this PC')}</button>
       </div>
-      <label>Name<input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="linear" /></label>
+      <label>{t('Name')}<input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="linear" /></label>
       {draft.kind === 'hosted' ? <>
-        <label>Server URL<input value={draft.url} onChange={event => setDraft({ ...draft, url: event.target.value })} placeholder="https://mcp.example.com/mcp" /></label>
-        <label>Headers (optional, one Name: value per line)<textarea rows={2} value={draft.headers} onChange={event => setDraft({ ...draft, headers: event.target.value })} placeholder="Authorization: Bearer …   (leave empty to sign in with OAuth)" spellCheck={false} /></label>
+        <label>{t('Server URL')}<input value={draft.url} onChange={event => setDraft({ ...draft, url: event.target.value })} placeholder="https://mcp.example.com/mcp" /></label>
+        <label>{t('Headers (optional, one Name: value per line)')}<textarea rows={2} value={draft.headers} onChange={event => setDraft({ ...draft, headers: event.target.value })} placeholder={t('Authorization: Bearer …   (leave empty to sign in with OAuth)')} spellCheck={false} /></label>
       </> : <>
-        <div className="settings-grid"><label>Command<input value={draft.command} onChange={event => setDraft({ ...draft, command: event.target.value })} placeholder="npx, uvx, node, python…" /></label><label>Arguments<input value={draft.args} onChange={event => setDraft({ ...draft, args: event.target.value })} placeholder="-y @modelcontextprotocol/server-filesystem D:\Neru\projects" /></label></div>
-        <label>Environment (one KEY=value per line)<textarea rows={3} value={draft.env} onChange={event => setDraft({ ...draft, env: event.target.value })} placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=…" spellCheck={false} /></label>
+        <div className="settings-grid"><label>{t('Command')}<input value={draft.command} onChange={event => setDraft({ ...draft, command: event.target.value })} placeholder={t('npx, uvx, node, python…')} /></label><label>{t('Arguments')}<input value={draft.args} onChange={event => setDraft({ ...draft, args: event.target.value })} placeholder="-y @modelcontextprotocol/server-filesystem D:\Neru\projects" /></label></div>
+        <label>{t('Environment (one KEY=value per line)')}<textarea rows={3} value={draft.env} onChange={event => setDraft({ ...draft, env: event.target.value })} placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=…" spellCheck={false} /></label>
       </>}
-      <div className="settings-actions"><button className="button primary" disabled={saving || !draft.name.trim() || (draft.kind === 'hosted' ? !/^https?:\/\/.+/.test(draft.url) : !draft.command.trim())} onClick={() => void save()}>{saving ? <><LoaderCircle size={14} className="animate-spin" /> Connecting…</> : draft.previous ? 'Save connector' : 'Add connector'}</button><button className="button subtle" onClick={() => setDraft(null)}>Cancel</button></div>
+      <div className="settings-actions"><button className="button primary" disabled={saving || !draft.name.trim() || (draft.kind === 'hosted' ? !/^https?:\/\/.+/.test(draft.url) : !draft.command.trim())} onClick={() => void save()}>{saving ? <><LoaderCircle size={14} className="animate-spin" /> {t('Connecting…')}</> : draft.previous ? t('Save connector') : t('Add connector')}</button><button className="button subtle" onClick={() => setDraft(null)}>{t('Cancel')}</button></div>
     </div> : servers && <div className="catalog">
       <div className="catalog-top">
-        <div className="settings-subhead"><strong>Add a connector</strong><span>Pick one to fill it in, or add your own.</span></div>
-        <button className="button subtle small" onClick={() => setDraft({ ...blank, kind: tab })}><Plus size={13} /> Custom</button>
+        <div className="settings-subhead"><strong>{t('Add a connector')}</strong><span>{t('Pick one to fill it in, or add your own.')}</span></div>
+        <button className="button subtle small" onClick={() => setDraft({ ...blank, kind: tab })}><Plus size={13} /> {t('Custom')}</button>
       </div>
-      <div className="segmented" role="tablist" aria-label="Catalog">
-        <button role="tab" aria-selected={tab === 'hosted'} className={tab === 'hosted' ? 'active' : ''} onClick={() => setTab('hosted')}><Cloud size={14} /> Hosted, sign in</button>
-        <button role="tab" aria-selected={tab === 'local'} className={tab === 'local' ? 'active' : ''} onClick={() => setTab('local')}><Monitor size={14} /> Runs on this PC</button>
+      <div className="segmented" role="tablist" aria-label={t('Catalog')}>
+        <button role="tab" aria-selected={tab === 'hosted'} className={tab === 'hosted' ? 'active' : ''} onClick={() => setTab('hosted')}><Cloud size={14} /> {t('Hosted, sign in')}</button>
+        <button role="tab" aria-selected={tab === 'local'} className={tab === 'local' ? 'active' : ''} onClick={() => setTab('local')}><Monitor size={14} /> {t('Runs on this PC')}</button>
       </div>
       <div className="catalog-grid">{catalog.map(entry => <button key={entry.id} className="catalog-item" onClick={() => pick(entry)} title={entry.url ?? `${entry.command} ${entry.args}`}>
         <CatalogLogo entry={entry} />
-        <span className="catalog-text"><strong>{entry.name}</strong><small>{entry.description}</small></span>
+        <span className="catalog-text"><strong>{entry.name}</strong><small>{t(entry.description)}</small></span>
         {entry.auth === 'oauth' ? <LogIn size={14} className="catalog-add" /> : <Plus size={14} className="catalog-add" />}
       </button>)}</div>
     </div>}
-    {trusted && <p className="settings-note trust-note"><ShieldCheck size={14} /> This project folder is trusted: its .mcp.json connectors, settings hooks and allow rules apply. <button className="button subtle small" disabled={working !== null} onClick={() => void untrust()}>{working === 'trust' ? <LoaderCircle size={13} className="animate-spin" /> : null} Stop trusting</button></p>}
-    <p className="settings-note"><ShieldCheck size={14} /> Hosted sign-ins happen in your browser; Neru stores only the resulting token, encrypted with your system keychain, and refreshes it. Local connectors run with your permissions and keep their package caches in Neru’s storage. Add only servers you trust.</p>
+    {trusted && <p className="settings-note trust-note"><ShieldCheck size={14} /> {t('This project folder is trusted: its .mcp.json connectors, settings hooks and allow rules apply.')} <button className="button subtle small" disabled={working !== null} onClick={() => void untrust()}>{working === 'trust' ? <LoaderCircle size={13} className="animate-spin" /> : null} {t('Stop trusting')}</button></p>}
+    <p className="settings-note"><ShieldCheck size={14} /> {t('Hosted sign-ins happen in your browser; Neru stores only the resulting token, encrypted with your system keychain, and refreshes it. Local connectors run with your permissions and keep their package caches in Neru’s storage. Add only servers you trust.')}</p>
   </section>
 }

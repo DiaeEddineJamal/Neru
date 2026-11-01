@@ -3,6 +3,8 @@
  * wrong, what to do about it, and a one-click action when there is an obvious one.
  */
 
+import { t } from '../i18n'
+
 export type ErrorAction = 'model-settings' | 'retry' | 'open-project' | 'doctor' | 'compact' | 'connectors'
 
 export interface FriendlyError {
@@ -26,7 +28,7 @@ export function describeError(value: unknown): FriendlyError {
   // OpenCode Zen: "Free tier can only be used from within OpenCode" (HTTP 403). The key is fine.
   const locked = /http 403|forbidden/.test(text) && /only (be used|available|works) (from within|within|in|with|through) ([^.,;"\n]{1,40})/.exec(raw)
   if (locked)
-    return withDetail({ title: `This free model only works inside ${locked[3].trim()}.`, hint: 'The provider keeps its free tier to its own app. Pick a paid model this key has credits for, or add a key for another provider so Neru can switch on its own.', action: 'model-settings' })
+    return withDetail({ title: t('This free model only works inside {app}.', { app: locked[3].trim() }), hint: 'The provider keeps its free tier to its own app. Pick a paid model this key has credits for, or add a key for another provider so Neru can switch on its own.', action: 'model-settings' })
   if (has(text, 'http 402', 'payment required', 'insufficient credit', 'insufficient balance', 'insufficient funds', 'insufficient_quota', 'credit balance is too low'))
     return withDetail({ title: 'This account has no credits for the model.', hint: 'Add credits with the provider, pick a free model, or add a key for another provider so Neru can switch on its own.', action: 'model-settings' })
   if (has(text, 'http 403') && !has(text, 'api key', 'api_key', 'token', 'authentication', 'unauthenticated', 'expired'))

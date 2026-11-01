@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { FileText, LoaderCircle, MousePointer2, Paperclip, X } from 'lucide-react'
 import type { AttachedDocument } from '../../types'
+import { t } from '../../i18n'
 
 /** Attachments inside the message box: image thumbnails (click to enlarge) and compact chips for other files, like Claude. */
 export function Attachments({ paths, documents, reading, onRemovePath, onRemoveDocument }: {
@@ -27,12 +28,12 @@ export function Attachments({ paths, documents, reading, onRemovePath, onRemoveD
   }, [open, images.length])
   const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path
   return <>
-    <div className="composer-attachments" role="list" aria-label="Attachments">
+    <div className="composer-attachments" role="list" aria-label={t('Attachments')}>
       {images.map((doc, index) => <div key={doc.path} role="listitem" className="attach-thumb">
-        <button type="button" className="attach-open" onClick={() => setOpen(index)} aria-label={`Preview ${doc.name}`} title={doc.name}>
+        <button type="button" className="attach-open" onClick={() => setOpen(index)} aria-label={t('Preview {name}', { name: doc.name })} title={doc.name}>
           <img src={doc.dataUrl} alt="" decoding="async" draggable={false} />
         </button>
-        <button type="button" className="attach-remove" onClick={() => onRemoveDocument(doc.path)} aria-label={`Remove ${doc.name}`}><X size={11} strokeWidth={2.4} /></button>
+        <button type="button" className="attach-remove" onClick={() => onRemoveDocument(doc.path)} aria-label={t('Remove {name}', { name: doc.name })}><X size={11} strokeWidth={2.4} /></button>
       </div>)}
       {others.map(doc => doc.kind === 'element'
         // An element picked in the in-app browser: a compact tag chip, like Claude's. The full
@@ -40,25 +41,25 @@ export function Attachments({ paths, documents, reading, onRemovePath, onRemoveD
         ? <div key={doc.path} role="listitem" className="attach-chip element" title={doc.text}>
           <MousePointer2 size={13} />
           <span className="attach-name">{doc.name}</span>
-          <button type="button" className="attach-chip-remove" onClick={() => onRemoveDocument(doc.path)} aria-label={`Remove ${doc.name}`}><X size={12} /></button>
+          <button type="button" className="attach-chip-remove" onClick={() => onRemoveDocument(doc.path)} aria-label={t('Remove {name}', { name: doc.name })}><X size={12} /></button>
         </div>
         : <div key={doc.path} role="listitem" className="attach-chip" title={doc.path}>
         <FileText size={14} />
         <span className="attach-name">{doc.name}</span>
-        <button type="button" className="attach-chip-remove" onClick={() => onRemoveDocument(doc.path)} aria-label={`Remove ${doc.name}`}><X size={12} /></button>
+        <button type="button" className="attach-chip-remove" onClick={() => onRemoveDocument(doc.path)} aria-label={t('Remove {name}', { name: doc.name })}><X size={12} /></button>
       </div>)}
       {paths.map(path => <div key={path} role="listitem" className="attach-chip" title={path}>
         <Paperclip size={14} />
         <span className="attach-name">{base(path)}</span>
-        <button type="button" className="attach-chip-remove" onClick={() => onRemovePath(path)} aria-label={`Remove ${path}`}><X size={12} /></button>
+        <button type="button" className="attach-chip-remove" onClick={() => onRemovePath(path)} aria-label={t('Remove {name}', { name: path })}><X size={12} /></button>
       </div>)}
-      {reading > 0 && <div className="attach-chip reading" role="status"><LoaderCircle size={14} className="animate-spin" /><span className="attach-name">Reading {reading} file{reading === 1 ? '' : 's'}…</span></div>}
+      {reading > 0 && <div className="attach-chip reading" role="status"><LoaderCircle size={14} className="animate-spin" /><span className="attach-name">{reading === 1 ? t('Reading 1 file…') : t('Reading {n} files…', { n: reading })}</span></div>}
     </div>
-    <AnimatePresence>{open !== null && images[open] && <motion.div className="image-lightbox" role="dialog" aria-label="Image" onClick={() => setOpen(null)}
+    <AnimatePresence>{open !== null && images[open] && <motion.div className="image-lightbox" role="dialog" aria-label={t('Image')} onClick={() => setOpen(null)}
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reduce ? 0 : 0.18 }}>
       <motion.img src={images[open].dataUrl} alt="" onClick={event => event.stopPropagation()}
         initial={reduce ? false : { scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={reduce ? undefined : { scale: 0.96, opacity: 0 }} transition={{ type: 'spring', duration: 0.35, bounce: 0.15 }} />
-      <button type="button" className="image-lightbox-close" aria-label="Close" onClick={() => setOpen(null)}>×</button>
+      <button type="button" className="image-lightbox-close" aria-label={t('Close')} onClick={() => setOpen(null)}>×</button>
     </motion.div>}</AnimatePresence>
   </>
 }

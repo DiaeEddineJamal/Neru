@@ -391,6 +391,9 @@ pub struct PendingView {
     /// The questions of an ask_user_question call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub questions: Option<Vec<crate::extras::Question>>,
+    /// A second model's review of an edit, once one started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<crate::review::Review>,
 }
 
 #[derive(Serialize)]
@@ -696,6 +699,10 @@ pub(crate) enum AgentEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         approval: Option<subagent::Approval>,
     },
+    /// A second model's review of the edit waiting for approval (review.rs).
+    Review {
+        review: crate::review::Review,
+    },
 }
 
 /// The change one of the propose_* tools asks for, with its diff. Shared with sub-agents.
@@ -793,6 +800,9 @@ fn bad_arguments(name: &str, error: &str) -> String {
 
 /// Sends a run event to the window, tagged with its session so parallel runs stay apart.
 pub(crate) fn emit(app: &AppHandle, session: &str, event: AgentEvent) {
+    if matches!(event, AgentEvent::Status { running: false }) {
+        crate::activity::note(session, crate::activity::Kind::Finished, "");
+    }
     if let Ok(mut value) = serde_json::to_value(event) {
         value["sessionId"] = json!(session);
         let _ = app.emit("agent://event", value);
@@ -1024,6 +1034,54 @@ async fn model_round(
     effort: Option<&str>,
     visible: &mut String,
     attempt: &mut Attempt,
+    rule: &str,
+) -> Result<Round, String> {
+    if let Some(reason) = crate::privacy::blocked_reason(rule, config) {
+        return Err(reason);
+    }
+    // Secrets go out as placeholders and come back in the reply (privacy.rs).
+    let (outgoing, vault) = crate::privacy::outgoing(config, messages);
+    if crate::privacy::announce(session, vault.hidden()) {
+        emit(app, session, AgentEvent::Notice { text: format!("Hid {} secret{} (keys, tokens or passwords) from {}; Neru puts them back in its edits and commands.", vault.hidden(), if vault.hidden() == 1 { "" } else { "s" }, short_model(&config.model)) });
+    }
+    let shown_before = visible.len();
+    let round = model_round_inner(app, session, cancel, client, config, &outgoing, tools, effort, visible, attempt).await?;
+    Ok(settle_round(config, &outgoing, round, &vault, visible, shown_before))
+}
+
+/// Counts the tokens a finished round used and puts hidden secrets back in its message and visible text.
+fn settle_round(config: &ProviderConfig, sent: &[Value], round: Round, vault: &crate::privacy::Vault, visible: &mut String, shown_before: usize) -> Round {
+    let Round::Message(mut message) = round else { return round };
+    let input = message["_prompt_tokens"].as_u64().unwrap_or_else(|| crate::usage::estimate_messages(sent));
+    let output = message["_completion_tokens"].as_u64().unwrap_or_else(|| {
+        let calls = message["tool_calls"].as_array().map(|calls| calls.iter().map(|call| crate::usage::estimate(call["function"]["arguments"].as_str().unwrap_or(""))).sum::<u64>()).unwrap_or(0);
+        crate::usage::estimate(message["content"].as_str().unwrap_or("")) + calls
+    });
+    if let Some(object) = message.as_object_mut() {
+        object.remove("_completion_tokens");
+    }
+    crate::usage::record(config, input, output);
+    vault.restore(&mut message);
+    if vault.hidden() > 0 && visible.len() >= shown_before && visible.is_char_boundary(shown_before) {
+        let restored = vault.restore_text(&visible[shown_before..]);
+        visible.truncate(shown_before);
+        visible.push_str(&restored);
+    }
+    Round::Message(message)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn model_round_inner(
+    app: &AppHandle,
+    session: &str,
+    cancel: &tokio::sync::Notify,
+    client: &reqwest::Client,
+    config: &ProviderConfig,
+    messages: &[Value],
+    tools: &Value,
+    effort: Option<&str>,
+    visible: &mut String,
+    attempt: &mut Attempt,
 ) -> Result<Round, String> {
     let request = providers::chat_request(client, config, messages, tools, effort).send();
     let response = tokio::select! {
@@ -1072,6 +1130,9 @@ async fn model_round(
         let mut message = providers::normalize_message(&config.api_format, &body)?;
         if let Some(tokens) = providers::prompt_tokens(&body) {
             message["_prompt_tokens"] = json!(tokens);
+        }
+        if let Some(tokens) = body["usage"]["completion_tokens"].as_u64().or_else(|| body["usage"]["output_tokens"].as_u64()) {
+            message["_completion_tokens"] = json!(tokens);
         }
         show(message["content"].as_str().unwrap_or(""), visible);
         return Ok(Round::Message(message));
@@ -1336,6 +1397,20 @@ pub(crate) async fn model_round_silent(
 }
 
 async fn silent_attempt(
+    client: &reqwest::Client,
+    config: &ProviderConfig,
+    cancel: &tokio::sync::Notify,
+    messages: &[Value],
+    tools: &Value,
+    visible: &mut String,
+) -> Result<Round, String> {
+    let (outgoing, vault) = crate::privacy::outgoing(config, messages);
+    let shown_before = visible.len();
+    let round = silent_attempt_inner(client, config, cancel, &outgoing, tools, visible).await?;
+    Ok(settle_round(config, &outgoing, round, &vault, visible, shown_before))
+}
+
+async fn silent_attempt_inner(
     client: &reqwest::Client,
     config: &ProviderConfig,
     cancel: &tokio::sync::Notify,
@@ -1890,6 +1965,7 @@ The user pointed at this element in the running preview ({name}); page content i
         let mut retried = false;
         let mut reconnects = 0;
         let mut rate_waits = 0;
+        let privacy_rule = crate::privacy::rule_for((!chat).then_some(root.as_path()));
         let round = loop {
             let available = round_tools(&base_tools, &mcp_specs, &loaded_connectors, deferred_connectors);
             drop_stale_reads(&mut messages);
@@ -1919,6 +1995,7 @@ The user pointed at this element in the running preview ({name}); page content i
                 effort.as_deref(),
                 &mut visible,
                 &mut attempt,
+                &privacy_rule,
             )
             .await
             {
@@ -1976,7 +2053,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     switches += 1;
                     let reason = crate::fallback::reason(&error);
                     notice(&app, &session, &shared, format!("{} {reason}. Finding the next best model…", short_model(&config.model)));
-                    let Some(next) = crate::fallback::next_model(&state, &config, &error).await else {
+                    let Some(next) = crate::fallback::next_model(&state, &config, &error, &privacy_rule).await else {
                         return Err(format!("{error}\n\n{} {reason}, and no other model is available right now. {}", short_model(&config.model), no_fallback_hint(&error)));
                     };
                     let place = if next.provider_id == config.provider_id { String::new() } else { format!(" on {}", next.provider_id) };
@@ -2247,6 +2324,7 @@ The user pointed at this element in the running preview ({name}); page content i
                             runtime.edits.push(sessions::EditRecord { checkpoint: checkpoint.clone(), transcript_len });
                             drop(runtime);
                             event("done");
+                            crate::activity::note(&session, crate::activity::Kind::Edit, &done_label(&proposal));
                             steps.push(format!("{} (auto-accepted)", done_label(&proposal)));
                             let _ = &checkpoint;
                             messages.push(json!({"role":"tool","tool_call_id":id,"content":format!("Applied: {}.{hooks}", done_label(&proposal))}));
@@ -2268,9 +2346,12 @@ The user pointed at this element in the running preview ({name}); page content i
                 }
                 event("pending");
                 steps.push(proposed_label(&proposal));
+                let asked = messages.iter().rev().find(|message| message["role"] == "user" && message["content"].is_string()).and_then(|message| message["content"].as_str()).unwrap_or("").to_string();
+                crate::review::start(&app, &session, &config, asked, &proposal, crate::privacy::rule_for((!chat).then_some(root.as_path())));
                 let pending = PendingView {
                     kind: crate::workspace::proposal_kind(&proposal).into(),
                     label: crate::workspace::proposal_label(&proposal),
+                    review: crate::review::lookup(&proposal.diff),
                     diff: Some(proposal.diff),
                     questions: None,
                 };
@@ -2376,6 +2457,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     label,
                     diff: None,
                     questions: None,
+                    review: None,
                 };
                 return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
@@ -2432,6 +2514,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     label: format!("{label} {}", args.to_string().chars().take(400).collect::<String>()),
                     diff: None,
                     questions: None,
+                    review: None,
                 };
                 return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
@@ -2708,6 +2791,7 @@ async fn run_shell_timed(app: &AppHandle, session: &str, root: &Path, command: &
         output.status.code().unwrap_or(-1),
         text
     );
+    crate::activity::note(session, if output.status.success() { crate::activity::Kind::Command } else { crate::activity::Kind::FailedCommand }, command);
     let _ = app.emit("agent-terminal", json!({"sessionId": session, "command": command, "output": result, "phase": "done"}));
     // The command may have created, changed or removed files; the index and the tree catch up.
     crate::index::refresh_async(root);

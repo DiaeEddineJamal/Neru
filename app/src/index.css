@@ -36,7 +36,7 @@
 :root {
   font-family: Inter, 'Segoe UI', sans-serif;
   color: #f2f0e9;
-  background: #151515;
+  background: #1a1a1a;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -50,20 +50,20 @@
   --fs-2xl: 24px;
   --fs-3xl: 28px;
   --fs-display: 40px;
-  --bg: #151515;
-  --surface: #151515;
-  --prompt: #20201F;
-  --surface-2: #1b1d19;
-  --surface-3: #242622;
+  --bg: #1a1a1a;
+  --surface: #1a1a1a;
+  --prompt: #262626;
+  --surface-2: #232323;
+  --surface-3: #2c2c2c;
   --text: #f2f0e9;
-  --secondary: #b3b3aa;
-  --muted: #8c9088;
-  --border: #30322d;
+  --secondary: #b4b4b4;
+  --muted: #8f8f8f;
+  --border: #363636;
   --moss: #64806a;
   --moss-action: #486b51;
   --moss-action-hover: #54745b;
   --sage: #8ea291;
-  --moss-deep: #344a39;
+  --moss-deep: #333333;
   --danger: #bd7770;
   --mascot-eye: #f5f4ef;
   /* Dark sidebar keeps the original neutral surfaces; light mode gets the matcha panel. */
@@ -71,16 +71,16 @@
   --sidebar-hover: var(--surface-2);
   --sidebar-active: var(--surface-3);
   --sidebar-border: var(--border);
-  --plus-fill: oklch(0.29 0.012 140);
+  --plus-fill: oklch(0.29 0 0);
   --plus-ring: rgb(255 255 255 / 0.07);
-  /* Your messages: a quiet warm charcoal, as in the Claude app, lifted just off the page. */
-  --bubble-top: #30302e;
-  --bubble-bottom: #30302e;
+  /* Your messages: a quiet charcoal gray, as in the Claude app, lifted just off the page. */
+  --bubble-top: #2f2f2f;
+  --bubble-bottom: #2f2f2f;
   --bubble-border: transparent;
   --bubble-text: #f0eee6;
   --bubble-shadow: none;
   /* Floating menus sit one step above the page so they never blend into it. */
-  --menu-bg: #1e201c;
+  --menu-bg: #242424;
   /* Inline code and paths, @mentions and links read apart from prose, as in Claude. */
   --code-chip: #e5866f;
   --code-chip-bg: rgb(229 134 111 / .13);

@@ -1,4 +1,4 @@
-import { createContext, isValidElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, Fragment, isValidElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, CircleAlert, Globe, History, ListChecks, LoaderCircle, MessageCircleQuestion, Paperclip, Play, ShieldCheck, X } from 'lucide-react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import ReactMarkdown from 'react-markdown'
@@ -13,12 +13,14 @@ import { FileDiff } from '@/components/agents/file-diff'
 import { MessageScroller } from '@/components/agents/message-scroller'
 import { StreamingResponse, type StreamingResponseFeedback } from '@/components/agents/streaming-response'
 import { ToolApproval, ToolApprovalCode, type ToolApprovalStatus } from '@/components/agents/tool-approval'
+import { SecondOpinion } from './SecondOpinion'
 import { EASE_OUT, SPRING_PANEL, SPRING_SWAP } from '@/lib/ease'
 import TaskRows, { SpinnerRing, TaskBadge, type TaskRow } from '@/components/primitives/TaskRows'
 import { diffCounts, parseUnifiedDiff } from '@/lib/diff'
 import { cn } from '@/lib/utils'
 import { remarkMentions } from '@/lib/mentions'
 import { api } from '../../api'
+import { t } from '../../i18n'
 import { Mascot } from './Mascot'
 import { MermaidBlock, WireframeBlock } from './Diagrams'
 import { ErrorNotice } from './ErrorNotice'
@@ -43,27 +45,30 @@ export const RESPONSE_PROSE = 'neru-prose text-base leading-7 text-foreground [&
 
 const WEB_TOOL = /^(Searched the web|Read [a-z0-9.-]+\.[a-z]{2,}$)/i
 
+/** A translated sentence with {name} placeholders filled by JSX. */
+const rich = (text: string, parts: Record<string, ReactNode>) => text.split(/(\{\w+\})/).map((piece, index) => { const key = /^\{(\w+)\}$/.exec(piece)?.[1]; return <Fragment key={index}>{key && key in parts ? parts[key] : piece}</Fragment> })
+
 /** Maps what the agent is doing right now onto a thinking-orb state and a short label. */
 /** Drafts whose tool call has not been handled yet, i.e. still being written. */
 const writing = (live: LiveResponse) => live.drafts.filter(draft => !live.tools.some(tool => tool.id === draft.id))
 
 export function agentPhase(live: LiveResponse | null, mode: string): AgentPhase {
   const draft = live && writing(live).at(-1)
-  if (draft) return { state: 'shaping', label: `Writing ${draft.path.split(/[\\/]/).pop() || 'a file'}…` }
+  if (draft) return { state: 'shaping', label: t('Writing {name}…', { name: draft.path.split(/[\\/]/).pop() || t('a file') }) }
   const running = live?.tools.findLast(tool => tool.status === 'running')
   if (running) {
     const agents = live?.tools.filter(tool => tool.status === 'running' && tool.agent).length ?? 0
-    if (agents > 0) return { state: 'connecting', label: agents === 1 ? 'A sub-agent is exploring…' : `${agents} sub-agents are exploring…` }
-    if (running.label.startsWith('Searched the web')) return { state: 'searching', label: 'Searching the web…' }
-    if (WEB_TOOL.test(running.label)) return { state: 'connecting', label: 'Reading sources…' }
-    if (running.label.startsWith('Proposed change')) return { state: 'shaping', label: 'Shaping a change…' }
-    if (/^(Listed|Read|Searched project|Checked Git|Read Git|Mapped|Looked up|Found)/.test(running.label)) return { state: 'connecting', label: 'Exploring the project…' }
-    return { state: 'weaving', label: 'Running command…' }
+    if (agents > 0) return { state: 'connecting', label: agents === 1 ? t('A sub-agent is exploring…') : t('{n} sub-agents are exploring…', { n: agents }) }
+    if (running.label.startsWith('Searched the web')) return { state: 'searching', label: t('Searching the web…') }
+    if (WEB_TOOL.test(running.label)) return { state: 'connecting', label: t('Reading sources…') }
+    if (running.label.startsWith('Proposed change')) return { state: 'shaping', label: t('Shaping a change…') }
+    if (/^(Listed|Read|Searched project|Checked Git|Read Git|Mapped|Looked up|Found)/.test(running.label)) return { state: 'connecting', label: t('Exploring the project…') }
+    return { state: 'weaving', label: t('Running command…') }
   }
-  if (live?.text) return { state: 'composing', label: 'Composing…' }
-  if (live && live.tools.length > 0) return { state: 'shaping', label: 'Shaping…' }
-  if (live && live.reasoning > 0) return { state: 'solving', label: 'Reasoning…' }
-  return mode === 'plan' ? { state: 'solving', label: 'Planning…' } : { state: 'working', label: 'Thinking…' }
+  if (live?.text) return { state: 'composing', label: t('Composing…') }
+  if (live && live.tools.length > 0) return { state: 'shaping', label: t('Shaping…') }
+  if (live && live.reasoning > 0) return { state: 'solving', label: t('Reasoning…') }
+  return mode === 'plan' ? { state: 'solving', label: t('Planning…') } : { state: 'working', label: t('Thinking…') }
 }
 
 /** Holds each phase on screen for a moment, so quick tool calls do not make the orb flicker. */
@@ -188,21 +193,20 @@ function summarize(tools: LiveTool[]) {
     else if (/^(Ran|Run|Requested)/.test(label)) add('run')
     else add('other')
   }
-  const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
   const parts: string[] = []
   const take = (key: string, text: (count: number) => string) => { const count = counts.get(key); if (count) parts.push(text(count)) }
-  take('read', count => `Read ${plural(count, 'file', 'files')}`)
-  take('search', count => `${plural(count, 'search', 'searches')}`)
-  take('edit', count => `Edited ${plural(count, 'file', 'files')}`)
-  take('create', count => `Created ${plural(count, 'file', 'files')}`)
-  take('folder', count => `${plural(count, 'new folder', 'new folders')}`)
-  take('move', count => `Moved ${plural(count, 'item', 'items')}`)
-  take('delete', count => `Deleted ${plural(count, 'item', 'items')}`)
-  take('run', count => `Ran ${plural(count, 'command', 'commands')}`)
-  take('agent', count => `${plural(count, 'sub-agent', 'sub-agents')}`)
-  take('web', count => `${plural(count, 'web lookup', 'web lookups')}`)
-  take('git', count => `${plural(count, 'Git check', 'Git checks')}`)
-  take('other', count => `${plural(count, 'other step', 'other steps')}`)
+  take('read', n => n === 1 ? t('Read 1 file') : t('Read {n} files', { n }))
+  take('search', n => n === 1 ? t('1 search') : t('{n} searches', { n }))
+  take('edit', n => n === 1 ? t('Edited 1 file') : t('Edited {n} files', { n }))
+  take('create', n => n === 1 ? t('Created 1 file') : t('Created {n} files', { n }))
+  take('folder', n => n === 1 ? t('1 new folder') : t('{n} new folders', { n }))
+  take('move', n => n === 1 ? t('Moved 1 item') : t('Moved {n} items', { n }))
+  take('delete', n => n === 1 ? t('Deleted 1 item') : t('Deleted {n} items', { n }))
+  take('run', n => n === 1 ? t('Ran 1 command') : t('Ran {n} commands', { n }))
+  take('agent', n => n === 1 ? t('1 sub-agent') : t('{n} sub-agents', { n }))
+  take('web', n => n === 1 ? t('1 web lookup') : t('{n} web lookups', { n }))
+  take('git', n => n === 1 ? t('1 Git check') : t('{n} Git checks', { n }))
+  take('other', n => n === 1 ? t('1 other step') : t('{n} other steps', { n }))
   return parts.join(' · ')
 }
 
@@ -225,14 +229,19 @@ function SubagentApprovalCard({ approval, agent }: { approval: SubagentApproval;
     void api.answerSubagentApproval(approval.requestId, approve).catch(() => setAnswer('error'))
   }
   const command = approval.kind === 'task'
-  const verb = command ? 'run' : approval.kind === 'delete' ? 'delete' : approval.kind === 'move' ? 'move' : approval.kind === 'mkdir' ? 'create' : 'change'
-  return <div className="subagent-approval" role="group" aria-label={`Approve a sub-agent's request to ${verb} ${approval.label}`}>
-    <p><ShieldCheck size={13} aria-hidden /> <strong>{agent}</strong> wants to {verb} {command ? '' : <code>{approval.label}</code>}</p>
+  const vars = { label: approval.label }
+  const [aria, line] = command ? [t("Approve a sub-agent's request to run {label}", vars), t('{agent} wants to run')]
+    : approval.kind === 'delete' ? [t("Approve a sub-agent's request to delete {label}", vars), t('{agent} wants to delete {label}')]
+    : approval.kind === 'move' ? [t("Approve a sub-agent's request to move {label}", vars), t('{agent} wants to move {label}')]
+    : approval.kind === 'mkdir' ? [t("Approve a sub-agent's request to create {label}", vars), t('{agent} wants to create {label}')]
+    : [t("Approve a sub-agent's request to change {label}", vars), t('{agent} wants to change {label}')]
+  return <div className="subagent-approval" role="group" aria-label={aria}>
+    <p><ShieldCheck size={13} aria-hidden /> {rich(line, { agent: <strong>{agent}</strong>, label: <code>{approval.label}</code> })}</p>
     {command ? <ToolApprovalCode code={approval.label} /> : approval.diff ? <FileDiff file={approval.label} lines={parseUnifiedDiff(approval.diff)} status="complete" collapseOnComplete={false} defaultOpen maxHeight={280} language={languageForPath(approval.label)} copyText={approval.diff} /> : null}
     <div className="subagent-approval-actions">
-      <button type="button" className="button primary" disabled={answer === 'sending'} onClick={() => reply(true)}><Check size={13} /> Allow</button>
-      <button type="button" className="button subtle" disabled={answer === 'sending'} onClick={() => reply(false)}><X size={13} /> Deny</button>
-      {answer === 'error' && <span className="subagent-approval-note">The agent stopped before this was answered.</span>}
+      <button type="button" className="button primary" disabled={answer === 'sending'} onClick={() => reply(true)}><Check size={13} /> {t('Allow')}</button>
+      <button type="button" className="button subtle" disabled={answer === 'sending'} onClick={() => reply(false)}><X size={13} /> {t('Deny')}</button>
+      {answer === 'error' && <span className="subagent-approval-note">{t('The agent stopped before this was answered.')}</span>}
     </div>
   </div>
 }
@@ -249,7 +258,7 @@ function SubagentRow({ tool }: { tool: LiveTool & { agent: NonNullable<LiveTool[
     <button type="button" className="subagent-head" aria-expanded={shown} onClick={() => setOpen(value => !value)} disabled={agent.steps.length === 0}>
       <span className="subagent-role">{agent.role}</span>
       <span className={cn('subagent-title truncate', running && 'agent-shimmer')} title={agent.description}>{agent.description}</span>
-      <span className="subagent-meta">{agent.tools} {agent.tools === 1 ? 'tool' : 'tools'} · {elapsedText(seconds)}</span>
+      <span className="subagent-meta">{agent.tools === 1 ? t('1 tool') : t('{n} tools', { n: agent.tools })} · {elapsedText(seconds)}</span>
       {agent.steps.length > 0 && <motion.span aria-hidden animate={{ rotate: shown ? 180 : 0 }} transition={reduce ? { duration: 0 } : SPRING_SWAP}><ChevronDown size={12} /></motion.span>}
     </button>
     {running && agent.current && <div className="subagent-current truncate" title={agent.current}>{agent.current}</div>}
@@ -270,7 +279,7 @@ export function ToolSteps({ tools, live }: { tools: LiveTool[]; live: boolean })
   const failed = tools.filter(tool => tool.status === 'error').length
   return <div className="tool-steps">
     {!live && <button type="button" className="tool-steps-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <span className="truncate">{summarize(tools) || `${tools.length} ${tools.length === 1 ? 'step' : 'steps'}`}{failed > 0 && <span className="tool-steps-failed"> · {failed} failed</span>}</span>
+      <span className="truncate">{summarize(tools) || (tools.length === 1 ? t('1 step') : t('{n} steps', { n: tools.length }))}{failed > 0 && <span className="tool-steps-failed"> · {t('{n} failed', { n: failed })}</span>}</span>
       <motion.span aria-hidden animate={{ rotate: open ? 180 : 0 }} transition={reduce ? { duration: 0 } : SPRING_SWAP}><ChevronDown size={13} /></motion.span>
     </button>}
     <AgentDisclosure open={expanded}>
@@ -343,7 +352,7 @@ function Thinking({ text, live }: { text: string; live: boolean }) {
   if (!text.trim()) return null
   return <div className="thinking">
     <button type="button" className="thinking-toggle" aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <span className={cn(live && 'agent-shimmer')}>{live ? 'Thinking…' : 'Thought process'}</span>
+      <span className={cn(live && 'agent-shimmer')}>{live ? t('Thinking…') : t('Thought process')}</span>
       <motion.span aria-hidden animate={{ rotate: open ? 180 : 0 }} transition={reduce ? { duration: 0 } : SPRING_SWAP}><ChevronDown size={13} /></motion.span>
     </button>
     <AgentDisclosure open={open}><div ref={body} className="thinking-body">{text.trim()}</div></AgentDisclosure>
@@ -373,10 +382,10 @@ export function TodoPanel({ todos }: { todos: { content: string; status: string 
       <AnimatePresence mode="wait" initial={false}>
         <motion.span key={current?.content ?? (finished ? 'finished' : 'plan')} className={cn('todo-title', current && 'running')}
           initial={reduce ? false : { opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={reduce ? undefined : { opacity: 0, y: -5 }} transition={{ duration: 0.2, ease: EASE_OUT }}>
-          {current ? current.content : finished ? 'All tasks done' : 'Plan'}
+          {current ? current.content : finished ? t('All tasks done') : t('Plan')}
         </motion.span>
       </AnimatePresence>
-      <span className="todo-count">{done} of {todos.length}</span>
+      <span className="todo-count">{t('{done} of {total}', { done, total: todos.length })}</span>
       <span className="todo-chevron" aria-hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(180deg)' : 'none' }}><path d="M6 9l6 6 6-6" /></svg></span>
     </button>
     {/* Same expanding grammar as the primitive's detail drop-down: a grid row that grows from 0fr. */}
@@ -409,20 +418,20 @@ export function PlanCard({ pending, status, onResolve }: { pending: PendingView;
   const [asking, setAsking] = useState(false)
   const [feedback, setFeedback] = useState('')
   const open = status === 'pending' && Boolean(onResolve)
-  const badge = status === 'pending' ? 'Waiting for you' : status === 'approving' ? 'Sending…' : status === 'complete' ? 'Approved' : 'Kept planning'
-  return <section className="agent-prompt" data-state={status} aria-label="Neru's plan">
-    <header className="agent-prompt-head"><ListChecks size={16} aria-hidden /><strong>Neru's plan</strong><span className="agent-prompt-badge">{badge}</span></header>
+  const badge = status === 'pending' ? t('Waiting for you') : status === 'approving' ? t('Sending…') : status === 'complete' ? t('Approved') : t('Kept planning')
+  return <section className="agent-prompt" data-state={status} aria-label={t("Neru's plan")}>
+    <header className="agent-prompt-head"><ListChecks size={16} aria-hidden /><strong>{t("Neru's plan")}</strong><span className="agent-prompt-badge">{badge}</span></header>
     <div className={cn('agent-prompt-plan', RESPONSE_PROSE, !open && 'settled')}><ResponseMarkdown content={pending.diff ?? ''} sources={[]} idPrefix="plan" onCite={() => undefined} /></div>
-    {pending.feedback && <p className="agent-prompt-note">You asked: {pending.feedback}</p>}
+    {pending.feedback && <p className="agent-prompt-note">{t('You asked: {feedback}', { feedback: pending.feedback })}</p>}
     {open && onResolve && <>
       <div className="agent-prompt-actions">
-        <button type="button" className="button primary" onClick={() => onResolve(true, 'accept_edits', '')}>Approve and let Neru edit</button>
-        <button type="button" className="button subtle" onClick={() => onResolve(true, 'manual', '')}>Approve, ask before each change</button>
-        <button type="button" className="button subtle" aria-expanded={asking} onClick={() => setAsking(value => !value)}>Keep planning</button>
+        <button type="button" className="button primary" onClick={() => onResolve(true, 'accept_edits', '')}>{t('Approve and let Neru edit')}</button>
+        <button type="button" className="button subtle" onClick={() => onResolve(true, 'manual', '')}>{t('Approve, ask before each change')}</button>
+        <button type="button" className="button subtle" aria-expanded={asking} onClick={() => setAsking(value => !value)}>{t('Keep planning')}</button>
       </div>
       {asking && <form className="agent-prompt-feedback" onSubmit={event => { event.preventDefault(); onResolve(false, null, feedback) }}>
-        <input autoFocus value={feedback} onChange={event => setFeedback(event.target.value)} placeholder="What should change? (optional)" aria-label="What should change in the plan" />
-        <button type="submit" className="button subtle">Send</button>
+        <input autoFocus value={feedback} onChange={event => setFeedback(event.target.value)} placeholder={t('What should change? (optional)')} aria-label={t('What should change in the plan')} />
+        <button type="submit" className="button subtle">{t('Send')}</button>
       </form>}
     </>}
   </section>
@@ -443,12 +452,12 @@ export function QuestionCard({ pending, status, onAnswer }: { pending: PendingVi
     setOther(current => current.map((value, at) => at === index ? text : value))
     if (!multi && text) setPicked(current => current.map((list, at) => at === index ? [] : list))
   }
-  const badge = status === 'pending' ? 'Waiting for you' : status === 'approving' ? 'Sending…' : status === 'complete' ? 'Answered' : 'Skipped'
-  return <section className="agent-prompt" data-state={status} aria-label="Questions from Neru">
-    <header className="agent-prompt-head"><MessageCircleQuestion size={16} aria-hidden /><strong>{questions.length === 1 ? 'Neru has a question' : `Neru has ${questions.length} questions`}</strong><span className="agent-prompt-badge">{badge}</span></header>
+  const badge = status === 'pending' ? t('Waiting for you') : status === 'approving' ? t('Sending…') : status === 'complete' ? t('Answered') : t('Skipped')
+  return <section className="agent-prompt" data-state={status} aria-label={t('Questions from Neru')}>
+    <header className="agent-prompt-head"><MessageCircleQuestion size={16} aria-hidden /><strong>{questions.length === 1 ? t('Neru has a question') : t('Neru has {n} questions', { n: questions.length })}</strong><span className="agent-prompt-badge">{badge}</span></header>
     {questions.map((question, index) => <fieldset className="agent-question" key={index} disabled={!open}>
       <legend>{question.header && <span className="agent-question-header">{question.header}</span>}{question.question}</legend>
-      {pending.answers ? <p className="agent-prompt-note">{pending.answers[index] || 'No answer'}</p> : <>
+      {pending.answers ? <p className="agent-prompt-note">{pending.answers[index] || t('No answer')}</p> : <>
         <div className="agent-question-options" role={question.multiSelect ? 'group' : 'radiogroup'}>
           {question.options.map(option => {
             const on = picked[index]?.includes(option.label) ?? false
@@ -458,12 +467,12 @@ export function QuestionCard({ pending, status, onAnswer }: { pending: PendingVi
             </button>
           })}
         </div>
-        <input className="agent-question-other" value={other[index] ?? ''} onChange={event => type(index, event.target.value, question.multiSelect)} placeholder={question.multiSelect ? 'Something else (optional)' : 'Other: type your own answer'} aria-label={`Other answer to: ${question.question}`} />
+        <input className="agent-question-other" value={other[index] ?? ''} onChange={event => type(index, event.target.value, question.multiSelect)} placeholder={question.multiSelect ? t('Something else (optional)') : t('Other: type your own answer')} aria-label={t('Other answer to: {question}', { question: question.question })} />
       </>}
     </fieldset>)}
     {open && onAnswer && <div className="agent-prompt-actions">
-      <button type="button" className="button primary" disabled={!answers.every(Boolean)} onClick={() => onAnswer(answers)}>Submit {questions.length === 1 ? 'answer' : 'answers'}</button>
-      {!answers.every(Boolean) && <span className="agent-prompt-hint">Answer every question to continue.</span>}
+      <button type="button" className="button primary" disabled={!answers.every(Boolean)} onClick={() => onAnswer(answers)}>{questions.length === 1 ? t('Submit answer') : t('Submit answers')}</button>
+      {!answers.every(Boolean) && <span className="agent-prompt-hint">{t('Answer every question to continue.')}</span>}
     </div>}
   </section>
 }
@@ -478,17 +487,17 @@ export function ApprovalCard({ pending, status, projectPath, onApprove, onAlways
   if (pending.kind === 'question') return <QuestionCard pending={pending} status={status} onAnswer={onAnswer} />
   if (pending.kind === 'move' || pending.kind === 'mkdir') {
     const [from, to] = pending.label.split(' → ')
-    return <ToolApproval tool={pending.kind === 'move' ? 'move_path' : 'create_folder'} title={pending.kind === 'move' ? 'Rename or move this?' : 'Create this folder?'}
-      description={pending.kind === 'move' ? 'Missing folders at the destination are created. A checkpoint lets rewind move it back.' : 'An empty folder, with any missing parent folders.'}
+    return <ToolApproval tool={pending.kind === 'move' ? 'move_path' : 'create_folder'} title={pending.kind === 'move' ? t('Rename or move this?') : t('Create this folder?')}
+      description={pending.kind === 'move' ? t('Missing folders at the destination are created. A checkpoint lets rewind move it back.') : t('An empty folder, with any missing parent folders.')}
       status={status} defaultOpen={status === 'pending'} onApprove={onApprove} onDeny={onDeny}
-      parameters={pending.kind === 'move' ? [{ id: 'from', label: 'From', value: <ToolApprovalCode code={from} language="text" /> }, { id: 'to', label: 'To', value: <ToolApprovalCode code={to ?? ''} language="text" /> }] : [{ id: 'path', label: 'Folder', value: <ToolApprovalCode code={pending.label} language="text" /> }]} />
+      parameters={pending.kind === 'move' ? [{ id: 'from', label: t('From'), value: <ToolApprovalCode code={from} language="text" /> }, { id: 'to', label: t('To'), value: <ToolApprovalCode code={to ?? ''} language="text" /> }] : [{ id: 'path', label: t('Folder'), value: <ToolApprovalCode code={pending.label} language="text" /> }]} />
   }
   if (pending.kind === 'delete') {
     const lines = parseUnifiedDiff(pending.diff ?? '')
     const counts = diffCounts(lines)
     return <div className="approval-stack">
       {counts.removed > 0 && <FileDiff file={pending.label} lines={lines} status="complete" collapseOnComplete={false} defaultOpen={false} maxHeight={280} language={languageForPath(pending.label)} copyText={pending.diff ?? ''} />}
-      <ToolApproval tool={`delete_file · ${pending.label}`} title="Delete this file?" description={`${counts.removed > 0 ? `${counts.removed} ${counts.removed === 1 ? 'line' : 'lines'} removed with it.` : 'A binary file.'} A checkpoint is saved so rewind can bring it back.`} status={status} onApprove={onApprove} onDeny={onDeny} />
+      <ToolApproval tool={`delete_file · ${pending.label}`} title={t('Delete this file?')} description={counts.removed === 0 ? t('A binary file. A checkpoint is saved so rewind can bring it back.') : counts.removed === 1 ? t('1 line removed with it. A checkpoint is saved so rewind can bring it back.') : t('{n} lines removed with it. A checkpoint is saved so rewind can bring it back.', { n: counts.removed })} status={status} onApprove={onApprove} onDeny={onDeny} />
     </div>
   }
   if (pending.kind === 'edit') {
@@ -496,13 +505,14 @@ export function ApprovalCard({ pending, status, projectPath, onApprove, onAlways
     const counts = diffCounts(lines)
     return <div className="approval-stack">
       <FileDiff file={pending.label} lines={lines} status="complete" collapseOnComplete={false} defaultOpen={status === 'pending'} maxHeight={360} language={languageForPath(pending.label)} copyText={pending.diff ?? ''} />
-      <ToolApproval tool={`edit_file · ${pending.label}`} title="Apply this change?" description={`${counts.added} ${counts.added === 1 ? 'line' : 'lines'} added, ${counts.removed} removed. A checkpoint is saved so you can undo it.`} status={status} onApprove={onApprove} onDeny={onDeny} />
+      {pending.review && status === 'pending' && <SecondOpinion review={pending.review} />}
+      <ToolApproval tool={`edit_file · ${pending.label}`} title={t('Apply this change?')} description={counts.added === 1 ? t('1 line added, {removed} removed. A checkpoint is saved so you can undo it.', { removed: counts.removed }) : t('{added} lines added, {removed} removed. A checkpoint is saved so you can undo it.', { added: counts.added, removed: counts.removed })} status={status} onApprove={onApprove} onDeny={onDeny} />
     </div>
   }
   const task = /^npm run (build|test|lint)$/.test(pending.label)
-  return <ToolApproval tool={task ? 'project.task' : 'terminal.run'} title={task ? 'Allow this project task to run?' : 'Allow this command to run?'} description="Neru wants to run this in the project folder. Output returns to the agent."
+  return <ToolApproval tool={task ? 'project.task' : 'terminal.run'} title={task ? t('Allow this project task to run?') : t('Allow this command to run?')} description={t('Neru wants to run this in the project folder. Output returns to the agent.')}
     status={status} defaultOpen={status === 'pending'} onApprove={onApprove} onAlwaysAllow={onAlwaysAllow} onDeny={onDeny}
-    parameters={[{ id: 'command', label: 'Command', value: <ToolApprovalCode code={pending.label} language={task ? 'bash' : 'powershell'} /> }, ...(projectPath ? [{ id: 'cwd', label: 'Directory', value: projectPath }] : [])]} />
+    parameters={[{ id: 'command', label: t('Command'), value: <ToolApprovalCode code={pending.label} language={task ? 'bash' : 'powershell'} /> }, ...(projectPath ? [{ id: 'cwd', label: t('Directory'), value: projectPath }] : [])]} />
 }
 
 /** Images you sent, as thumbnails in your message (like Claude); click one to see it full size. */
@@ -521,15 +531,15 @@ function MessageImages({ images }: { images: string[] }) {
   }, [open, images.length])
   return <>
     <div className={cn('message-images', images.length === 1 && 'single')}>
-      {images.map((src, index) => <button type="button" key={index} className="message-image" onClick={() => setOpen(index)} aria-label={`Open image ${index + 1}`}>
+      {images.map((src, index) => <button type="button" key={index} className="message-image" onClick={() => setOpen(index)} aria-label={t('Open image {n}', { n: index + 1 })}>
         <img src={src} alt="" loading="lazy" decoding="async" />
       </button>)}
     </div>
-    <AnimatePresence>{open !== null && <motion.div className="image-lightbox" role="dialog" aria-label="Image" onClick={() => setOpen(null)}
+    <AnimatePresence>{open !== null && <motion.div className="image-lightbox" role="dialog" aria-label={t('Image')} onClick={() => setOpen(null)}
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reduce ? 0 : 0.18 }}>
       <motion.img src={images[open]} alt="" onClick={event => event.stopPropagation()}
         initial={reduce ? false : { scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={reduce ? undefined : { scale: 0.96, opacity: 0 }} transition={{ type: 'spring', duration: 0.35, bounce: 0.15 }} />
-      <button type="button" className="image-lightbox-close" aria-label="Close" onClick={() => setOpen(null)}>×</button>
+      <button type="button" className="image-lightbox-close" aria-label={t('Close')} onClick={() => setOpen(null)}>×</button>
     </motion.div>}</AnimatePresence>
   </>
 }
@@ -547,10 +557,10 @@ function RewindMenu({ disabled, onRewind }: { disabled: boolean; onRewind: (rest
   }, [open])
   const choose = (restoreCode: boolean) => { setOpen(false); onRewind(restoreCode) }
   return <div className={cn('rewind', open && 'open')} ref={root}>
-    <button type="button" className="rewind-trigger" disabled={disabled} onClick={() => setOpen(value => !value)} aria-haspopup="menu" aria-expanded={open} title={disabled ? 'Wait for the response to finish' : 'Rewind to before this message'}><History size={13} /> Rewind</button>
+    <button type="button" className="rewind-trigger" disabled={disabled} onClick={() => setOpen(value => !value)} aria-haspopup="menu" aria-expanded={open} title={disabled ? t('Wait for the response to finish') : t('Rewind to before this message')}><History size={13} /> {t('Rewind')}</button>
     {open && <div className="rewind-menu" role="menu">
-      <button type="button" role="menuitem" onClick={() => choose(false)}><strong>Rewind conversation</strong><span>Remove this message and everything after it. Files stay as they are.</span></button>
-      <button type="button" role="menuitem" onClick={() => choose(true)}><strong>Rewind conversation and code</strong><span>Also undo the file changes Neru made since this message.</span></button>
+      <button type="button" role="menuitem" onClick={() => choose(false)}><strong>{t('Rewind conversation')}</strong><span>{t('Remove this message and everything after it. Files stay as they are.')}</span></button>
+      <button type="button" role="menuitem" onClick={() => choose(true)}><strong>{t('Rewind conversation and code')}</strong><span>{t('Also undo the file changes Neru made since this message.')}</span></button>
     </div>}
   </div>
 }
@@ -606,9 +616,9 @@ export function Conversation(props: ConversationProps) {
     {failed && !busy && <Message from="assistant"><span className="message-avatar"><Mascot size={36} /></span><div className="message-body"><ErrorNotice error={failed} onAction={action => action === 'retry' ? props.onRetry() : props.onErrorAction?.(action)} /></div></Message>}
     {props.previewOffer && !pending && <div className="approval-row"><div className="preview-offer" role="status">
       <span className="preview-offer-icon" aria-hidden><Globe size={16} /></span>
-      <span className="preview-offer-text"><strong>Your app is ready to try</strong><span>Open it in Neru's browser. The dev server starts automatically.</span></span>
-      <button type="button" className="button primary" onClick={props.onOpenPreview}><Play size={14} /> Open preview</button>
-      <button type="button" className="icon-button" aria-label="Dismiss" onClick={props.onDismissPreview}><X size={14} /></button>
+      <span className="preview-offer-text"><strong>{t('Your app is ready to try')}</strong><span>{t("Open it in Neru's browser. The dev server starts automatically.")}</span></span>
+      <button type="button" className="button primary" onClick={props.onOpenPreview}><Play size={14} /> {t('Open preview')}</button>
+      <button type="button" className="icon-button" aria-label={t('Dismiss')} onClick={props.onDismissPreview}><X size={14} /></button>
     </div></div>}
     {pending && <div className="approval-row"><ApprovalCard pending={pending} status={props.pendingStatus} projectPath={props.projectPath} onApprove={props.onApprove} onAlwaysAllow={pending.kind === 'task' ? props.onAlwaysAllow : undefined} onDeny={props.onDeny} onResolvePlan={props.onResolvePlan} onAnswer={props.onAnswer} /></div>}
   </MessageScroller></FreshContext.Provider>

@@ -1,6 +1,7 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { Maximize2, Minimize2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { t } from '../../i18n'
 
 export type PaneId = 'terminal' | 'files' | 'changes' | 'browser'
 
@@ -57,8 +58,8 @@ export function Dock({ panes, open, expanded, onExpand, onClose }: {
       <header className="dock-head">
         <div className="dock-head-main">{spec.header ?? <strong>{spec.title}</strong>}</div>
         {spec.actions}
-        <button type="button" className="dock-button" aria-label={expanded === spec.id ? 'Restore' : 'Expand'} title={expanded === spec.id ? 'Restore' : 'Expand'} onClick={() => onExpand(expanded === spec.id ? null : spec.id)}>{expanded === spec.id ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
-        <button type="button" className="dock-button" aria-label={`Close ${spec.title}`} title="Close" onClick={() => onClose(spec.id)}><X size={16} /></button>
+        <button type="button" className="dock-button" aria-label={expanded === spec.id ? t('Restore') : t('Expand')} title={expanded === spec.id ? t('Restore') : t('Expand')} onClick={() => onExpand(expanded === spec.id ? null : spec.id)}>{expanded === spec.id ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
+        <button type="button" className="dock-button" aria-label={t('Close {name}', { name: spec.title })} title={t('Close')} onClick={() => onClose(spec.id)}><X size={16} /></button>
       </header>
       <div className="dock-body">{spec.body}</div>
     </section>
@@ -67,7 +68,7 @@ export function Dock({ panes, open, expanded, onExpand, onClose }: {
   const stack = panes.filter(spec => spec.id !== 'browser')
   const browser = panes.find(spec => spec.id === 'browser')
   return <div ref={root} className={cn('dock', resizing && 'resizing', expanded && 'expanded')} style={{ width: expanded ? undefined : width }} hidden={!anyOpen}>
-    {anyOpen && !expanded && <div className="dock-resizer" onPointerDown={startResize} onDoubleClick={() => { setWidth(640); try { localStorage.setItem(WIDTH_KEY, '640') } catch { /* storage unavailable */ } }} role="separator" aria-orientation="vertical" aria-label="Resize panels" />}
+    {anyOpen && !expanded && <div className="dock-resizer" onPointerDown={startResize} onDoubleClick={() => { setWidth(640); try { localStorage.setItem(WIDTH_KEY, '640') } catch { /* storage unavailable */ } }} role="separator" aria-orientation="vertical" aria-label={t('Resize panels')} />}
     <div className="dock-col dock-stack" hidden={!stackVisible}>{stack.map(render)}</div>
     <div className="dock-col dock-web" hidden={!browserVisible}>{browser && render(browser)}</div>
   </div>

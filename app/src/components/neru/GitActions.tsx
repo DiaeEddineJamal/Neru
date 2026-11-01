@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { GitFile, RemoteInfo } from '../../types'
+import { t } from '../../i18n'
 
 const conflict = (file: GitFile) => /U/.test(file.status) || file.status === 'AA' || file.status === 'DD'
 
@@ -26,30 +27,30 @@ export function GitActions({ busy, branch, branches, files, remote, onFetch, onP
   const conflicts = files.filter(conflict)
   return <div className="git-actions">
     <div className="remote-actions">
-      <button className="button subtle" disabled={busy} onClick={onFetch}>Fetch</button>
-      <button className="button subtle" disabled={busy || !remote?.remote} onClick={onPull}>Pull{remote?.behind ? ` ${remote.behind}` : ''}</button>
-      <button className="button subtle" disabled={busy} onClick={() => onStash('push')}>Stash</button>
-      <button className="button subtle" disabled={busy} onClick={() => onStash('pop')}>Pop stash</button>
-      {remote?.remote && <button className="button subtle" disabled={busy || branch === 'detached HEAD'} onClick={onPush}>Push{remote.ahead ? ` ${remote.ahead}` : ''}</button>}
+      <button className="button subtle" disabled={busy} onClick={onFetch}>{t('Fetch')}</button>
+      <button className="button subtle" disabled={busy || !remote?.remote} onClick={onPull}>{t('Pull')}{remote?.behind ? ` ${remote.behind}` : ''}</button>
+      <button className="button subtle" disabled={busy} onClick={() => onStash('push')}>{t('Stash')}</button>
+      <button className="button subtle" disabled={busy} onClick={() => onStash('pop')}>{t('Pop stash')}</button>
+      {remote?.remote && <button className="button subtle" disabled={busy || branch === 'detached HEAD'} onClick={onPush}>{t('Push')}{remote.ahead ? ` ${remote.ahead}` : ''}</button>}
     </div>
-    <label className="git-select">Switch branch
+    <label className="git-select">{t('Switch branch')}
       <select value={branch} disabled={busy} onChange={event => onCheckout(event.target.value)}>
         {branches.map(name => <option key={name} value={name}>{name}</option>)}
       </select>
     </label>
     <div className="field-row">
       <select value={other} onChange={event => setOther(event.target.value)} disabled={busy}>
-        <option value="">Another branch…</option>
+        <option value="">{t('Another branch…')}</option>
         {others.map(name => <option key={name} value={name}>{name}</option>)}
       </select>
-      <button className="button subtle" disabled={busy || !other} onClick={() => onMerge(other)}>Merge</button>
-      <button className="button subtle" disabled={busy || !other} onClick={() => onRebase(other)}>Rebase</button>
+      <button className="button subtle" disabled={busy || !other} onClick={() => onMerge(other)}>{t('Merge')}</button>
+      <button className="button subtle" disabled={busy || !other} onClick={() => onRebase(other)}>{t('Rebase')}</button>
     </div>
-    {conflicts.length > 0 && <p className="clone-error">{conflicts.length} conflicted file{conflicts.length === 1 ? '' : 's'}: {conflicts.map(file => file.path).join(', ')}. Open each file, resolve the markers, then stage it.</p>}
+    {conflicts.length > 0 && <p className="clone-error">{conflicts.length === 1 ? t('1 conflicted file: {files}. Open each file, resolve the markers, then stage it.', { files: conflicts[0].path }) : t('{n} conflicted files: {files}. Open each file, resolve the markers, then stage it.', { n: conflicts.length, files: conflicts.map(file => file.path).join(', ') })}</p>}
     {web && <div className="pr-form">
-      <input value={title} onChange={event => setTitle(event.target.value)} placeholder={`Pull request title into ${remote?.base ?? 'the base branch'}`} />
-      <textarea value={body} onChange={event => setBody(event.target.value)} rows={3} placeholder="What changed, and how to review it" />
-      <button className="button subtle" disabled={busy || branch === remote?.base} onClick={() => onPullRequest(title, body)}>Create pull request</button>
+      <input value={title} onChange={event => setTitle(event.target.value)} placeholder={remote?.base ? t('Pull request title into {base}', { base: remote.base }) : t('Pull request title into the base branch')} />
+      <textarea value={body} onChange={event => setBody(event.target.value)} rows={3} placeholder={t('What changed, and how to review it')} />
+      <button className="button subtle" disabled={busy || branch === remote?.base} onClick={() => onPullRequest(title, body)}>{t('Create pull request')}</button>
     </div>}
   </div>
 }

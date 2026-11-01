@@ -5,6 +5,7 @@ import { findSpeechModel, speechModels, type SpeechModel } from '@/lib/speech/ca
 import { downloadModel, isModelCached, removeModel, type DownloadProgress } from '@/lib/speech/local'
 import { EASE_OUT } from '@/lib/ease'
 import { cn } from '@/lib/utils'
+import { t } from '../../i18n'
 
 const ACTIVE_KEY = 'neru.speech.model'
 
@@ -63,7 +64,7 @@ export function useSpeechModels() {
 const formatMb = (bytes: number) => `${Math.round(bytes / 1e6)} MB`
 
 function Meter({ value, label }: { value: number; label: string }) {
-  return <span className="speech-meter" aria-label={`${label} ${value} of 5`} title={`${label}: ${value}/5`}>{[1, 2, 3, 4, 5].map(step => <i key={step} className={step <= value ? 'on' : ''} />)}</span>
+  return <span className="speech-meter" aria-label={t('{label} {value} of 5', { label, value })} title={`${label}: ${value}/5`}>{[1, 2, 3, 4, 5].map(step => <i key={step} className={step <= value ? 'on' : ''} />)}</span>
 }
 
 export function SpeechModelCatalog({ compact = false, onChange }: { compact?: boolean; onChange?: () => void }) {
@@ -93,30 +94,30 @@ export function SpeechModelCatalog({ compact = false, onChange }: { compact?: bo
         <div className="speech-model-main">
           <div className="speech-model-title">
             <strong>{model.name}</strong>
-            {model.recommended && <span className="speech-tag accent">Recommended</span>}
-            <span className="speech-tag">{model.languages === 'english' ? 'English' : '99 languages'}</span>
-            {model.requiresGpu && <span className="speech-tag" title={gpu === false ? 'No WebGPU adapter was found on this machine' : 'Runs on your GPU'}>{gpu === false ? <Cpu size={11} /> : <MonitorCog size={11} />}{gpu === false ? 'GPU not found' : 'GPU'}</span>}
+            {model.recommended && <span className="speech-tag accent">{t('Recommended')}</span>}
+            <span className="speech-tag">{model.languages === 'english' ? t('English') : t('99 languages')}</span>
+            {model.requiresGpu && <span className="speech-tag" title={gpu === false ? t('No WebGPU adapter was found on this machine') : t('Runs on your GPU')}>{gpu === false ? <Cpu size={11} /> : <MonitorCog size={11} />}{gpu === false ? t('GPU not found') : 'GPU'}</span>}
           </div>
-          {!compact && <p>{model.summary}</p>}
+          {!compact && <p>{t(model.summary)}</p>}
           <div className="speech-model-meta">
             <span>{model.sizeMb} MB</span>
-            <span className="speech-meter-group"><Gauge size={12} />Speed <Meter value={model.speed} label="Speed" /></span>
-            <span className="speech-meter-group">Accuracy <Meter value={model.accuracy} label="Accuracy" /></span>
+            <span className="speech-meter-group"><Gauge size={12} />{t('Speed')} <Meter value={model.speed} label={t('Speed')} /></span>
+            <span className="speech-meter-group">{t('Accuracy')} <Meter value={model.accuracy} label={t('Accuracy')} /></span>
           </div>
-          {state.status === 'downloading' && <div className="speech-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)} aria-label={`Downloading ${model.name}`}>
+          {state.status === 'downloading' && <div className="speech-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)} aria-label={t('Downloading {name}', { name: model.name })}>
             <motion.span initial={false} animate={{ scaleX: percent / 100 }} transition={{ duration: reduce ? 0 : 0.25, ease: EASE_OUT }} />
-            <small>{state.progress ? `${formatMb(state.progress.loaded)} of ${formatMb(state.progress.total)}` : 'Starting download…'}</small>
+            <small>{state.progress ? t('{loaded} of {total}', { loaded: formatMb(state.progress.loaded), total: formatMb(state.progress.total) }) : t('Starting download…')}</small>
           </div>}
           {state.status === 'error' && <p className="speech-error" role="alert">{state.message}</p>}
         </div>
         <div className="speech-model-actions">
-          {state.status === 'checking' && <LoaderCircle size={16} className={cn('speech-spinner', !reduce && 'animate-spin')} aria-label="Checking" />}
-          {(state.status === 'absent' || state.status === 'error') && <button type="button" className="speech-button" disabled={unavailable} onClick={() => void installSpeechModel(model).then(() => onChange?.())}><Download size={14} />{state.status === 'error' ? 'Retry' : 'Download'}</button>}
+          {state.status === 'checking' && <LoaderCircle size={16} className={cn('speech-spinner', !reduce && 'animate-spin')} aria-label={t('Checking')} />}
+          {(state.status === 'absent' || state.status === 'error') && <button type="button" className="speech-button" disabled={unavailable} onClick={() => void installSpeechModel(model).then(() => onChange?.())}><Download size={14} />{state.status === 'error' ? t('Retry') : t('Download')}</button>}
           {state.status === 'downloading' && <span className="speech-percent">{Math.round(percent)}%</span>}
           {installed && (isActive
-            ? <span className="speech-active"><Check size={14} />In use</span>
-            : <button type="button" className="speech-button" onClick={() => { setActiveSpeechModel(model.id); onChange?.() }}>Use</button>)}
-          {installed && <button type="button" className="speech-icon" onClick={() => void remove(model)} aria-label={`Remove ${model.name}`} title="Remove from this machine"><Trash2 size={14} /></button>}
+            ? <span className="speech-active"><Check size={14} />{t('In use')}</span>
+            : <button type="button" className="speech-button" onClick={() => { setActiveSpeechModel(model.id); onChange?.() }}>{t('Use')}</button>)}
+          {installed && <button type="button" className="speech-icon" onClick={() => void remove(model)} aria-label={t('Remove {name}', { name: model.name })} title={t('Remove from this machine')}><Trash2 size={14} /></button>}
         </div>
       </div>
     })}

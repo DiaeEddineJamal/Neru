@@ -253,6 +253,7 @@ fn public_messages(messages: &[Value]) -> Vec<Value> {
             let mut copy = message.clone();
             if let Some(object) = copy.as_object_mut() {
                 object.remove("_prompt_tokens");
+                object.remove("_completion_tokens");
             }
             copy
         })

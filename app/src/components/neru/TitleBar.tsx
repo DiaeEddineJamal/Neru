@@ -3,6 +3,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ArrowLeft, ArrowRight, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { t } from '../../i18n'
 
 const isMac = /Mac/i.test(navigator.platform)
 /** The frameless window, or null outside the desktop shell; never throws so the UI can't blank out. */
@@ -41,7 +42,7 @@ export function AppMenu({ sections }: { sections: AppMenuSection[] }) {
   }, [open])
   const choose = (item: AppMenuItem) => { setOpen(false); setActive(null); item.onSelect() }
   return <div className="app-menu" ref={root}>
-    <button type="button" className={cn('titlebar-button', open && 'pressed')} aria-label="Application menu" aria-haspopup="menu" aria-expanded={open} title="Menu" onClick={() => { setOpen(value => !value); setActive(null) }}><MenuIcon /></button>
+    <button type="button" className={cn('titlebar-button', open && 'pressed')} aria-label={t('Application menu')} aria-haspopup="menu" aria-expanded={open} title={t('Menu')} onClick={() => { setOpen(value => !value); setActive(null) }}><MenuIcon /></button>
     {open && <div className="app-menu-panel" role="menu">
       {sections.map(section => <div key={section.label} className="app-menu-group" onMouseEnter={() => setActive(section.label)}>
         <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={active === section.label} className={cn('app-menu-row', active === section.label && 'active')} onClick={() => setActive(section.label)} onKeyDown={event => { if (event.key === 'ArrowRight') setActive(section.label) }}>
@@ -74,9 +75,9 @@ export function TitleBarLeading(props: TitleBarLeadingProps): ReactNode {
   const { sidebarOpen } = props
   return <div className="titlebar-leading">
     <AppMenu sections={props.sections} />
-    <button type="button" className="titlebar-button" onClick={props.onToggleSidebar} onMouseEnter={props.onPeek} onMouseLeave={props.onUnpeek} aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'} aria-pressed={sidebarOpen} title={`${sidebarOpen ? 'Close' : 'Open'} sidebar (${mod} B)`}><SidebarIcon open={sidebarOpen} /></button>
-    <button type="button" className="titlebar-button" onClick={props.onBack} disabled={!props.canBack} aria-label="Back" title="Back (Alt ←)"><ArrowLeft size={17} strokeWidth={1.75} /></button>
-    <button type="button" className="titlebar-button" onClick={props.onForward} disabled={!props.canForward} aria-label="Forward" title="Forward (Alt →)"><ArrowRight size={17} strokeWidth={1.75} /></button>
+    <button type="button" className="titlebar-button" onClick={props.onToggleSidebar} onMouseEnter={props.onPeek} onMouseLeave={props.onUnpeek} aria-label={sidebarOpen ? t('Close sidebar') : t('Open sidebar')} aria-pressed={sidebarOpen} title={`${sidebarOpen ? t('Close sidebar') : t('Open sidebar')} (${mod} B)`}><SidebarIcon open={sidebarOpen} /></button>
+    <button type="button" className="titlebar-button" onClick={props.onBack} disabled={!props.canBack} aria-label={t('Back')} title={`${t('Back')} (Alt ←)`}><ArrowLeft size={17} strokeWidth={1.75} /></button>
+    <button type="button" className="titlebar-button" onClick={props.onForward} disabled={!props.canForward} aria-label={t('Forward')} title={`${t('Forward')} (Alt →)`}><ArrowRight size={17} strokeWidth={1.75} /></button>
   </div>
 }
 
@@ -95,12 +96,12 @@ export function WindowControls() {
   if (isMac) return null
   const run = (action: 'minimize' | 'toggleMaximize' | 'close') => { void appWindow()?.[action]().catch(() => undefined) }
   return <div className="window-controls">
-    <button type="button" className="window-control" aria-label="Minimize" title="Minimize" onClick={() => run('minimize')}><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden><path d="M0 5.5h10" stroke="currentColor" /></svg></button>
-    <button type="button" className="window-control" aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore' : 'Maximize'} onClick={() => run('toggleMaximize')}>
+    <button type="button" className="window-control" aria-label={t('Minimize')} title={t('Minimize')} onClick={() => run('minimize')}><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden><path d="M0 5.5h10" stroke="currentColor" /></svg></button>
+    <button type="button" className="window-control" aria-label={maximized ? t('Restore') : t('Maximize')} title={maximized ? t('Restore') : t('Maximize')} onClick={() => run('toggleMaximize')}>
       {maximized
         ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden><rect x=".5" y="2.5" width="7" height="7" rx="1" stroke="currentColor" /><path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-1" stroke="currentColor" /></svg>
         : <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden><rect x=".5" y=".5" width="9" height="9" rx="1" stroke="currentColor" /></svg>}
     </button>
-    <button type="button" className="window-control close" aria-label="Close" title="Close" onClick={() => run('close')}><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor" /></svg></button>
+    <button type="button" className="window-control close" aria-label={t('Close')} title={t('Close')} onClick={() => run('close')}><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor" /></svg></button>
   </div>
 }

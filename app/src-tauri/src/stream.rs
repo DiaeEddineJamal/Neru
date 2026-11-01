@@ -18,6 +18,7 @@ pub struct StreamAccumulator {
     final_body: Option<Value>,
     buffer: String,
     prompt_tokens: Option<usize>,
+    completion_tokens: Option<usize>,
     /// Characters of hidden reasoning streamed so far (DeepSeek R1, Qwen thinking, etc.).
     pub reasoning: usize,
     pub reasoning_text: String,
@@ -32,6 +33,7 @@ impl StreamAccumulator {
             final_body: None,
             buffer: String::new(),
             prompt_tokens: None,
+            completion_tokens: None,
             reasoning: 0,
             reasoning_text: String::new(),
         }
@@ -181,6 +183,16 @@ impl StreamAccumulator {
         if let Some(tokens) = tokens {
             self.prompt_tokens = Some(tokens as usize);
         }
+        let output = event["usage"]["completion_tokens"]
+            .as_u64()
+            .or_else(|| event["usage"]["output_tokens"].as_u64())
+            .or_else(|| event["message"]["usage"]["output_tokens"].as_u64())
+            .or_else(|| event["response"]["usage"]["output_tokens"].as_u64())
+            .or_else(|| event["x_groq"]["usage"]["completion_tokens"].as_u64());
+        // Some providers repeat running totals; Anthropic sends one at the start and the total at the end.
+        if let Some(output) = output {
+            self.completion_tokens = Some(self.completion_tokens.unwrap_or(0).max(output as usize));
+        }
     }
 
     fn text_delta(&mut self, value: Option<&str>) -> Option<String> {
@@ -199,6 +211,9 @@ impl StreamAccumulator {
                 }
                 if let Some(tokens) = self.prompt_tokens.or_else(|| crate::providers::prompt_tokens(&body)) {
                     message["_prompt_tokens"] = json!(tokens);
+                }
+                if let Some(tokens) = self.completion_tokens.or_else(|| body["usage"]["output_tokens"].as_u64().map(|n| n as usize)) {
+                    message["_completion_tokens"] = json!(tokens);
                 }
                 return Ok(message);
             }
@@ -227,6 +242,9 @@ impl StreamAccumulator {
         }
         if let Some(tokens) = self.prompt_tokens {
             message["_prompt_tokens"] = json!(tokens);
+        }
+        if let Some(tokens) = self.completion_tokens {
+            message["_completion_tokens"] = json!(tokens);
         }
         Ok(message)
     }

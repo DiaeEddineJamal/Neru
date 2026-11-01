@@ -2,11 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { LISTING_IS_AUTHORITATIVE } from './ModelPicker'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { ArrowLeft, ArrowRight, ArrowUp, AudioLines, Bell, Brain, Check, ChevronDown, CircleAlert, FileText, Folder, FolderOpen, GitFork, GitPullRequest, Globe, History, KeyRound, Layers, ListChecks, LoaderCircle, Moon, MonitorPlay, Network, Paperclip, Pause, PenLine, Plug, Rocket, Search, Shuffle, ShieldCheck, Slash, Sparkles, SquareTerminal, Sun, Users, Webhook, ArrowRightLeft, Download, Undo2, X, CornerDownRight, type LucideIcon } from 'lucide-react'
-import { VoiceBeam } from 'voice-glow'
 import { ToolApproval, ToolApprovalCode } from '@/components/agents/tool-approval'
 import { dictationLanguages } from '@/lib/speech/catalog'
 import { EASE_OUT } from '@/lib/ease'
-import { neruVoiceGlow } from '@/lib/voiceTheme'
+import { SoundBars } from './SoundBars'
 import { cn } from '@/lib/utils'
 import { api } from '../../api'
 import { author } from '../../credits'
@@ -99,7 +98,7 @@ const featureGroups: FeatureGroup[] = [
 
 const modes = ['Ask every time', 'Accept edits', 'Plan (read-only)', 'Auto', 'Bypass']
 
-/** A gentle synthetic voice level so the glow preview breathes without a microphone. */
+/** A gentle synthetic voice level so the sound-bar preview moves without a microphone. */
 function useDemoLevel(active: boolean) {
   const start = useRef(performance.now())
   return () => {
@@ -388,16 +387,16 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
               <h1 ref={headingRef} tabIndex={-1}>Talk to Neru. <span className="ob-optional">Optional</span></h1>
               <p className="ob-lede">Press the microphone in the message box and speak. A small model on this machine turns your voice into text, and it never leaves the computer.</p>
               <div className="ob-voice-demo" aria-hidden>
-                <VoiceBeam level={level} processing={demo === 'processing'} theme={light ? 'light' : 'dark'} {...neruVoiceGlow(light)} className="ob-beam">
+                <div className="ob-beam">
                   <div className="ob-demo-input">
                     <span className="ob-demo-text">{demo === 'listening' ? 'Refactor the sidebar so it remembers its width…' : 'Transcribing…'}</span>
                     <span className="ob-demo-controls"><span className="ob-demo-pill">Review</span>
                       {demo === 'listening'
-                        ? <span className="ob-demo-voice"><span className="voice-status"><i />0:04</span><span className="voice-button"><Pause size={14} /></span><span className="voice-button"><X size={15} /></span><span className="voice-button confirm"><Check size={15} /></span><span className="voice-button send"><ArrowUp size={16} /></span></span>
+                        ? <span className="ob-demo-voice"><span className="voice-status"><SoundBars level={level} />0:04</span><span className="voice-button"><Pause size={14} /></span><span className="voice-button"><X size={15} /></span><span className="voice-button confirm"><Check size={15} /></span><span className="voice-button send"><ArrowUp size={16} /></span></span>
                         : <span className="ob-demo-voice"><span className="voice-status"><LoaderCircle size={14} className="animate-spin" />Transcribing…</span><span className="voice-button"><X size={15} /></span></span>}
                     </span>
                   </div>
-                </VoiceBeam>
+                </div>
               </div>
               <label className="ob-field ob-language"><span><Globe size={13} /> Dictation language</span><select value={language} onChange={event => onLanguageChange(event.target.value)}>{dictationLanguages.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
               <SpeechModelCatalog compact />

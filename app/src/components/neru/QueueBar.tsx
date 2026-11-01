@@ -1,11 +1,12 @@
 import { CornerDownLeft, Pencil, X } from 'lucide-react'
-import { canSteerQueued, queueLabel, type QueuedMessage } from '../../lib/queue'
+import { canSteerQueued, type QueuedMessage } from '../../lib/queue'
+import { t } from '../../i18n'
 
 function Preview({ item }: { item: QueuedMessage }) {
   const images = item.documents.filter(doc => doc.kind === 'image')
   const files = item.documents.filter(doc => doc.kind !== 'image')
   return <span className="queue-preview">
-    {images.map(doc => <em key={doc.path}>[Image]</em>)}
+    {images.map(doc => <em key={doc.path}>[{t('Image')}]</em>)}
     {files.map(doc => <em key={doc.path}>[{doc.name}]</em>)}
     {item.contextPaths.map(path => <em key={path}>[{path.split(/[\\/]/).pop()}]</em>)}
     {item.text && <span className="queue-text">{item.text.replace(/\s+/g, ' ')}</span>}
@@ -20,10 +21,11 @@ export function QueueBar({ items, onSteer, onEdit, onRemove }: {
   onRemove: (id: string) => void
 }) {
   if (items.length === 0) return null
+  const queueLabel = (count: number) => count === 1 ? t('1 message queued') : t('{n} messages queued', { n: count })
   const actions = (item: QueuedMessage) => <span className="queue-actions">
-    <button type="button" onClick={() => onSteer(item.id)} disabled={!canSteerQueued(item)} aria-label="Send now" title={canSteerQueued(item) ? 'Send now: Neru reads it before its next step' : 'Messages with attachments send when the reply finishes'}><CornerDownLeft size={14} /></button>
-    <button type="button" onClick={() => onEdit(item.id)} aria-label="Edit queued message" title="Edit: move it back into the message box"><Pencil size={14} /></button>
-    <button type="button" onClick={() => onRemove(item.id)} aria-label="Remove queued message" title="Remove"><X size={15} /></button>
+    <button type="button" onClick={() => onSteer(item.id)} disabled={!canSteerQueued(item)} aria-label={t('Send now')} title={canSteerQueued(item) ? t('Send now: Neru reads it before its next step') : t('Messages with attachments send when the reply finishes')}><CornerDownLeft size={14} /></button>
+    <button type="button" onClick={() => onEdit(item.id)} aria-label={t('Edit queued message')} title={t('Edit: move it back into the message box')}><Pencil size={14} /></button>
+    <button type="button" onClick={() => onRemove(item.id)} aria-label={t('Remove queued message')} title={t('Remove')}><X size={15} /></button>
   </span>
   return <div className="queue-bar" role="status" aria-label={queueLabel(items.length)}>
     {items.length === 1

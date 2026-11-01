@@ -330,12 +330,13 @@ pub(crate) fn pending_view(action: &PendingAction) -> (PendingView, bool) {
                 label: crate::workspace::proposal_label(proposal),
                 diff: Some(proposal.diff.clone()),
                 questions: None,
+                review: crate::review::lookup(&proposal.diff),
             },
             tool_call_id.is_some(),
         ),
         // The plan's markdown travels in `diff`.
         PendingAction::Plan { plan, tool_call_id } => (
-            PendingView { kind: "plan".into(), label: "Plan".into(), diff: Some(plan.clone()), questions: None },
+            PendingView { kind: "plan".into(), label: "Plan".into(), diff: Some(plan.clone()), questions: None, review: None },
             tool_call_id.is_some(),
         ),
         PendingAction::Question { questions, tool_call_id } => (
@@ -344,6 +345,7 @@ pub(crate) fn pending_view(action: &PendingAction) -> (PendingView, bool) {
                 label: questions.iter().map(|question| question.question.as_str()).collect::<Vec<_>>().join(" · "),
                 diff: None,
                 questions: Some(questions.clone()),
+                review: None,
             },
             tool_call_id.is_some(),
         ),
@@ -353,6 +355,7 @@ pub(crate) fn pending_view(action: &PendingAction) -> (PendingView, bool) {
                 label: format!("npm run {task}"),
                 diff: None,
                 questions: None,
+                review: None,
             },
             tool_call_id.is_some(),
         ),
@@ -373,6 +376,7 @@ pub(crate) fn pending_view(action: &PendingAction) -> (PendingView, bool) {
                 },
                 diff: None,
                 questions: None,
+                review: None,
             },
             tool_call_id.is_some(),
         ),
@@ -394,6 +398,7 @@ pub(crate) fn pending_view(action: &PendingAction) -> (PendingView, bool) {
                 ),
                 diff: None,
                 questions: None,
+                review: None,
             },
             tool_call_id.is_some(),
         ),
@@ -527,6 +532,8 @@ pub fn create_with_id(
 
 /// A session that runs in the background for a Team member; the active session stays as it is.
 pub fn create_detached(state: &AppState, root: &Path, title: &str) -> Result<String, String> {
+    // Paths are compared in canonical form (as open_project stores them); one typed on the phone may not be.
+    let root = &root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let id = Uuid::new_v4().to_string();
     let mut runtime = Runtime::from_file(SessionFile {
         summary: SessionSummary {

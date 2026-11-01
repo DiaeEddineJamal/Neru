@@ -1,14 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, Check, ChevronDown, Eye, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
 import { Liquid } from 'liquid-gooey'
 import { useReducedMotion } from 'motion/react'
-import { useMicrophone, VoiceBeam } from 'voice-glow'
+import { useMicrophone } from 'voice-glow'
 import { PromptInput } from '@/components/agents/prompt-input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/motion/select'
-import { neruVoiceGlow } from '@/lib/voiceTheme'
+import { SoundBars } from './SoundBars'
 import { cn } from '@/lib/utils'
 import type { AgentMode, ContextUsage, Effort, ModelInfo, SlashCommand } from '../../types'
-import { ModelBadges, ModelFilters, ModelRowText, ModelSearch, filterModels, groupModels, shortModelName, uniqueShortNames, type ModelFilter } from './ModelPicker'
+import { t } from '../../i18n'
+import { ModelSelector } from './ModelSelector'
 
 export type VoiceEngine = 'local' | 'transcription' | 'system'
 type VoiceState = 'idle' | 'listening' | 'paused' | 'transcribing'
@@ -68,7 +69,7 @@ function PlusMenu({ items, disabled }: { items: PlusMenuItem[]; disabled: boolea
       </Liquid.Item>)}
     </Liquid>
     </div>
-    <button type="button" className="plus-trigger" aria-label="Add to message" aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => open ? hide() : show()}><Plus size={17} /></button>
+    <button type="button" className="plus-trigger" aria-label={t('Add to message')} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => open ? hide() : show()}><Plus size={17} /></button>
   </div>
 }
 
@@ -125,18 +126,18 @@ function MicMenu({ device, onDevice, hold, onHold, disabled, systemEngine }: {
   // A saved device that is gone (headset unplugged) falls back to the system default, so show that as chosen.
   const chosen = devices.some(item => item.deviceId === device) ? device : (devices.find(item => item.deviceId === 'default') ?? devices[0])?.deviceId ?? ''
   return <div className="mic-menu" ref={root}>
-    <button type="button" className={cn('mic-menu-trigger', open && 'on')} aria-label="Microphone settings" aria-haspopup="menu" aria-expanded={open} title="Microphone settings" disabled={disabled} onClick={() => setOpen(value => !value)}><ChevronDown size={13} /></button>
-    {open && <div ref={panel} className="mic-menu-panel" role="menu" aria-label="Microphone" style={room ? { width: Math.min(380, room) } : undefined}>
-      <div className="mic-menu-label">Microphone</div>
-      {devices.length === 0 && <p className="mic-menu-empty">No microphone found</p>}
+    <button type="button" className={cn('mic-menu-trigger', open && 'on')} aria-label={t('Microphone settings')} aria-haspopup="menu" aria-expanded={open} title={t('Microphone settings')} disabled={disabled} onClick={() => setOpen(value => !value)}><ChevronDown size={13} /></button>
+    {open && <div ref={panel} className="mic-menu-panel" role="menu" aria-label={t('Microphone')} style={room ? { width: Math.min(380, room) } : undefined}>
+      <div className="mic-menu-label">{t('Microphone')}</div>
+      {devices.length === 0 && <p className="mic-menu-empty">{t('No microphone found')}</p>}
       {devices.map((item, index) => <button key={item.deviceId || index} type="button" role="menuitemradio" aria-checked={item.deviceId === chosen} title={item.label || undefined}
         onClick={() => { onDevice(item.deviceId === 'default' ? '' : item.deviceId); setOpen(false) }}>
-        <span className="truncate">{item.label || `Microphone ${index + 1}`}</span>{item.deviceId === chosen && <Check size={14} />}
+        <span className="truncate">{item.label || t('Microphone {n}', { n: index + 1 })}</span>{item.deviceId === chosen && <Check size={14} />}
       </button>)}
-      {systemEngine && <p className="mic-menu-note">System speech always uses the Windows default input. Pick another engine in Settings → Voice to use this choice.</p>}
+      {systemEngine && <p className="mic-menu-note">{t('System speech always uses the Windows default input. Pick another engine in Settings → Voice to use this choice.')}</p>}
       <div className="mic-menu-sep" />
       <button type="button" role="menuitemcheckbox" aria-checked={hold} onClick={() => onHold(!hold)}>
-        <span>Hold to record</span><i className={cn('switch', hold && 'on')} aria-hidden />
+        <span>{t('Hold to record')}</span><i className={cn('switch', hold && 'on')} aria-hidden />
       </button>
     </div>}
   </div>
@@ -155,13 +156,6 @@ export function expandCommand(command: SlashCommand, args: string) {
   return command.template.includes('$ARGUMENTS') ? command.template.replaceAll('$ARGUMENTS', args) : args ? `${command.template}\n\n${args}` : command.template
 }
 
-const EFFORTS: { value: Effort; label: string; hint: string }[] = [
-  { value: 'auto', label: 'Auto', hint: 'The model decides how long to think' },
-  { value: 'low', label: 'Low', hint: 'Fastest answers, least reasoning' },
-  { value: 'medium', label: 'Medium', hint: 'Balanced reasoning' },
-  { value: 'high', label: 'High', hint: 'Thinks longest; best for hard problems' },
-]
-
 const compact = (tokens: number) => tokens >= 1_000_000 ? `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 ? 1 : 0)}M` : tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens)
 
 const count = (value: number) => value.toLocaleString()
@@ -178,25 +172,25 @@ function ContextMeter({ usage }: { usage: ContextUsage }) {
   const quotas = usage.quotas ?? []
   const low = quotas.some(quota => quota.limit && quota.remaining !== null && quota.remaining / quota.limit < 0.1)
   const tone = share > 0.9 || low ? 'full' : share > 0.7 ? 'high' : ''
-  const label = `${usage.measured ? '' : 'About '}${compact(usage.used)} of ${compact(limit)} tokens used (${percent}%)`
-  return <span className={cn('context-meter', tone)} tabIndex={0} role="button" aria-label={`Context: ${label}`}>
+  const label = usage.measured ? t('{used} of {limit} tokens used ({percent}%)', { used: compact(usage.used), limit: compact(limit), percent }) : t('About {used} of {limit} tokens used ({percent}%)', { used: compact(usage.used), limit: compact(limit), percent })
+  return <span className={cn('context-meter', tone)} tabIndex={0} role="button" aria-label={t('Context: {label}', { label })}>
     <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden><circle cx="9" cy="9" r={radius} className="track" /><circle cx="9" cy="9" r={radius} className="fill" strokeDasharray={`${Math.max(share * length, share > 0 ? 1.5 : 0)} ${length}`} transform="rotate(-90 9 9)" /></svg>
     <span className="context-panel" role="tooltip">
-      <strong>{usage.model || 'Context'}</strong>
-      <span className="context-row"><span>This conversation</span><b>{usage.measured ? '' : '~'}{count(usage.used)} tokens · {percent}%</b></span>
-      <span className="context-row"><span>Context window</span><b>{count(usage.window)}{usage.windowReported ? '' : ' (estimate)'}</b></span>
-      {capped && <span className="context-row"><span>Per-request limit</span><b>{count(limit)}</b></span>}
-      {capped && <small>This key allows {compact(limit)} tokens a minute, so each request must fit in that. Neru trims and summarizes to stay under it.</small>}
+      <strong>{usage.model || t('Context')}</strong>
+      <span className="context-row"><span>{t('This conversation')}</span><b>{t('{n} tokens · {percent}%', { n: `${usage.measured ? '' : '~'}${count(usage.used)}`, percent })}</b></span>
+      <span className="context-row"><span>{t('Context window')}</span><b>{usage.windowReported ? count(usage.window) : t('{n} (estimate)', { n: count(usage.window) })}</b></span>
+      {capped && <span className="context-row"><span>{t('Per-request limit')}</span><b>{count(limit)}</b></span>}
+      {capped && <small>{t('This key allows {n} tokens a minute, so each request must fit in that. Neru trims and summarizes to stay under it.', { n: compact(limit) })}</small>}
       {quotas.length > 0 && <span className="context-quotas">{quotas.map(quota => {
         const left = quota.limit && quota.remaining !== null ? Math.max(0, Math.min(1, quota.remaining / quota.limit)) : null
         return <span key={quota.label} className="context-quota">
-          <span className="context-row"><span>{quota.label}</span><b>{quota.remaining !== null ? count(quota.remaining) : '?'}{quota.limit ? ` of ${count(quota.limit)}` : ''} left</b></span>
+          <span className="context-row"><span>{quota.label}</span><b>{quota.limit ? t('{n} of {limit} left', { n: quota.remaining !== null ? count(quota.remaining) : '?', limit: count(quota.limit) }) : t('{n} left', { n: quota.remaining !== null ? count(quota.remaining) : '?' })}</b></span>
           {left !== null && <i className={cn(left < 0.1 && 'low')} style={{ ['--left' as string]: `${left * 100}%` }} />}
-          {quota.resetsIn && <small>Resets in {quota.resetsIn}</small>}
+          {quota.resetsIn && <small>{t('Resets in {time}', { time: quota.resetsIn })}</small>}
         </span>
       })}</span>}
-      {quotas.length === 0 && <small>Rate limits appear here after the first reply, when the provider reports them.</small>}
-      {share > 0.9 && <small>Nearly full. Start a new session, rewind, or run /compact.</small>}
+      {quotas.length === 0 && <small>{t('Rate limits appear here after the first reply, when the provider reports them.')}</small>}
+      {share > 0.9 && <small>{t('Nearly full. Start a new session, rewind, or run /compact.')}</small>}
     </span>
   </span>
 }
@@ -230,6 +224,8 @@ export interface ComposerProps {
   onWebChange: (web: boolean) => void
   model: string
   models: ModelInfo[]
+  /** Which provider serves the list, for its logo and the speed estimates. */
+  providerId?: string
   onModelChange: (model: string) => void
   /** Result of checking a model the user picked: shown under the prompt until the next pick. */
   modelNotice?: { tone: 'checking' | 'error' | 'note'; text: string } | null
@@ -295,7 +291,7 @@ export function Composer(props: ComposerProps) {
     if (voice !== 'idle' || disabled) return
     if (!props.voiceReady) { props.onVoiceUnavailable(); return }
     const stream = await mic.start()
-    if (!stream) { props.onError(mic.error?.message || 'Microphone access was denied. Allow it in Windows privacy settings and try again.'); return }
+    if (!stream) { props.onError(mic.error?.message || t('Microphone access was denied. Allow it in Windows privacy settings and try again.')); return }
     baseText.current = valueRef.current
     clockState.current = { started: performance.now(), banked: 0 }
     setElapsed(0)
@@ -315,7 +311,7 @@ export function Composer(props: ComposerProps) {
         }
         onValueChange(joinText(baseText.current, joinText(committed, interim.trim())))
       }
-      speech.onerror = event => { if (event.error !== 'aborted' && event.error !== 'no-speech') props.onError(`Speech recognition failed: ${event.error}. Switch engines in Settings → Voice.`) }
+      speech.onerror = event => { if (event.error !== 'aborted' && event.error !== 'no-speech') props.onError(t('Speech recognition failed: {error}. Switch engines in Settings → Voice.', { error: event.error })) }
       speech.onend = () => { setVoice('idle'); release() }
       recognition.current = speech
       speech.start()
@@ -330,7 +326,7 @@ export function Composer(props: ComposerProps) {
       recorder.current = media
       media.start(250)
       setVoice('listening')
-    } catch (cause) { release(); props.onError(`Recording failed: ${cause instanceof Error ? cause.message : String(cause)}`) }
+    } catch (cause) { release(); props.onError(t('Recording failed: {error}', { error: cause instanceof Error ? cause.message : String(cause) })) }
   }
 
   const togglePause = () => {
@@ -394,26 +390,9 @@ export function Composer(props: ComposerProps) {
 
   useEffect(() => () => { recognition.current?.abort(); if (recorder.current && recorder.current.state !== 'inactive') { recorder.current.onstop = null; recorder.current.stop() } }, [])
 
-  // Providers like OpenRouter and NVIDIA list hundreds of models; search and filter them instead of scrolling.
-  const [modelOpen, setModelOpen] = useState(false)
-  const [modelQuery, setModelQuery] = useState('')
-  const [modelFilter, setModelFilter] = useState<ModelFilter>('all')
-  const [showUnavailable, setShowUnavailable] = useState(false)
-  const modelSearch = useRef<HTMLInputElement>(null)
-  const searchable = props.models.length > 10
-  const shownModels = filterModels(props.models, { query: modelQuery, filter: modelFilter, showUnavailable, keep: props.model })
-  const modelGroups = groupModels(shownModels)
-  const hiddenModels = props.models.filter(info => info.verified === 'unavailable').length
-  const uniqueName = uniqueShortNames(props.models)
-  const openModels = (open: boolean) => {
-    setModelOpen(open)
-    if (open && searchable) window.setTimeout(() => modelSearch.current?.focus({ preventScroll: true }), 60)
-    if (!open) { setModelQuery(''); setModelFilter('all') }
-  }
   const active = voice !== 'idle'
   const recording = voice === 'listening' || voice === 'paused'
   const transcribing = voice === 'transcribing'
-  const glow = neruVoiceGlow(props.light)
   const [slashIndex, setSlashIndex] = useState(0)
   const [slashClosed, setSlashClosed] = useState('')
   const slashMenu = useRef<HTMLDivElement>(null)
@@ -446,27 +425,26 @@ export function Composer(props: ComposerProps) {
     return Boolean(match && props.commands.find(item => item.name === match[1].toLowerCase()))
   }
   const queue = (text: string) => {
-    if (runsAsCommand(text)) { props.onError('Commands run right away and cannot be queued. Wait for the reply to finish, then run it.'); return }
+    if (runsAsCommand(text)) { props.onError(t('Commands run right away and cannot be queued. Wait for the reply to finish, then run it.')); return }
     props.onQueue?.(text)
   }
   const fork = (text: string) => {
-    if (runsAsCommand(text)) { props.onError('Commands cannot be sent in a forked session.'); return }
+    if (runsAsCommand(text)) { props.onError(t('Commands cannot be sent in a forked session.')); return }
     props.onFork?.(text)
   }
 
-  const currentModel = props.models.find(option => option.id === props.model)
   const micBusy = disabled || loading || !mic.supported || transcribing
 
   return <div className={cn('composer', active && 'voice-active', props.roomy && 'roomy')}>
-    {mentionMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label="Project files">
+    {mentionMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t('Project files')}>
       {mentionMatches.map(path => <button key={path} type="button" className="slash-item" onMouseDown={event => { event.preventDefault(); pickFile(path) }}><span>{path}</span></button>)}
     </div>}
-    {slashMatches.length > 0 && <div ref={slashMenu} className="slash-menu" role="listbox" aria-label="Commands">
+    {slashMatches.length > 0 && <div ref={slashMenu} className="slash-menu" role="listbox" aria-label={t('Commands')}>
       {slashMatches.map((command, index) => <button key={command.name} type="button" role="option" aria-selected={index === Math.min(slashIndex, slashMatches.length - 1)} className={cn('slash-item', index === Math.min(slashIndex, slashMatches.length - 1) && 'active')} onMouseEnter={() => setSlashIndex(index)} onMouseDown={event => { event.preventDefault(); chooseCommand(command) }}>
         <code>/{command.name}</code><span>{command.description}</span>{command.source !== 'built-in' && <small>{command.source}</small>}
       </button>)}
     </div>}
-    <VoiceBeam stream={voice === 'listening' ? mic.stream : null} processing={transcribing} active={active} paused={voice === 'paused'} theme={props.light ? 'light' : 'dark'} {...glow} className={cn('composer-beam', !active && 'is-idle', active && 'voice-active')}>
+    <div className={cn('composer-beam', active && 'voice-active')}>
       <PromptInput
         inline
         minRows={props.roomy ? 3 : 1}
@@ -481,8 +459,8 @@ export function Composer(props: ComposerProps) {
         header={props.attachments}
         sendWithoutText={props.sendWithoutText}
         disabled={disabled || transcribing}
-        placeholder={voice === 'listening' ? 'Listening…' : voice === 'paused' ? 'Paused' : transcribing ? 'Transcribing…' : props.placeholder}
-        aria-label={props.ariaLabel ?? 'Message Neru'}
+        placeholder={voice === 'listening' ? t('Listening…') : voice === 'paused' ? t('Paused') : transcribing ? t('Transcribing…') : props.placeholder}
+        aria-label={props.ariaLabel ?? t('Message Neru')}
         className="neru-prompt"
         maxRows={10}
         onKeyDown={event => {
@@ -498,66 +476,42 @@ export function Composer(props: ComposerProps) {
           if (event.key === 'Escape') { event.preventDefault(); cancelVoice() }
           if (event.key === 'Enter' && !event.shiftKey && recording) { event.preventDefault(); finishVoice(true) }
         }}
-        trailingAction={active ? <div className="voice-controls" role="group" aria-label="Dictation">
+        trailingAction={active ? <div className="voice-controls" role="group" aria-label={t('Dictation')}>
           {transcribing
-            ? <span className="voice-status"><LoaderCircle size={14} className="animate-spin" />Transcribing…</span>
-            : <span className={cn('voice-status', voice === 'paused' && 'paused')}><i aria-hidden />{clock(elapsed)}</span>}
-          {recording && recorder.current && <button type="button" className="voice-button" onClick={togglePause} aria-label={voice === 'paused' ? 'Resume recording' : 'Pause recording'} title={voice === 'paused' ? 'Resume' : 'Pause'}>{voice === 'paused' ? <Play size={14} /> : <Pause size={14} />}</button>}
-          <button type="button" className="voice-button" onClick={cancelVoice} aria-label="Discard recording" title="Discard (Esc)"><X size={15} /></button>
-          {recording && <button type="button" className="voice-button confirm" onClick={() => finishVoice(false)} aria-label="Insert text" title="Insert text to edit before sending"><Check size={15} /></button>}
-          {recording && <button type="button" className="voice-button send" onClick={() => finishVoice(true)} aria-label="Transcribe and send" title="Transcribe and send (Enter)"><ArrowUp size={16} /></button>}
+            ? <span className="voice-status"><LoaderCircle size={14} className="animate-spin" />{t('Transcribing…')}</span>
+            : <span className={cn('voice-status', voice === 'paused' && 'paused')}><SoundBars stream={mic.stream} paused={voice === 'paused'} />{clock(elapsed)}</span>}
+          {recording && recorder.current && <button type="button" className="voice-button" onClick={togglePause} aria-label={voice === 'paused' ? t('Resume recording') : t('Pause recording')} title={voice === 'paused' ? t('Resume') : t('Pause')}>{voice === 'paused' ? <Play size={14} /> : <Pause size={14} />}</button>}
+          <button type="button" className="voice-button" onClick={cancelVoice} aria-label={t('Discard recording')} title={t('Discard (Esc)')}><X size={15} /></button>
+          {recording && <button type="button" className="voice-button confirm" onClick={() => finishVoice(false)} aria-label={t('Insert text')} title={t('Insert text to edit before sending')}><Check size={15} /></button>}
+          {recording && <button type="button" className="voice-button send" onClick={() => finishVoice(true)} aria-label={t('Transcribe and send')} title={t('Transcribe and send (Enter)')}><ArrowUp size={16} /></button>}
         </div> : undefined}
       />
-    </VoiceBeam>
+    </div>
     <div className="composer-toolbar">
       <div className="composer-tools">
         <PlusMenu items={props.attachItems} disabled={disabled || loading || active} />
         <div className="mic-group">
-          <button type="button" className={cn('prompt-toggle', recording && 'on')} disabled={micBusy} aria-pressed={recording} aria-label={recording ? 'Stop dictation' : 'Dictate'}
-            title={!mic.supported ? 'Microphone not available' : recording ? 'Stop and insert text' : holdToRecord ? 'Hold to dictate' : 'Dictate'}
+          <button type="button" className={cn('prompt-toggle', recording && 'on')} disabled={micBusy} aria-pressed={recording} aria-label={recording ? t('Stop dictation') : t('Dictate')}
+            title={!mic.supported ? t('Microphone not available') : recording ? t('Stop and insert text') : holdToRecord ? t('Hold to dictate') : t('Dictate')}
             onPointerDown={event => { if (event.button === 0 && holdToRecord) { event.currentTarget.setPointerCapture(event.pointerId); pressMic() } }}
             onPointerUp={releaseMic} onPointerCancel={releaseMic}
             // Pointer clicks are handled by press and release in hold mode; Enter and Space still toggle.
             onClick={event => { if (holdToRecord && event.detail > 0) return; pressed.current = false; if (recording) finishVoice(false); else void startVoice() }}><Mic size={16} /></button>
           <MicMenu device={micDevice} onDevice={chooseMic} hold={holdToRecord} onHold={chooseHold} disabled={!mic.supported || recording || transcribing} systemEngine={props.voiceEngine === 'system'} />
         </div>
-        {props.showWeb !== false && <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? 'Web search on: Neru can search and cite public pages' : 'Web search off: answers from the project only'} aria-label="Web search"><Globe size={15} /></button>}
+        {props.showWeb !== false && <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? t('Web search on: Neru can search and cite public pages') : t('Web search off: answers from the project only')} aria-label={t('Web search')}><Globe size={15} /></button>}
         {props.showMode !== false && <Select value={mode} onValueChange={value => props.onModeChange(value as AgentMode)} disabled={disabled || loading} className="composer-mode">
           <SelectTrigger className={cn('h-8 w-auto rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2', mode === 'bypass' && 'mode-danger')}>
-            <span className="truncate text-muted-foreground" title={MODES.find(item => item.value === mode)?.hint}>{MODES.find(item => item.value === mode)?.label}</span>
+            <span className="truncate text-muted-foreground" title={t(MODES.find(item => item.value === mode)?.hint ?? '')}>{t(MODES.find(item => item.value === mode)?.label ?? '')}</span>
           </SelectTrigger>
           <SelectContent className="w-72 shadow-none">
-            {MODES.map(item => <SelectItem key={item.value} value={item.value} className="py-2"><span className="flex min-w-0 flex-col"><span className="text-sm text-foreground">{item.label}</span><span className="text-xs text-muted-foreground">{item.hint}</span></span></SelectItem>)}
+            {MODES.map(item => <SelectItem key={item.value} value={item.value} className="py-2"><span className="flex min-w-0 flex-col"><span className="text-sm text-foreground">{t(item.label)}</span><span className="text-xs text-muted-foreground">{t(item.hint)}</span></span></SelectItem>)}
           </SelectContent>
         </Select>}
       </div>
       <div className="composer-settings">
-      {props.models.length > 0 && <Select value={props.model} onValueChange={props.onModelChange} open={modelOpen} onOpenChange={openModels} disabled={disabled || loading} className="composer-model">
-        <SelectTrigger className="h-8 w-auto max-w-56 rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2">
-          <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground" title={currentModel ? `${currentModel.id}${currentModel.vision ? ' · reads images' : ' · text only'}` : props.model}>
-            <span className="model-label">{currentModel ? (uniqueName(currentModel) ? shortModelName(currentModel.id) : currentModel.id) : props.model ? shortModelName(props.model) : 'Choose model'}</span>
-            {currentModel?.vision && <Eye size={12} className="shrink-0 opacity-70" aria-label="Reads images" />}
-          </span>
-        </SelectTrigger>
-        <SelectContent className="left-auto right-0 w-80 shadow-none" maxHeight={380} header={<div className="model-menu-head">
-          {searchable && <ModelSearch inputRef={modelSearch} value={modelQuery} onChange={setModelQuery} count={props.models.length} onEnter={() => { const first = shownModels.find(info => info.verified !== 'unavailable'); if (first) { props.onModelChange(first.id); openModels(false) } }} />}
-          <ModelFilters models={props.models} filter={modelFilter} onFilter={setModelFilter} hidden={hiddenModels} showUnavailable={showUnavailable} onShowUnavailable={setShowUnavailable} />
-        </div>}>
-          {modelGroups.map(group => <div key={group.key} className="model-group">
-            <p className="model-group-title">{group.title}<span>{group.items.length}</span></p>
-            {group.items.map(info => <SelectItem key={info.id} value={info.id} className="py-1.5"><span className="model-menu-row"><ModelRowText info={info} unique={uniqueName(info)} /><ModelBadges info={info} /></span></SelectItem>)}
-          </div>)}
-          {shownModels.length === 0 && <p className="model-search-empty">{modelQuery ? `No models match “${modelQuery}”.` : 'No models match this filter.'}</p>}
-        </SelectContent>
-      </Select>}
-      {props.effortSupported && <Select value={props.effort} onValueChange={value => props.onEffortChange(value as Effort)} disabled={disabled || loading} className="composer-effort">
-        <SelectTrigger className="h-8 w-auto rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2">
-          <span className="truncate text-muted-foreground" title="Reasoning effort">{EFFORTS.find(item => item.value === props.effort)?.label ?? 'Auto'}</span>
-        </SelectTrigger>
-        <SelectContent className="left-auto right-0 w-60 shadow-none">
-          {EFFORTS.map(item => <SelectItem key={item.value} value={item.value} className="py-2"><span className="flex min-w-0 flex-col"><span className="text-sm text-foreground">{item.label}</span><span className="text-xs text-muted-foreground">{item.hint}</span></span></SelectItem>)}
-        </SelectContent>
-      </Select>}
+      {props.models.length > 0 && <ModelSelector models={props.models} value={props.model} onChange={props.onModelChange} providerId={props.providerId ?? ''}
+        effort={props.effort} effortSupported={props.effortSupported} onEffortChange={props.onEffortChange} disabled={disabled || loading} />}
       {props.context && <ContextMeter usage={props.context} />}
       </div>
     </div>
@@ -570,8 +524,8 @@ export const attachIcons = { upload: <Upload size={15} />, files: <FolderSearch 
 export function FilePicker({ files, attached, onPick, onClose }: { files: string[]; attached: string[]; onPick: (path: string) => void; onClose: () => void }) {
   const [query, setQuery] = useState('')
   return <div className="file-picker">
-    <div className="file-picker-head"><span>Attach project file</span><button className="icon-button" aria-label="Close file picker" onClick={onClose}><X size={14} /></button></div>
-    <input autoFocus aria-label="Search project files" placeholder="Search by path…" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') onClose() }} />
+    <div className="file-picker-head"><span>{t('Attach project file')}</span><button className="icon-button" aria-label={t('Close file picker')} onClick={onClose}><X size={14} /></button></div>
+    <input autoFocus aria-label={t('Search project files')} placeholder={t('Search by path…')} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') onClose() }} />
     <div className="file-picker-results">{files.filter(path => path.toLowerCase().includes(query.toLowerCase()) && !attached.includes(path)).slice(0, 40).map(path => <button key={path} onClick={() => onPick(path)}><FileSearch size={13} /><span className="truncate">{path}</span></button>)}</div>
   </div>
 }

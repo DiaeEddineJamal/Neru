@@ -1,3 +1,4 @@
+mod activity;
 mod agent;
 mod agents;
 mod cli;
@@ -17,10 +18,14 @@ mod models;
 mod oauth;
 mod policy;
 mod preview;
+mod privacy;
 mod preview_proxy;
 mod providers;
+mod queue;
 mod remote;
 mod remote_tunnel;
+mod replay;
+mod review;
 mod run_options;
 mod sandbox;
 mod sessions;
@@ -39,6 +44,7 @@ mod team_tools;
 mod terminal;
 mod tools;
 mod trust;
+mod usage;
 mod voice;
 mod web;
 mod workspace;
@@ -176,6 +182,7 @@ pub fn run() {
     builder(|app| {
         fit_main_window(&app);
         remote::init(&app);
+        queue::init(&app);
         tauri::async_runtime::spawn(mcp::start_enabled(app));
     })
     .build(context())
@@ -316,6 +323,23 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             workspace::propose_file,
             workspace::apply_pending,
             workspace::reject_pending,
+            workspace::reject_pending_because,
+            extras::project_memory_facts,
+            extras::forget_project_fact,
+            extras::remember_project_fact,
+            privacy::get_privacy_prefs,
+            privacy::set_privacy_prefs,
+            privacy::get_project_privacy,
+            privacy::set_project_privacy,
+            usage::usage_totals,
+            usage::reset_usage,
+            queue::queue_list,
+            queue::queue_add,
+            queue::queue_cancel,
+            queue::queue_tonight,
+            activity::activity_digest,
+            replay::export_replay,
+            replay::share_replay_gist,
             workspace::restore_checkpoint,
             sessions::list_sessions,
             sessions::list_all_sessions,
@@ -386,6 +410,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             extras::open_memory_file,
             extras::get_profile,
             extras::set_profile,
+            extras::set_personalization,
             agent::run_task_command,
             agent::allow_pending_always,
             agent::session_context,

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { Check, Copy, LoaderCircle, SquareTerminal } from 'lucide-react'
 import { api } from '../../api'
 import type { CliStatus } from '../../types'
+import { t } from '../../i18n'
 
 type Os = 'windows' | 'macos' | 'linux'
 const OS_TABS: { id: Os; label: string }[] = [{ id: 'windows', label: 'Windows' }, { id: 'macos', label: 'macOS' }, { id: 'linux', label: 'Linux' }]
@@ -117,7 +118,7 @@ function CopyButton({ text }: { text: string }) {
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
   const copy = () => { void navigator.clipboard.writeText(text).then(() => { setCopied(true); window.clearTimeout(timer.current); timer.current = window.setTimeout(() => setCopied(false), 1500) }).catch(() => undefined) }
-  return <button type="button" className="icon-button small" onClick={copy} aria-label={copied ? 'Copied' : 'Copy command'} title={copied ? 'Copied' : 'Copy'}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+  return <button type="button" className="icon-button small" onClick={copy} aria-label={copied ? t('Copied') : t('Copy command')} title={copied ? t('Copied') : t('Copy')}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
 }
 
 export function CommandBlock({ label, command }: { label?: string; command: string }) {
@@ -125,8 +126,11 @@ export function CommandBlock({ label, command }: { label?: string; command: stri
 }
 
 function Table({ rows }: { rows: [string, string][] }) {
-  return <dl className="cli-table">{rows.map(([term, text]) => <div key={term}><dt><code>{term}</code></dt><dd>{text}</dd></div>)}</dl>
+  return <dl className="cli-table">{rows.map(([term, text]) => <div key={term}><dt><code>{term}</code></dt><dd>{t(text)}</dd></div>)}</dl>
 }
+
+/** A translated sentence with {name} placeholders filled by JSX. */
+const rich = (text: string, parts: Record<string, ReactNode>) => text.split(/(\{\w+\})/).map((piece, index) => { const key = /^\{(\w+)\}$/.exec(piece)?.[1]; return <Fragment key={index}>{key && key in parts ? parts[key] : piece}</Fragment> })
 
 /** Settings → CLI: the neru command, how to install it, and what it can do. */
 export function CliSettings({ onError, onNotice }: { onError: (message: string) => void; onNotice: (message: string) => void }) {
@@ -145,39 +149,39 @@ export function CliSettings({ onError, onNotice }: { onError: (message: string) 
 
   const install = async () => {
     setInstalling(true)
-    try { const next = await api.cliInstallPath(); setStatus(next); onNotice(next.note ?? 'neru is on your PATH.') } catch (cause) { onError(String(cause)) } finally { setInstalling(false) }
+    try { const next = await api.cliInstallPath(); setStatus(next); onNotice(next.note ?? t('neru is on your PATH.')) } catch (cause) { onError(String(cause)) } finally { setInstalling(false) }
   }
 
-  const summary = !desktop ? 'Checking needs the desktop app.' : checking ? 'Checking…' : status?.onPath ? `${status.version ? `Version ${status.version}` : 'Installed'} · ${status.path}` : 'Not found on your PATH.'
-  return <section className="settings-section cli-settings"><h2>Neru in your terminal</h2>
-    <p className="settings-lede">The <code>neru</code> command runs the same agent in any terminal, with the commands and flags of Claude Code. It shares settings, keys, sessions, memory, skills and connectors with this app.</p>
+  const summary = !desktop ? t('Checking needs the desktop app.') : checking ? t('Checking…') : status?.onPath ? `${status.version ? t('Version {version}', { version: status.version }) : t('Installed')} · ${status.path}` : t('Not found on your PATH.')
+  return <section className="settings-section cli-settings"><h2>{t('Neru in your terminal')}</h2>
+    <p className="settings-lede">{rich(t('The {neru} command runs the same agent in any terminal, with the commands and flags of Claude Code. It shares settings, keys, sessions, memory, skills and connectors with this app.'), { neru: <code>neru</code> })}</p>
     <div className="settings-row">
-      <div><strong><SquareTerminal size={15} className="cli-status-icon" /> neru command {status?.onPath && <span className="cli-badge">On PATH</span>}</strong><p>{summary}</p>{status?.note && <p>{status.note}</p>}</div>
-      {desktop && <button type="button" className="button subtle" onClick={() => void install()} disabled={installing || checking}>{installing && <LoaderCircle size={14} className="animate-spin" />}{status?.onPath ? 'Repair' : 'Add neru to PATH'}</button>}
+      <div><strong><SquareTerminal size={15} className="cli-status-icon" /> {t('neru command')} {status?.onPath && <span className="cli-badge">{t('On PATH')}</span>}</strong><p>{summary}</p>{status?.note && <p>{status.note}</p>}</div>
+      {desktop && <button type="button" className="button subtle" onClick={() => void install()} disabled={installing || checking}>{installing && <LoaderCircle size={14} className="animate-spin" />}{status?.onPath ? t('Repair') : t('Add neru to PATH')}</button>}
     </div>
 
-    <h3 className="cli-heading">Install</h3>
-    <div className="segmented" role="tablist" aria-label="Operating system">{OS_TABS.map(tab => <button key={tab.id} type="button" role="tab" aria-selected={os === tab.id} className={os === tab.id ? 'active' : ''} onClick={() => setOs(tab.id)}>{tab.label}</button>)}</div>
-    <div className="cli-commands" role="tabpanel">{INSTALL[os].map(item => <CommandBlock key={item.command} label={item.label} command={item.command} />)}</div>
-    <p className="cli-note">Then run <code>neru login</code> once, or set <code>NERU_API_KEY</code>. Installed with this app? {os === 'windows' ? <>The installer already added <code>neru</code>.</> : <>Use Add neru to PATH above.</>}</p>
-    {os === 'linux' && <p className="cli-note">Needs glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) and the WebKitGTK 4.1 runtime (<code>sudo apt install libwebkit2gtk-4.1-0</code>). Over SSH, in CI or in a container, install <code>xvfb</code> too and neru uses it by itself.</p>}
+    <h3 className="cli-heading">{t('Install')}</h3>
+    <div className="segmented" role="tablist" aria-label={t('Operating system')}>{OS_TABS.map(tab => <button key={tab.id} type="button" role="tab" aria-selected={os === tab.id} className={os === tab.id ? 'active' : ''} onClick={() => setOs(tab.id)}>{tab.label}</button>)}</div>
+    <div className="cli-commands" role="tabpanel">{INSTALL[os].map(item => <CommandBlock key={item.command} label={t(item.label)} command={item.command} />)}</div>
+    <p className="cli-note">{rich(t('Then run {login} once, or set {key}. Installed with this app?'), { login: <code>neru login</code>, key: <code>NERU_API_KEY</code> })} {os === 'windows' ? rich(t('The installer already added {neru}.'), { neru: <code>neru</code> }) : t('Use Add neru to PATH above.')}</p>
+    {os === 'linux' && <p className="cli-note">{rich(t('Needs glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) and the WebKitGTK 4.1 runtime ({apt}). Over SSH, in CI or in a container, install {xvfb} too and neru uses it by itself.'), { apt: <code>sudo apt install libwebkit2gtk-4.1-0</code>, xvfb: <code>xvfb</code> })}</p>}
 
-    <h3 className="cli-heading">Update and uninstall</h3>
+    <h3 className="cli-heading">{t('Update and uninstall')}</h3>
     <Table rows={UPDATE[os]} />
-    <p className="cli-note">Uninstalling keeps your settings and sessions.</p>
+    <p className="cli-note">{t('Uninstalling keeps your settings and sessions.')}</p>
 
-    <h3 className="cli-heading">Usage</h3>
+    <h3 className="cli-heading">{t('Usage')}</h3>
     <Table rows={USAGE} />
 
-    <h3 className="cli-heading">Flags</h3>
+    <h3 className="cli-heading">{t('Flags')}</h3>
     <Table rows={FLAGS} />
 
-    <h3 className="cli-heading">Environment</h3>
+    <h3 className="cli-heading">{t('Environment')}</h3>
     <Table rows={ENV} />
 
-    <h3 className="cli-heading">In a session</h3>
-    <dl className="cli-table cli-slash">{SLASH.map(([group, names]) => <div key={group}><dt>{group}</dt><dd>{names.map(name => <code key={name}>{name}</code>)}</dd></div>)}</dl>
-    <h3 className="cli-heading">Input shortcuts</h3>
-    <dl className="cli-table cli-keys">{KEYS.map(([key, text]) => <div key={key}><dt>{key.split(', ').map(part => <kbd key={part}>{part}</kbd>)}</dt><dd>{text}</dd></div>)}</dl>
+    <h3 className="cli-heading">{t('In a session')}</h3>
+    <dl className="cli-table cli-slash">{SLASH.map(([group, names]) => <div key={group}><dt>{t(group)}</dt><dd>{names.map(name => <code key={name}>{name}</code>)}</dd></div>)}</dl>
+    <h3 className="cli-heading">{t('Input shortcuts')}</h3>
+    <dl className="cli-table cli-keys">{KEYS.map(([key, text]) => <div key={key}><dt>{key.split(', ').map(part => <kbd key={part}>{part === 'Ctrl+C twice' ? t('Ctrl+C twice') : part}</kbd>)}</dt><dd>{t(text)}</dd></div>)}</dl>
   </section>
 }

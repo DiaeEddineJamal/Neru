@@ -4,6 +4,7 @@ import { api } from '../../api'
 import type { SearchHit } from '../../types'
 import { formatCount } from '../../lib/useIndex'
 import { cn } from '@/lib/utils'
+import { t } from '../../i18n'
 
 /** Project-wide search, like VS Code's: results as you type, grouped by file, match highlighted. */
 export function SearchPanel({ projectKey, onOpen }: { projectKey: string; onOpen: (path: string, line: number) => void }) {
@@ -46,19 +47,19 @@ export function SearchPanel({ projectKey, onOpen }: { projectKey: string; onOpen
   return <div className="search-panel">
     <div className="search-form">
       <Search size={17} aria-hidden />
-      <input ref={input} value={query} onChange={event => setQuery(event.target.value)} placeholder="Search text across the project…" aria-label="Search the project" spellCheck={false} />
-      {busy && <LoaderCircle size={15} className="animate-spin search-spinner" aria-label="Searching" />}
-      <button type="button" className={cn('search-option', caseSensitive && 'on')} aria-pressed={caseSensitive} title="Match case" onClick={toggle(caseSensitive, setCaseSensitive)}><CaseSensitive size={16} /></button>
-      <button type="button" className={cn('search-option', wholeWord && 'on')} aria-pressed={wholeWord} title="Whole word" onClick={toggle(wholeWord, setWholeWord)}><WholeWord size={16} /></button>
-      <button type="button" className={cn('search-option', regex && 'on')} aria-pressed={regex} title="Regular expression" onClick={toggle(regex, setRegex)}><Regex size={16} /></button>
+      <input ref={input} value={query} onChange={event => setQuery(event.target.value)} placeholder={t('Search text across the project…')} aria-label={t('Search the project')} spellCheck={false} />
+      {busy && <LoaderCircle size={15} className="animate-spin search-spinner" aria-label={t('Searching')} />}
+      <button type="button" className={cn('search-option', caseSensitive && 'on')} aria-pressed={caseSensitive} title={t('Match case')} onClick={toggle(caseSensitive, setCaseSensitive)}><CaseSensitive size={16} /></button>
+      <button type="button" className={cn('search-option', wholeWord && 'on')} aria-pressed={wholeWord} title={t('Whole word')} onClick={toggle(wholeWord, setWholeWord)}><WholeWord size={16} /></button>
+      <button type="button" className={cn('search-option', regex && 'on')} aria-pressed={regex} title={t('Regular expression')} onClick={toggle(regex, setRegex)}><Regex size={16} /></button>
     </div>
-    <div className="search-scope"><input value={glob} onChange={event => setGlob(event.target.value)} placeholder="Files to include, e.g. src/**/*.tsx" aria-label="Files to include" spellCheck={false} /></div>
+    <div className="search-scope"><input value={glob} onChange={event => setGlob(event.target.value)} placeholder={t('Files to include, e.g. src/**/*.tsx')} aria-label={t('Files to include')} spellCheck={false} /></div>
     <p className="search-summary" aria-live="polite">
       {error ? <span className="search-error">{error.replace(/^Error:\s*/, '')}</span>
-        : query.trim().length < 2 ? 'Type at least two characters. Files Git ignores are skipped.'
-        : busy && hits.length === 0 ? 'Searching…'
-        : hits.length === 0 ? `No results for “${query.trim()}”.`
-        : `${stats?.truncated ? `${hits.length}+` : hits.length} ${hits.length === 1 ? 'result' : 'results'} in ${groups.length} ${groups.length === 1 ? 'file' : 'files'}${stats ? ` · ${stats.ms} ms${stats.total > 0 ? `, read ${formatCount(stats.scanned)} of ${formatCount(stats.total)} files` : ''}` : ''}`}
+        : query.trim().length < 2 ? t('Type at least two characters. Files Git ignores are skipped.')
+        : busy && hits.length === 0 ? t('Searching…')
+        : hits.length === 0 ? t('No results for “{query}”.', { query: query.trim() })
+        : `${hits.length === 1 && !stats?.truncated ? t('1 result in 1 file') : groups.length === 1 ? t('{n} results in 1 file', { n: stats?.truncated ? `${hits.length}+` : hits.length }) : t('{n} results in {files} files', { n: stats?.truncated ? `${hits.length}+` : hits.length, files: groups.length })}${stats ? ` · ${stats.ms} ms${stats.total > 0 ? `, ${t('read {scanned} of {total} files', { scanned: formatCount(stats.scanned), total: formatCount(stats.total) })}` : ''}` : ''}`}
     </p>
     <div className="search-groups">
       {groups.map(([path, fileHits]) => {

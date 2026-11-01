@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { BookOpen, Compass, ChevronRight, Command, Copy, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, Sun, Trash2, Users } from 'lucide-react'
+import { BookOpen, Clock, Compass, ChevronRight, Command, Copy, FileDown, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Link, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, Sun, Trash2, Users } from 'lucide-react'
 import { useContextMenu } from './ContextMenu'
 import { Mascot } from './Mascot'
 import type { ProjectInfo, Section, SessionSummary } from '../../types'
+import { t } from '../../i18n'
 
 const MIN_WIDTH = 220
 const MAX_WIDTH = 440
@@ -22,12 +23,12 @@ const baseName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? 
 
 function relativeTime(ms: number) {
   const minutes = Math.floor((Date.now() - ms) / 60000)
-  if (minutes < 1) return 'now'
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 1) return t('now')
+  if (minutes < 60) return t('{n}m', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
+  if (hours < 24) return t('{n}h', { n: hours })
   const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d`
+  if (days < 7) return t('{n}d', { n: days })
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
@@ -48,6 +49,13 @@ export interface SidebarProps {
   onCloneProject: () => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  /** Opens Tasks: the overnight queue and "While you were away". */
+  onTasks: () => void
+  /** Tasks waiting in the queue, shown on the Tasks item. */
+  queued: number
+  /** A replay page of the session, or a secret gist link to it. */
+  onExportReplay: (id: string) => void
+  onShareReplay: (id: string) => void
   /** Takes a project off the list; its files and saved sessions are kept. */
   onForgetProject: (path: string) => void
   onRevealProject: (path: string) => void
@@ -69,19 +77,22 @@ export function Sidebar(props: SidebarProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const openMenu = useContextMenu()
   const projectMenu = (event: React.MouseEvent, path: string, name: string, current: boolean) => openMenu(event, [
-    { label: 'New session', icon: <Plus size={14} />, disabled: busy, onSelect: () => props.onNewSession(path) },
-    ...(current && project?.git ? [{ label: 'New worktree session', icon: <GitBranchPlus size={14} />, disabled: busy, onSelect: () => props.onNewSession(path, true) }] : []),
+    { label: t('New session'), icon: <Plus size={14} />, disabled: busy, onSelect: () => props.onNewSession(path) },
+    ...(current && project?.git ? [{ label: t('New worktree session'), icon: <GitBranchPlus size={14} />, disabled: busy, onSelect: () => props.onNewSession(path, true) }] : []),
     'separator',
-    { label: 'Open File Location', icon: <FolderSearch size={14} />, onSelect: () => props.onRevealProject(path) },
-    { label: 'Copy path', icon: <Copy size={14} />, onSelect: () => void navigator.clipboard.writeText(path.replace(/^\\\\\?\\/, '')) },
+    { label: t('Open File Location'), icon: <FolderSearch size={14} />, onSelect: () => props.onRevealProject(path) },
+    { label: t('Copy path'), icon: <Copy size={14} />, onSelect: () => void navigator.clipboard.writeText(path.replace(/^\\\\\?\\/, '')) },
     'separator',
-    { label: `Remove ${name} from Neru`, icon: <FolderMinus size={14} />, danger: true, disabled: busy, onSelect: () => props.onForgetProject(path) },
+    { label: t('Remove {name} from Neru', { name }), icon: <FolderMinus size={14} />, danger: true, disabled: busy, onSelect: () => props.onForgetProject(path) },
   ])
   const sessionMenu = (event: React.MouseEvent, path: string, session: SessionSummary, current: boolean) => openMenu(event, [
-    { label: 'Open', icon: <MessageSquare size={14} />, disabled: busy, onSelect: () => props.onOpenSession(path, session.id) },
-    { label: 'Rename…', icon: <Pencil size={14} />, disabled: busy || !current, onSelect: () => { setRenamingId(session.id); setRenameValue(session.title) } },
+    { label: t('Open'), icon: <MessageSquare size={14} />, disabled: busy, onSelect: () => props.onOpenSession(path, session.id) },
+    { label: t('Rename…'), icon: <Pencil size={14} />, disabled: busy || !current, onSelect: () => { setRenamingId(session.id); setRenameValue(session.title) } },
     'separator',
-    { label: 'Delete session', icon: <Trash2 size={14} />, danger: true, disabled: busy || session.running || !current, onSelect: () => props.onDeleteSession(session.id) },
+    { label: t('Export replay'), icon: <FileDown size={14} />, onSelect: () => props.onExportReplay(session.id) },
+    { label: t('Share link (secret gist)…'), icon: <Link size={14} />, onSelect: () => props.onShareReplay(session.id) },
+    'separator',
+    { label: t('Delete session'), icon: <Trash2 size={14} />, danger: true, disabled: busy || session.running || !current, onSelect: () => props.onDeleteSession(session.id) },
   ])
   const [renameValue, setRenameValue] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
@@ -120,75 +131,76 @@ export function Sidebar(props: SidebarProps) {
 
   return <aside className={`sidebar ${resizing ? 'resizing' : ''} ${props.floating ? 'floating' : ''}`} style={{ width, flexBasis: width }}>
     <div className="sidebar-brand-row">
-      <button className="sidebar-brand" onClick={() => props.onSection('home')} title="Neru home"><Mascot size={36} className="brand-mascot" /><strong>Neru</strong><span lang="ja">練る</span></button>
+      <button className="sidebar-brand" onClick={() => props.onSection('home')} title={t('Neru home')}><Mascot size={36} className="brand-mascot" /><strong>Neru</strong><span lang="ja">練る</span></button>
     </div>
 
-    <nav className="sidebar-nav" aria-label="Main navigation">
-      <button className="nav-item new-session" data-tour="new-session" onClick={() => props.onNewSession()} disabled={(props.surface === 'code' && !project) || busy}><SquarePen size={16} /><span>New session</span><kbd>{mod} N</kbd></button>
-      <button data-tour="team-nav" className={`nav-item ${section === 'team' ? 'active' : ''}`} onClick={() => props.onSection('team')} title="Claude Code, Codex and more in one shared thread"><Users size={16} strokeWidth={1.75} /><span>Team</span></button>
-      {props.surface === 'code' && tools.map(item => <button key={item.id} className={`nav-item ${section === item.id ? 'active' : ''}`} onClick={() => props.onSection(item.id)} disabled={!project}><item.icon size={16} strokeWidth={1.75} /><span>{item.label}</span></button>)}
+    <nav className="sidebar-nav" aria-label={t('Main navigation')}>
+      <button className="nav-item new-session" data-tour="new-session" onClick={() => props.onNewSession()} disabled={(props.surface === 'code' && !project) || busy}><SquarePen size={16} /><span>{t('New session')}</span><kbd>{mod} N</kbd></button>
+      <button className="nav-item" onClick={props.onTasks} title={t('Queue work for tonight, and see what happened while you were away')}><Clock size={16} strokeWidth={1.75} /><span>{t('Tasks')}</span>{props.queued > 0 && <span className="nav-count" aria-label={t('{n} queued', { n: props.queued })}>{props.queued}</span>}</button>
+      <button data-tour="team-nav" className={`nav-item ${section === 'team' ? 'active' : ''}`} onClick={() => props.onSection('team')} title={t('Claude Code, Codex and more in one shared thread')}><Users size={16} strokeWidth={1.75} /><span>{t('Team')}</span></button>
+      {props.surface === 'code' && tools.map(item => <button key={item.id} className={`nav-item ${section === item.id ? 'active' : ''}`} onClick={() => props.onSection(item.id)} disabled={!project}><item.icon size={16} strokeWidth={1.75} /><span>{t(item.label)}</span></button>)}
     </nav>
 
     <div className="sidebar-scroll" data-tour="sessions">
       {props.surface === 'chat' ? <>
-        <div className="sidebar-label"><span>Chat history</span></div>
-        {sessions.filter(session => !session.projectPath).length === 0 && <p className="sidebar-empty">No chats yet.</p>}
+        <div className="sidebar-label"><span>{t('Chat history')}</span></div>
+        {sessions.filter(session => !session.projectPath).length === 0 && <p className="sidebar-empty">{t('No chats yet.')}</p>}
         <div className="session-list">
           {sessions.filter(session => !session.projectPath).map(session => <div className={`session-row ${session.id === activeSessionId && section === 'home' ? 'active' : ''}`} key={session.id}>
             {renamingId === session.id
-              ? <input className="session-rename" autoFocus aria-label="Rename session" value={renameValue} onChange={event => setRenameValue(event.target.value)} onBlur={finishRename} onKeyDown={event => { if (event.key === 'Enter') finishRename(); if (event.key === 'Escape') setRenamingId(null) }} />
+              ? <input className="session-rename" autoFocus aria-label={t('Rename session')} value={renameValue} onChange={event => setRenameValue(event.target.value)} onBlur={finishRename} onKeyDown={event => { if (event.key === 'Enter') finishRename(); if (event.key === 'Escape') setRenamingId(null) }} />
               : <>
                 <button className="session-select" disabled={busy} onClick={() => props.onOpenSession('', session.id)} title={session.title}><span className="truncate">{session.title}</span></button>
                 {session.running
-                  ? <span className="session-running" title="Responding"><LoaderCircle size={13} className="animate-spin" aria-label="Responding" /></span>
+                  ? <span className="session-running" title={t('Responding')}><LoaderCircle size={13} className="animate-spin" aria-label={t('Responding')} /></span>
                   : <span className="session-time">{relativeTime(session.updatedAt)}</span>}
                 <span className="session-actions">
-                  <button disabled={busy} aria-label={`Rename ${session.title}`} title="Rename" onClick={() => { setRenamingId(session.id); setRenameValue(session.title) }}><Pencil size={13} /></button>
-                  <button disabled={busy || session.running} aria-label={`Delete ${session.title}`} title="Delete" onClick={() => props.onDeleteSession(session.id)}><Trash2 size={13} /></button>
+                  <button disabled={busy} aria-label={t('Rename {name}', { name: session.title })} title={t('Rename')} onClick={() => { setRenamingId(session.id); setRenameValue(session.title) }}><Pencil size={13} /></button>
+                  <button disabled={busy || session.running} aria-label={t('Delete {name}', { name: session.title })} title={t('Delete')} onClick={() => props.onDeleteSession(session.id)}><Trash2 size={13} /></button>
                 </span>
               </>}
           </div>)}
         </div>
       </> : <>
       <div className="sidebar-label">
-        <span>Projects</span>
+        <span>{t('Projects')}</span>
         <div className="menu-anchor" ref={addRef}>
-          <button className="icon-button small" onClick={() => setAddOpen(value => !value)} disabled={busy} aria-label="Add project" title="Add project" aria-expanded={addOpen}><Plus size={14} /></button>
+          <button className="icon-button small" onClick={() => setAddOpen(value => !value)} disabled={busy} aria-label={t('Add project')} title={t('Add project')} aria-expanded={addOpen}><Plus size={14} /></button>
           {addOpen && <div className="menu menu-down" role="menu">
-            <button role="menuitem" onClick={() => { setAddOpen(false); props.onOpenProject() }}><FolderPlus size={15} />Open folder…</button>
-            <button role="menuitem" onClick={() => { setAddOpen(false); props.onCloneProject() }}><GitBranch size={15} />Clone repository…</button>
+            <button role="menuitem" onClick={() => { setAddOpen(false); props.onOpenProject() }}><FolderPlus size={15} />{t('Open folder…')}</button>
+            <button role="menuitem" onClick={() => { setAddOpen(false); props.onCloneProject() }}><GitBranch size={15} />{t('Clone repository…')}</button>
           </div>}
         </div>
       </div>
-      {projectPaths.length === 0 && <p className="sidebar-empty">Open a folder to start your first session.</p>}
+      {projectPaths.length === 0 && <p className="sidebar-empty">{t('Open a folder to start your first session.')}</p>}
       {projectPaths.map(path => {
         const open = isExpanded(path)
         const current = path === project?.path
         const projectSessions = sessions.filter(session => session.projectPath === path)
         const name = current && project ? project.name : baseName(path)
-        return <section className={`project-group ${current ? 'current' : ''}`} key={path} aria-label={`${name} sessions`}>
+        return <section className={`project-group ${current ? 'current' : ''}`} key={path} aria-label={t('{name} sessions', { name })}>
           <div className="project-row">
             <button className="project-toggle" onClick={() => toggle(path)} onContextMenu={event => projectMenu(event, path, name, current)} aria-expanded={open} title={path}>
               <span className="project-icon">{open ? <FolderOpen size={16} strokeWidth={1.75} /> : <Folder size={16} strokeWidth={1.75} />}<ChevronRight size={14} className={`chevron ${open ? 'open' : ''}`} /></span>
               <span className="truncate">{name}</span>
             </button>
-            {current && project?.git && <button className="icon-button small row-action" onClick={() => props.onNewSession(path, true)} disabled={busy} aria-label={`New worktree session in ${name}`} title="New session in its own Git worktree, for parallel work"><GitBranchPlus size={14} /></button>}
-            <button className="icon-button small row-action" onClick={event => projectMenu(event, path, name, current)} aria-label={`More actions for ${name}`} title="More actions"><MoreHorizontal size={14} /></button>
-            <button className="icon-button small row-action" onClick={() => props.onNewSession(path)} disabled={busy} aria-label={`New session in ${name}`} title={`New session in ${name}`}><Plus size={14} /></button>
+            {current && project?.git && <button className="icon-button small row-action" onClick={() => props.onNewSession(path, true)} disabled={busy} aria-label={t('New worktree session in {name}', { name })} title={t('New session in its own Git worktree, for parallel work')}><GitBranchPlus size={14} /></button>}
+            <button className="icon-button small row-action" onClick={event => projectMenu(event, path, name, current)} aria-label={t('More actions for {name}', { name })} title={t('More actions')}><MoreHorizontal size={14} /></button>
+            <button className="icon-button small row-action" onClick={() => props.onNewSession(path)} disabled={busy} aria-label={t('New session in {name}', { name })} title={t('New session in {name}', { name })}><Plus size={14} /></button>
           </div>
           {open && <div className="session-list">
-            {projectSessions.length === 0 && <p className="session-empty">No sessions yet</p>}
+            {projectSessions.length === 0 && <p className="session-empty">{t('No sessions yet')}</p>}
             {projectSessions.map(session => <div className={`session-row ${session.id === activeSessionId && section === 'home' ? 'active' : ''}`} key={session.id} onContextMenu={event => sessionMenu(event, path, session, current)}>
               {renamingId === session.id
-                ? <input className="session-rename" autoFocus aria-label="Rename session" value={renameValue} onChange={event => setRenameValue(event.target.value)} onBlur={finishRename} onKeyDown={event => { if (event.key === 'Enter') finishRename(); if (event.key === 'Escape') setRenamingId(null) }} />
+                ? <input className="session-rename" autoFocus aria-label={t('Rename session')} value={renameValue} onChange={event => setRenameValue(event.target.value)} onBlur={finishRename} onKeyDown={event => { if (event.key === 'Enter') finishRename(); if (event.key === 'Escape') setRenamingId(null) }} />
                 : <>
-                  <button className="session-select" disabled={busy} onClick={() => props.onOpenSession(path, session.id)} title={session.worktree ? `${session.title} · worktree ${session.worktree.branch}` : session.title}>{session.worktree && <GitBranch size={12} className="session-worktree" aria-label="Worktree session" />}<span className="truncate">{session.title}</span></button>
+                  <button className="session-select" disabled={busy} onClick={() => props.onOpenSession(path, session.id)} title={session.worktree ? t('{title} · worktree {branch}', { title: session.title, branch: session.worktree.branch }) : session.title}>{session.worktree && <GitBranch size={12} className="session-worktree" aria-label={t('Worktree session')} />}<span className="truncate">{session.title}</span></button>
                   {session.running
-                    ? <span className="session-running" title="Responding"><LoaderCircle size={13} className="animate-spin" aria-label="Responding" /></span>
+                    ? <span className="session-running" title={t('Responding')}><LoaderCircle size={13} className="animate-spin" aria-label={t('Responding')} /></span>
                     : <span className="session-time">{relativeTime(session.updatedAt)}</span>}
                   {current && <span className="session-actions">
-                    <button disabled={busy} aria-label={`Rename ${session.title}`} title="Rename" onClick={() => { setRenamingId(session.id); setRenameValue(session.title) }}><Pencil size={13} /></button>
-                    <button disabled={busy || session.running} aria-label={`Delete ${session.title}`} title={session.worktree ? 'Delete (its worktree is removed if it has no uncommitted work)' : 'Delete'} onClick={() => props.onDeleteSession(session.id)}><Trash2 size={13} /></button>
+                    <button disabled={busy} aria-label={t('Rename {name}', { name: session.title })} title={t('Rename')} onClick={() => { setRenamingId(session.id); setRenameValue(session.title) }}><Pencil size={13} /></button>
+                    <button disabled={busy || session.running} aria-label={`Delete ${session.title}`} title={session.worktree ? t('Delete (its worktree is removed if it has no uncommitted work)') : t('Delete')} onClick={() => props.onDeleteSession(session.id)}><Trash2 size={13} /></button>
                   </span>}
                 </>}
             </div>)}
@@ -200,20 +212,20 @@ export function Sidebar(props: SidebarProps) {
 
     <div className="sidebar-footer menu-anchor" ref={accountRef}>
       {accountOpen && <div className="menu menu-up" role="menu">
-        <button role="menuitem" onClick={() => { setAccountOpen(false); props.onPalette() }}><Command size={15} />Command palette<kbd>{mod} K</kbd></button>
-        <button role="menuitem" onClick={props.onToggleTheme}>{light ? <Moon size={15} /> : <Sun size={15} />}{light ? 'Dark theme' : 'Light theme'}</button>
+        <button role="menuitem" onClick={() => { setAccountOpen(false); props.onPalette() }}><Command size={15} />{t('Command palette')}<kbd>{mod} K</kbd></button>
+        <button role="menuitem" onClick={props.onToggleTheme}>{light ? <Moon size={15} /> : <Sun size={15} />}{light ? t('Dark theme') : t('Light theme')}</button>
         <div className="menu-separator" />
-        <button role="menuitem" onClick={() => { setAccountOpen(false); props.onGuide() }}><BookOpen size={15} />Getting started</button>
-        <button role="menuitem" onClick={() => { setAccountOpen(false); props.onTour() }}><Compass size={15} />Take the tour</button>
+        <button role="menuitem" onClick={() => { setAccountOpen(false); props.onGuide() }}><BookOpen size={15} />{t('Getting started')}</button>
+        <button role="menuitem" onClick={() => { setAccountOpen(false); props.onTour() }}><Compass size={15} />{t('Take the tour')}</button>
       </div>}
       <div className="sidebar-footer-row" data-tour="settings">
-        <button className={`footer-settings ${section === 'settings' ? 'active' : ''}`} onClick={() => { setAccountOpen(false); props.onSection('settings') }} title={`Settings (${mod} ,)`}>
-          <Settings2 size={16} strokeWidth={1.75} /><span>Settings</span><kbd>{mod} ,</kbd>
+        <button className={`footer-settings ${section === 'settings' ? 'active' : ''}`} onClick={() => { setAccountOpen(false); props.onSection('settings') }} title={`${t('Settings')} (${mod} ,)`}>
+          <Settings2 size={16} strokeWidth={1.75} /><span>{t('Settings')}</span><kbd>{mod} ,</kbd>
         </button>
-        <button className={`icon-button footer-more ${accountOpen ? 'active' : ''}`} onClick={() => setAccountOpen(value => !value)} aria-expanded={accountOpen} aria-haspopup="menu" aria-label="More options" title="More"><MoreHorizontal size={16} /></button>
+        <button className={`icon-button footer-more ${accountOpen ? 'active' : ''}`} onClick={() => setAccountOpen(value => !value)} aria-expanded={accountOpen} aria-haspopup="menu" aria-label={t('More options')} title={t('More')}><MoreHorizontal size={16} /></button>
       </div>
     </div>
 
-    <div className="sidebar-resizer" onPointerDown={startResize} onDoubleClick={resetWidth} role="separator" aria-orientation="vertical" aria-label="Resize sidebar" title="Drag to resize, double-click to reset" />
+    <div className="sidebar-resizer" onPointerDown={startResize} onDoubleClick={resetWidth} role="separator" aria-orientation="vertical" aria-label={t('Resize sidebar')} title={t('Drag to resize, double-click to reset')} />
   </aside>
 }

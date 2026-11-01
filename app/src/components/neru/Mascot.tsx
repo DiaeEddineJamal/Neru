@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { t } from '../../i18n'
 
 type Reaction = 'still' | 'look-left' | 'look-right' | 'twinkle' | 'hop' | 'sway'
 type MascotProps = { size?: number; className?: string; interactive?: boolean }
@@ -22,7 +23,7 @@ export function Mascot({ size = 42, className = '', interactive = false }: Masco
   useEffect(() => () => window.clearTimeout(resetTimer.current), [])
 
   const figure = (
-    <span className={`mascot is-${reaction} ${className}`} style={{ width: size, height: size }} role="img" aria-label="Neru spirit">
+    <span className={`mascot is-${reaction} ${className}`} style={{ width: size, height: size }} role="img" aria-label={t('Neru spirit')}>
       <span className="mascot-figure">
         <img className="mascot-art" src="/neru-mascot-cutout.png" alt="" aria-hidden="true" />
         <svg className="mascot-face" viewBox="0 0 1254 1254" aria-hidden="true">
@@ -42,7 +43,7 @@ export function Mascot({ size = 42, className = '', interactive = false }: Masco
       className="mascot-control"
       style={{ width: size, height: size }}
       onClick={animate}
-      aria-label="Animate Neru mascot"
+      aria-label={t('Animate Neru mascot')}
     >
       {figure}
     </button>

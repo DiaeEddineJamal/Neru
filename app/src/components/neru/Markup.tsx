@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { motion, useReducedMotion } from 'motion/react'
 import { Circle, MousePointer2, MoveUpRight, PenLine, Redo2, Send, Slash, Square, Trash2, Type, Undo2 } from 'lucide-react'
 import { SPRING_PANEL } from '@/lib/ease'
+import { t } from '../../i18n'
 
 type Tool = 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'text'
 type Point = [number, number]
@@ -209,32 +210,32 @@ export function MarkupBoard({ shot, onClose, onSelect, onSend }: {
     try { onSend(shapes.length ? await flatten(shot.dataUrl, shot.width, shot.height, shapes) : shot.dataUrl); onClose() } finally { setSending(false) }
   }
 
-  return <div className="markup" role="dialog" aria-label="Mark up the page">
+  return <div className="markup" role="dialog" aria-label={t('Mark up the page')}>
     <div className="markup-canvas">
       <div className="markup-sheet" style={{ '--ratio': shot.width / shot.height } as CSSProperties}>
-        <img src={shot.dataUrl} alt="Snapshot of the page" draggable={false} />
+        <img src={shot.dataUrl} alt={t('Snapshot of the page')} draggable={false} />
         <svg ref={svg} viewBox={`0 0 ${shot.width} ${shot.height}`} data-tool={tool} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
           {shapes.map(shape => <ShapeView key={shape.id} shape={shape} />)}
           {draft && <ShapeView shape={draft} />}
         </svg>
-        {typing && <input className="markup-text" autoFocus value={typing.value} placeholder="Type, then Enter" style={{ left: typing.screen.x, top: typing.screen.y, color }}
+        {typing && <input className="markup-text" autoFocus value={typing.value} placeholder={t('Type, then Enter')} style={{ left: typing.screen.x, top: typing.screen.y, color }}
           onChange={event => setTyping(current => current && { ...current, value: event.target.value })}
           onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitText() } else if (event.key === 'Escape') { event.preventDefault(); setTyping(null) } }}
           onBlur={commitText} />}
       </div>
     </div>
-    <motion.div className="markup-bar" role="toolbar" aria-label="Markup tools" initial={reduce ? false : { opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={reduce ? { duration: 0 } : SPRING_PANEL}>
-      <button type="button" className="markup-tool" title="Select an element" aria-label="Select an element" onClick={onSelect}><MousePointer2 size={15} /></button>
-      {TOOLS.map(item => <button key={item.id} type="button" className={`markup-tool${tool === item.id ? ' on' : ''}`} title={`${item.label} (${item.key.toUpperCase()})`} aria-label={item.label} aria-pressed={tool === item.id} onClick={() => setTool(item.id)}><item.icon size={15} /></button>)}
+    <motion.div className="markup-bar" role="toolbar" aria-label={t('Markup tools')} initial={reduce ? false : { opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={reduce ? { duration: 0 } : SPRING_PANEL}>
+      <button type="button" className="markup-tool" title={t('Select an element')} aria-label={t('Select an element')} onClick={onSelect}><MousePointer2 size={15} /></button>
+      {TOOLS.map(item => <button key={item.id} type="button" className={`markup-tool${tool === item.id ? ' on' : ''}`} title={`${t(item.label)} (${item.key.toUpperCase()})`} aria-label={t(item.label)} aria-pressed={tool === item.id} onClick={() => setTool(item.id)}><item.icon size={15} /></button>)}
       <i className="markup-sep" />
-      {COLORS.map(item => <button key={item.value} type="button" className={`markup-color${color === item.value ? ' on' : ''}`} style={{ '--swatch': item.value } as CSSProperties} title={item.name} aria-label={item.name} aria-pressed={color === item.value} onClick={() => setColor(item.value)} />)}
+      {COLORS.map(item => <button key={item.value} type="button" className={`markup-color${color === item.value ? ' on' : ''}`} style={{ '--swatch': item.value } as CSSProperties} title={t(item.name)} aria-label={t(item.name)} aria-pressed={color === item.value} onClick={() => setColor(item.value)} />)}
       <i className="markup-sep" />
-      <button type="button" className="markup-tool" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!history.past.length} onClick={undo}><Undo2 size={15} /></button>
-      <button type="button" className="markup-tool" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!history.future.length} onClick={redo}><Redo2 size={15} /></button>
-      <button type="button" className="markup-tool" title="Clear all" aria-label="Clear all" disabled={!shapes.length} onClick={clear}><Trash2 size={15} /></button>
+      <button type="button" className="markup-tool" title={t('Undo (Ctrl+Z)')} aria-label={t('Undo')} disabled={!history.past.length} onClick={undo}><Undo2 size={15} /></button>
+      <button type="button" className="markup-tool" title={t('Redo (Ctrl+Shift+Z)')} aria-label={t('Redo')} disabled={!history.future.length} onClick={redo}><Redo2 size={15} /></button>
+      <button type="button" className="markup-tool" title={t('Clear all')} aria-label={t('Clear all')} disabled={!shapes.length} onClick={clear}><Trash2 size={15} /></button>
       <i className="markup-sep" />
-      <button type="button" className="markup-text-button" onClick={onClose}>Close</button>
-      <button type="button" className="markup-send" disabled={!onSend || sending} onClick={() => void send()}><Send size={13} /> Add to chat</button>
+      <button type="button" className="markup-text-button" onClick={onClose}>{t('Close')}</button>
+      <button type="button" className="markup-send" disabled={!onSend || sending} onClick={() => void send()}><Send size={13} /> {t('Add to chat')}</button>
     </motion.div>
   </div>
 }

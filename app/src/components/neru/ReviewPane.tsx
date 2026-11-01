@@ -5,6 +5,7 @@ import { api } from '../../api'
 import { languageForPath } from '@/components/agents/agent-code'
 import { parseUnifiedDiff } from '@/lib/diff'
 import type { SessionChange } from '../../types'
+import { t } from '../../i18n'
 
 type DiffView = 'unified' | 'split'
 const VIEW_KEY = 'neru.diff.view'
@@ -34,7 +35,7 @@ function FileEditor({ path, value, onChange }: { path: string; value: string; on
       }}
       wrap="off"
       spellCheck={false}
-      aria-label={`Edit ${path}`}
+      aria-label={t('Edit {path}', { path })}
       className="min-w-0 flex-1 resize-none bg-transparent py-2 pr-2 text-[var(--text)] outline-none"
     />
   </div>
@@ -66,7 +67,7 @@ export function ReviewPane({ changes, loading, comments, onComments, onRefresh, 
   const startEdit = async (path: string) => {
     setOpenError(null)
     try { setEditing({ path, text: await api.readFile(path), saving: false }) }
-    catch (error) { setOpenError({ path, message: `Could not open this file: ${String(error)}` }) }
+    catch (error) { setOpenError({ path, message: t('Could not open this file: {error}', { error: String(error) }) }) }
   }
   const saveEdit = async () => {
     if (!editing) return
@@ -92,17 +93,17 @@ export function ReviewPane({ changes, loading, comments, onComments, onRefresh, 
     onSend(`Please address these review comments on the changes in this session:\n${lines.join('\n')}`)
   }
 
-  return <aside className="review-pane" aria-label="Session changes">
+  return <aside className="review-pane" aria-label={t('Session changes')}>
     <header className="review-head">
-      <div><strong>Changes in this session</strong><span>{changes.length} file{changes.length === 1 ? '' : 's'} · <b className="add">+{additions}</b> <b className="del">−{deletions}</b></span></div>
-      <span role="group" aria-label="Diff layout" className="flex items-center gap-2 pr-1">
-        {(['unified', 'split'] as const).map(option => <button key={option} className={`text-action${view === option ? ' on' : ''}`} aria-pressed={view === option} onClick={() => chooseView(option)}>{option === 'unified' ? 'Unified' : 'Split'}</button>)}
+      <div><strong>{t('Changes in this session')}</strong><span>{changes.length === 1 ? t('1 file') : t('{n} files', { n: changes.length })} · <b className="add">+{additions}</b> <b className="del">−{deletions}</b></span></div>
+      <span role="group" aria-label={t('Diff layout')} className="flex items-center gap-2 pr-1">
+        {(['unified', 'split'] as const).map(option => <button key={option} className={`text-action${view === option ? ' on' : ''}`} aria-pressed={view === option} onClick={() => chooseView(option)}>{option === 'unified' ? t('Unified') : t('Split')}</button>)}
       </span>
-      <button className="icon-button small" onClick={onRefresh} aria-label="Refresh changes" title="Refresh">{loading ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}</button>
-      {!embedded && <button className="icon-button small" onClick={onClose} aria-label="Close changes" title="Close"><X size={14} /></button>}
+      <button className="icon-button small" onClick={onRefresh} aria-label={t('Refresh changes')} title={t('Refresh')}>{loading ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}</button>
+      {!embedded && <button className="icon-button small" onClick={onClose} aria-label={t('Close changes')} title={t('Close')}><X size={14} /></button>}
     </header>
     <div className="review-body">
-      {!loading && changes.length === 0 && <div className="empty-pane"><FileDiffIcon size={24} /><p>Neru has not changed any files in this session yet.</p></div>}
+      {!loading && changes.length === 0 && <div className="empty-pane"><FileDiffIcon size={24} /><p>{t('Neru has not changed any files in this session yet.')}</p></div>}
       {changes.map(change => {
         const draft = drafts[change.path] ?? { line: '', text: '' }
         const fileComments = comments.filter(comment => comment.path === change.path)
@@ -117,24 +118,24 @@ export function ReviewPane({ changes, loading, comments, onComments, onRefresh, 
           <div className="review-file-actions"><span className={`review-status ${change.status}`}>{change.status}</span><span className="flex items-center gap-3">
             {editing?.path === change.path
               ? <>
-                <button className="text-action" onClick={() => setEditing(null)} disabled={editing.saving}>Cancel</button>
-                <button className="text-action on" onClick={saveEdit} disabled={editing.saving}>{editing.saving ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />} Save</button>
+                <button className="text-action" onClick={() => setEditing(null)} disabled={editing.saving}>{t('Cancel')}</button>
+                <button className="text-action on" onClick={saveEdit} disabled={editing.saving}>{editing.saving ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />} {t('Save')}</button>
               </>
               : <>
-                {change.status !== 'deleted' && <button className="text-action" onClick={() => startEdit(change.path)} disabled={Boolean(editing)} title={editing ? 'Finish the other edit first' : 'Edit this file here'}><Pencil size={13} /> Edit</button>}
-                <button className="text-action" onClick={() => onOpenFile(change.path)}>Open in editor</button>
+                {change.status !== 'deleted' && <button className="text-action" onClick={() => startEdit(change.path)} disabled={Boolean(editing)} title={editing ? t('Finish the other edit first') : t('Edit this file here')}><Pencil size={13} /> {t('Edit')}</button>}
+                <button className="text-action" onClick={() => onOpenFile(change.path)}>{t('Open in editor')}</button>
               </>}
           </span></div>
           {openError?.path === change.path && <p role="alert" className="text-xs text-[var(--danger)]">{openError.message}</p>}
-          {fileComments.map(comment => <div key={comment.id} className="review-comment"><span>{comment.line ? `Line ${comment.line}` : 'File'}</span><p>{comment.text}</p><button className="icon-button small" onClick={() => onComments(comments.filter(item => item.id !== comment.id))} aria-label="Delete comment"><Trash2 size={12} /></button></div>)}
+          {fileComments.map(comment => <div key={comment.id} className="review-comment"><span>{comment.line ? t('Line {line}', { line: comment.line }) : t('File')}</span><p>{comment.text}</p><button className="icon-button small" onClick={() => onComments(comments.filter(item => item.id !== comment.id))} aria-label={t('Delete comment')}><Trash2 size={12} /></button></div>)}
           <div className="review-compose">
-            <input className="review-line" value={draft.line} onChange={event => setDrafts(current => ({ ...current, [change.path]: { ...draft, line: event.target.value.replace(/[^\d-]/g, '') } }))} placeholder="Line" aria-label={`Line in ${change.path}`} />
-            <input value={draft.text} onChange={event => setDrafts(current => ({ ...current, [change.path]: { ...draft, text: event.target.value } }))} onKeyDown={event => { if (event.key === 'Enter') addComment(change.path) }} placeholder="Add a review comment…" aria-label={`Comment on ${change.path}`} />
-            <button className="icon-button small" onClick={() => addComment(change.path)} disabled={!draft.text.trim()} aria-label="Add comment" title="Add comment"><MessageSquarePlus size={14} /></button>
+            <input className="review-line" value={draft.line} onChange={event => setDrafts(current => ({ ...current, [change.path]: { ...draft, line: event.target.value.replace(/[^\d-]/g, '') } }))} placeholder={t('Line')} aria-label={t('Line in {path}', { path: change.path })} />
+            <input value={draft.text} onChange={event => setDrafts(current => ({ ...current, [change.path]: { ...draft, text: event.target.value } }))} onKeyDown={event => { if (event.key === 'Enter') addComment(change.path) }} placeholder={t('Add a review comment…')} aria-label={t('Comment on {path}', { path: change.path })} />
+            <button className="icon-button small" onClick={() => addComment(change.path)} disabled={!draft.text.trim()} aria-label={t('Add comment')} title={t('Add comment')}><MessageSquarePlus size={14} /></button>
           </div>
         </section>
       })}
     </div>
-    {comments.length > 0 && <footer className="review-foot"><button className="button primary" onClick={send}><Send size={14} /> Send {comments.length} comment{comments.length === 1 ? '' : 's'} to Neru</button></footer>}
+    {comments.length > 0 && <footer className="review-foot"><button className="button primary" onClick={send}><Send size={14} /> {comments.length === 1 ? t('Send 1 comment to Neru') : t('Send {n} comments to Neru', { n: comments.length })}</button></footer>}
   </aside>
 }

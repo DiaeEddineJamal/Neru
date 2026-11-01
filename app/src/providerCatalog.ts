@@ -11,33 +11,58 @@ export type ProviderPreset = {
   keyUrl?: string
   /** Free-plan allowance, shown next to the provider. */
   freeLimit?: string
+  /** What the provider's published terms say it does with prompts. See `privacyLabels`. */
+  privacy: Privacy
 }
+
+/**
+ * What happens to what you send, per the provider's published terms (free tiers included):
+ * `local` never leaves your devices; `no-training` is kept a while for abuse checks but not trained on;
+ * `may-train` can be used to improve their models; `unknown` is not stated clearly. Terms change, so this is a guide.
+ */
+export type Privacy = 'local' | 'no-training' | 'may-train' | 'unknown'
+export const privacyLabels: Record<Privacy, { label: string; detail: string }> = {
+  local: { label: 'Stays on your devices', detail: 'Runs on your own hardware. Nothing is sent to a company.' },
+  'no-training': { label: 'Not used for training', detail: 'Their terms say prompts are not used to train models. They may keep logs for a while to check for abuse.' },
+  'may-train': { label: 'May train on your data', detail: 'Their terms allow using what you send to improve their models, and people may review it. Avoid private code here.' },
+  unknown: { label: 'Not clearly stated', detail: 'Their terms do not say clearly what happens to prompts. Treat what you send as possibly kept.' },
+}
+
+/** How much a privacy rule lets through: 'any' everything, 'no-train' blocks `may-train`, 'local' only your own hardware. */
+export type PrivacyRule = 'any' | 'no-train' | 'local'
+export function privacyAllows(rule: PrivacyRule, privacy: Privacy): boolean {
+  if (rule === 'local') return privacy === 'local'
+  if (rule === 'no-train') return privacy !== 'may-train'
+  return true
+}
+/** A provider's privacy; on-device models and unknown ids count as local and unknown. */
+export const privacyOf = (providerId: string): Privacy => (providerId === 'on-device' ? 'local' : providerPresets.find(p => p.id === providerId)?.privacy ?? 'unknown')
 
 // The `model` of each preset is only the first pick before the key's own list loads: Neru replaces it
 // with a model from that list, so an id that a provider retires never sticks.
 // Free coding providers first, most generous daily allowance first. Limits change; each provider's
 // console shows the live numbers, and Neru's context meter shows what the key reports.
 export const providerPresets: ProviderPreset[] = [
-  { id: 'nvidia', name: 'NVIDIA NIM', description: 'Recommended free pick. Large open coding models (Qwen Coder, Kimi, DeepSeek, GLM). No card needed. The catalog lists more than each account can call, so use Check availability to see which ones answer.', baseUrl: 'https://integrate.api.nvidia.com/v1', model: '', format: 'openai-chat', keyUrl: 'https://build.nvidia.com/settings/api-keys', freeLimit: '~10,000 requests/day · 40/min' },
-  { id: 'modelscope', name: 'ModelScope', description: 'Alibaba’s free inference API. Qwen Coder, DeepSeek, GLM, and MiniMax models. Sign up with a phone number or Alibaba account.', baseUrl: 'https://api-inference.modelscope.cn/v1', model: '', format: 'openai-chat', keyUrl: 'https://modelscope.cn/my/myaccesstoken', freeLimit: '2,000 requests/day · 500 per model' },
-  { id: 'gemini', name: 'Google Gemini', description: 'Free AI Studio key. Flash models with a 1M-token context for big projects. Older 2.x models are limited to keys that already used them.', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash', format: 'openai-chat', keyUrl: 'https://aistudio.google.com/apikey', freeLimit: 'Daily quota per model, shown in AI Studio' },
-  { id: 'cerebras', name: 'Cerebras', description: 'Very fast open models. Few requests per minute, so long agent runs are slower.', baseUrl: 'https://api.cerebras.ai/v1', model: 'gpt-oss-120b', format: 'openai-chat', keyUrl: 'https://cloud.cerebras.ai/platform/', freeLimit: '1M tokens/day · 5 requests/min' },
-  { id: 'mistral', name: 'Mistral', description: 'Free plan. Codestral and Devstral for writing and editing code.', baseUrl: 'https://api.mistral.ai/v1', model: 'codestral-latest', format: 'openai-chat', keyUrl: 'https://console.mistral.ai/api-keys', freeLimit: 'Monthly free credit' },
-  { id: 'openrouter', name: 'OpenRouter', description: 'One key for many models. Neru stays on the free catalog and switches free models when one is busy.', baseUrl: 'https://openrouter.ai/api/v1', model: 'openrouter/free', format: 'openai-chat', keyUrl: 'https://openrouter.ai/settings/keys', freeLimit: '50 free requests/day (1,000 after $10 credit)' },
-  { id: 'groq', name: 'Groq Cloud', description: 'Very fast, but the free plan allows about 8K tokens a minute: fine for Chat, too small for Code on real projects. This is Groq, not xAI Grok.', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', format: 'openai-chat', keyUrl: 'https://console.groq.com/keys', freeLimit: '1,000 requests/day · 8K tokens/min' },
-  { id: 'huggingface', name: 'Hugging Face', description: 'Free token. Open models served by several inference partners, with a small monthly credit.', baseUrl: 'https://router.huggingface.co/v1', model: 'openai/gpt-oss-120b', format: 'openai-chat', keyUrl: 'https://huggingface.co/settings/tokens', freeLimit: 'Small monthly credit' },
-  { id: 'local', name: 'Local gateway', description: 'FreeLLMAPI or another local OpenAI-compatible server', baseUrl: 'http://localhost:3001/v1', model: 'auto', format: 'openai-chat' },
-  { id: 'ollama', name: 'Ollama / local models', description: 'Run open coding models on your computer. No limits, uses your hardware.', baseUrl: 'http://localhost:11434/v1', model: '', format: 'openai-chat', keyUrl: 'https://ollama.com/search?c=tools' },
-  { id: 'opencode', name: 'OpenCode Zen', description: 'Curated coding models with your Zen key', baseUrl: 'https://opencode.ai/zen/v1', model: '', format: 'openai-chat', keyUrl: 'https://opencode.ai/auth' },
-  { id: 'xai', name: 'Grok', description: 'xAI Grok key. Neru lists the models that key can use.', baseUrl: 'https://api.x.ai/v1', model: '', format: 'openai-chat', keyUrl: 'https://console.x.ai' },
-  { id: 'openai', name: 'OpenAI', description: 'Direct OpenAI API key', baseUrl: 'https://api.openai.com/v1', model: '', format: 'openai-responses', keyUrl: 'https://platform.openai.com/api-keys' },
-  { id: 'anthropic', name: 'Anthropic', description: 'Direct Claude API key', baseUrl: 'https://api.anthropic.com/v1', model: '', format: 'anthropic', keyUrl: 'https://console.anthropic.com/settings/keys' },
-  { id: 'deepseek', name: 'DeepSeek', description: 'Direct DeepSeek API key', baseUrl: 'https://api.deepseek.com', model: '', format: 'openai-chat', keyUrl: 'https://platform.deepseek.com/api_keys' },
-  { id: 'qwen', name: 'Alibaba Qwen', description: 'Model Studio, Singapore region by default', baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', model: '', format: 'openai-chat', keyUrl: 'https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key' },
-  { id: 'kimi', name: 'Moonshot Kimi', description: 'Direct Moonshot AI API key', baseUrl: 'https://api.moonshot.ai/v1', model: '', format: 'openai-chat', keyUrl: 'https://platform.moonshot.ai/console/api-keys' },
-  { id: 'zai', name: 'Z.AI GLM', description: 'Direct Z.AI API key', baseUrl: 'https://api.z.ai/api/paas/v4', model: '', format: 'openai-chat', keyUrl: 'https://z.ai/manage-apikey/apikey-list' },
-  { id: 'minimax', name: 'MiniMax', description: 'Direct MiniMax API key', baseUrl: 'https://api.minimax.io/v1', model: '', format: 'openai-chat', keyUrl: 'https://platform.minimax.io/user-center/basic-information/interface-key' },
-  { id: 'custom', name: 'Custom endpoint', description: 'Any compatible Chat, Responses, or Messages API', baseUrl: '', model: '', format: 'openai-chat' },
+  { id: 'nvidia', name: 'NVIDIA NIM', description: 'Recommended free pick. Large open coding models (Qwen Coder, Kimi, DeepSeek, GLM). No card needed. The catalog lists more than each account can call, so use Check availability to see which ones answer.', baseUrl: 'https://integrate.api.nvidia.com/v1', model: '', format: 'openai-chat', keyUrl: 'https://build.nvidia.com/settings/api-keys', freeLimit: '~10,000 requests/day · 40/min' , privacy: 'unknown' },
+  { id: 'modelscope', name: 'ModelScope', description: 'Alibaba’s free inference API. Qwen Coder, DeepSeek, GLM, and MiniMax models. Sign up with a phone number or Alibaba account.', baseUrl: 'https://api-inference.modelscope.cn/v1', model: '', format: 'openai-chat', keyUrl: 'https://modelscope.cn/my/myaccesstoken', freeLimit: '2,000 requests/day · 500 per model' , privacy: 'unknown' },
+  { id: 'gemini', name: 'Google Gemini', description: 'Free AI Studio key. Flash models with a 1M-token context for big projects. Older 2.x models are limited to keys that already used them.', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash', format: 'openai-chat', keyUrl: 'https://aistudio.google.com/apikey', freeLimit: 'Daily quota per model, shown in AI Studio' , privacy: 'may-train' },
+  { id: 'cerebras', name: 'Cerebras', description: 'Very fast open models. Few requests per minute, so long agent runs are slower.', baseUrl: 'https://api.cerebras.ai/v1', model: 'gpt-oss-120b', format: 'openai-chat', keyUrl: 'https://cloud.cerebras.ai/platform/', freeLimit: '1M tokens/day · 5 requests/min' , privacy: 'unknown' },
+  { id: 'mistral', name: 'Mistral', description: 'Free plan. Codestral and Devstral for writing and editing code.', baseUrl: 'https://api.mistral.ai/v1', model: 'codestral-latest', format: 'openai-chat', keyUrl: 'https://console.mistral.ai/api-keys', freeLimit: 'Monthly free credit' , privacy: 'may-train' },
+  { id: 'openrouter', name: 'OpenRouter', description: 'One key for many models. Neru stays on the free catalog and switches free models when one is busy.', baseUrl: 'https://openrouter.ai/api/v1', model: 'openrouter/free', format: 'openai-chat', keyUrl: 'https://openrouter.ai/settings/keys', freeLimit: '50 free requests/day (1,000 after $10 credit)' , privacy: 'may-train' },
+  { id: 'groq', name: 'Groq Cloud', description: 'Very fast, but the free plan allows about 8K tokens a minute: fine for Chat, too small for Code on real projects. This is Groq, not xAI Grok.', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', format: 'openai-chat', keyUrl: 'https://console.groq.com/keys', freeLimit: '1,000 requests/day · 8K tokens/min' , privacy: 'no-training' },
+  { id: 'huggingface', name: 'Hugging Face', description: 'Free token. Open models served by several inference partners, with a small monthly credit.', baseUrl: 'https://router.huggingface.co/v1', model: 'openai/gpt-oss-120b', format: 'openai-chat', keyUrl: 'https://huggingface.co/settings/tokens', freeLimit: 'Small monthly credit' , privacy: 'unknown' },
+  { id: 'local', name: 'Local gateway', description: 'FreeLLMAPI or another local OpenAI-compatible server', baseUrl: 'http://localhost:3001/v1', model: 'auto', format: 'openai-chat' , privacy: 'local' },
+  { id: 'ollama', name: 'Ollama / local models', description: 'Run open coding models on your computer. No limits, uses your hardware.', baseUrl: 'http://localhost:11434/v1', model: '', format: 'openai-chat', keyUrl: 'https://ollama.com/search?c=tools' , privacy: 'local' },
+  { id: 'opencode', name: 'OpenCode Zen', description: 'Curated coding models with your Zen key', baseUrl: 'https://opencode.ai/zen/v1', model: '', format: 'openai-chat', keyUrl: 'https://opencode.ai/auth' , privacy: 'unknown' },
+  { id: 'xai', name: 'Grok', description: 'xAI Grok key. Neru lists the models that key can use.', baseUrl: 'https://api.x.ai/v1', model: '', format: 'openai-chat', keyUrl: 'https://console.x.ai' , privacy: 'unknown' },
+  { id: 'openai', name: 'OpenAI', description: 'Direct OpenAI API key', baseUrl: 'https://api.openai.com/v1', model: '', format: 'openai-responses', keyUrl: 'https://platform.openai.com/api-keys' , privacy: 'no-training' },
+  { id: 'anthropic', name: 'Anthropic', description: 'Direct Claude API key', baseUrl: 'https://api.anthropic.com/v1', model: '', format: 'anthropic', keyUrl: 'https://console.anthropic.com/settings/keys' , privacy: 'no-training' },
+  { id: 'deepseek', name: 'DeepSeek', description: 'Direct DeepSeek API key', baseUrl: 'https://api.deepseek.com', model: '', format: 'openai-chat', keyUrl: 'https://platform.deepseek.com/api_keys' , privacy: 'may-train' },
+  { id: 'qwen', name: 'Alibaba Qwen', description: 'Model Studio, Singapore region by default', baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', model: '', format: 'openai-chat', keyUrl: 'https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key' , privacy: 'unknown' },
+  { id: 'kimi', name: 'Moonshot Kimi', description: 'Direct Moonshot AI API key', baseUrl: 'https://api.moonshot.ai/v1', model: '', format: 'openai-chat', keyUrl: 'https://platform.moonshot.ai/console/api-keys' , privacy: 'unknown' },
+  { id: 'zai', name: 'Z.AI GLM', description: 'Direct Z.AI API key', baseUrl: 'https://api.z.ai/api/paas/v4', model: '', format: 'openai-chat', keyUrl: 'https://z.ai/manage-apikey/apikey-list' , privacy: 'unknown' },
+  { id: 'minimax', name: 'MiniMax', description: 'Direct MiniMax API key', baseUrl: 'https://api.minimax.io/v1', model: '', format: 'openai-chat', keyUrl: 'https://platform.minimax.io/user-center/basic-information/interface-key' , privacy: 'unknown' },
+  { id: 'custom', name: 'Custom endpoint', description: 'Any compatible Chat, Responses, or Messages API', baseUrl: '', model: '', format: 'openai-chat' , privacy: 'unknown' },
 ]
 
 const chatProviders = new Set(['modelscope', 'local', 'ollama', 'groq', 'gemini', 'cerebras', 'mistral', 'nvidia', 'huggingface', 'openrouter', 'deepseek', 'qwen', 'kimi', 'zai', 'minimax', 'xai'])

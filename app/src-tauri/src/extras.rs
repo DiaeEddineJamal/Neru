@@ -187,13 +187,34 @@ pub fn memory_prompt(root: Option<&Path>) -> String {
 }
 
 /// What models call the user, and which pronouns and grammatical gender they use (as on the phone app).
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Profile {
     pub name: String,
     /// "male", "female" or empty.
     pub gender: String,
+    /// What the user does, e.g. "Second-year law student" or "Backend developer".
+    pub occupation: String,
+    /// Free text the user wants every model to know: field, level, interests, context.
+    pub about: String,
+    /// How the user wants answers written: length, tone, format.
+    pub style: String,
+    /// Off keeps the text saved but leaves it out of every prompt.
+    #[serde(default = "enabled")]
+    pub personalize: bool,
 }
+
+fn enabled() -> bool { true }
+
+impl Default for Profile {
+    fn default() -> Self {
+        Profile { name: String::new(), gender: String::new(), occupation: String::new(), about: String::new(), style: String::new(), personalize: true }
+    }
+}
+
+const OCCUPATION_MAX: usize = 120;
+const ABOUT_MAX: usize = 1_500;
+const STYLE_MAX: usize = 1_000;
 
 fn profile_path() -> Result<PathBuf, String> { Ok(data_dir()?.join("profile.json")) }
 
@@ -204,8 +225,20 @@ pub fn get_profile() -> Profile {
 
 #[tauri::command]
 pub fn set_profile(name: String, gender: String) -> Result<(), String> {
-    let profile = Profile { name: name.trim().chars().take(80).collect(), gender: if matches!(gender.as_str(), "male" | "female") { gender } else { String::new() } };
-    fs::write(profile_path()?, serde_json::to_vec_pretty(&profile).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    let profile = Profile { name: name.trim().chars().take(80).collect(), gender: if matches!(gender.as_str(), "male" | "female") { gender } else { String::new() }, ..get_profile() };
+    write_profile(&profile)
+}
+
+/// Saves the "About you" part of the profile, keeping the name and gender.
+#[tauri::command]
+pub fn set_personalization(occupation: String, about: String, style: String, personalize: bool) -> Result<(), String> {
+    let clip = |text: &str, max: usize| text.trim().chars().take(max).collect::<String>();
+    let profile = Profile { occupation: clip(&occupation, OCCUPATION_MAX), about: clip(&about, ABOUT_MAX), style: clip(&style, STYLE_MAX), personalize, ..get_profile() };
+    write_profile(&profile)
+}
+
+fn write_profile(profile: &Profile) -> Result<(), String> {
+    fs::write(profile_path()?, serde_json::to_vec_pretty(profile).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
 
 fn profile_prompt(profile: &Profile) -> String {
@@ -216,7 +249,40 @@ fn profile_prompt(profile: &Profile) -> String {
         _ => "",
     };
     let name = if name.is_empty() { String::new() } else { format!("The user's name is {name}. Use it now and then, naturally, not in every reply.") };
-    [name.as_str(), who].iter().filter(|part| !part.is_empty()).copied().collect::<Vec<_>>().join(" ")
+    let basics = [name.as_str(), who].iter().filter(|part| !part.is_empty()).copied().collect::<Vec<_>>().join(" ");
+    let about = if profile.personalize { about_prompt(profile) } else { String::new() };
+    [basics, about].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join("
+
+")
+}
+
+/// The user's own words about themselves, set apart so the model treats them as context, not instructions to obey blindly.
+fn about_prompt(profile: &Profile) -> String {
+    let mut parts = Vec::new();
+    let occupation = profile.occupation.trim();
+    if !occupation.is_empty() {
+        parts.push(format!("Occupation: {occupation}"));
+    }
+    let about = profile.about.trim();
+    if !about.is_empty() {
+        parts.push(format!("What they want you to know about them:
+{about}"));
+    }
+    let style = profile.style.trim();
+    if !style.is_empty() {
+        parts.push(format!("How they want you to respond:
+{style}"));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!(
+        "About the user (written by them in Settings). Tailor examples, depth, vocabulary and format to it when it helps; don't mention it unless it is relevant, and never let it override safety or the current task.
+{}",
+        parts.join("
+
+")
+    )
 }
 
 pub fn save_memory(root: Option<&Path>, fact: &str, scope: &str) -> Result<String, String> {
@@ -242,6 +308,35 @@ pub fn save_memory(root: Option<&Path>, fact: &str, scope: &str) -> Result<Strin
     body.push_str(&format!("- {fact}\n"));
     fs::write(&path, body).map_err(|e| e.to_string())?;
     Ok(format!("Remembered ({scope}): {fact}"))
+}
+
+/// What Neru remembers about the open project, one fact per line, as Settings lists it.
+#[tauri::command]
+pub fn project_memory_facts(state: tauri::State<'_, crate::AppState>) -> Result<Vec<String>, String> {
+    let root = crate::workspace::project_root(&state)?;
+    Ok(facts(&project_memory_path(&root)))
+}
+
+fn facts(path: &Path) -> Vec<String> {
+    fs::read_to_string(path).unwrap_or_default().lines().filter_map(|line| line.strip_prefix("- ")).map(|fact| fact.trim().to_string()).filter(|fact| !fact.is_empty()).collect()
+}
+
+/// Removes one fact from the open project's memory (exact text, as listed).
+#[tauri::command]
+pub fn forget_project_fact(fact: String, state: tauri::State<'_, crate::AppState>) -> Result<Vec<String>, String> {
+    let path = project_memory_path(&crate::workspace::project_root(&state)?);
+    let body = fs::read_to_string(&path).unwrap_or_default();
+    let kept: Vec<&str> = body.lines().filter(|line| line.strip_prefix("- ").map(str::trim) != Some(fact.trim())).collect();
+    fs::write(&path, format!("{}\n", kept.join("\n"))).map_err(|e| e.to_string())?;
+    Ok(facts(&path))
+}
+
+/// Adds a fact to the open project's memory, as the agent's save_memory does.
+#[tauri::command]
+pub fn remember_project_fact(fact: String, state: tauri::State<'_, crate::AppState>) -> Result<Vec<String>, String> {
+    let root = crate::workspace::project_root(&state)?;
+    save_memory(Some(&root), &fact, "project")?;
+    Ok(facts(&project_memory_path(&root)))
 }
 
 // ---------- to-dos ----------
@@ -542,11 +637,31 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn profile_prompt_includes_about_you_only_when_enabled() {
+        let mut profile = Profile { occupation: "Biology student".into(), about: "Second year, learning statistics.".into(), style: "Short answers with examples.".into(), personalize: true, ..Profile::default() };
+        let text = profile_prompt(&profile);
+        assert!(text.contains("Occupation: Biology student"));
+        assert!(text.contains("learning statistics"));
+        assert!(text.contains("Short answers with examples."));
+        profile.personalize = false;
+        assert_eq!(profile_prompt(&profile), "");
+        profile.name = "Sam".into();
+        assert!(profile_prompt(&profile).starts_with("The user's name is Sam."));
+    }
+
+    #[test]
+    fn old_profile_files_load_with_personalization_on() {
+        let profile: Profile = serde_json::from_str(r#"{"name":"Sam","gender":""}"#).unwrap();
+        assert!(profile.personalize);
+        assert!(profile.about.is_empty());
+    }
+
+    #[test]
     fn profile_prompt_names_and_genders_the_user() {
         assert_eq!(profile_prompt(&Profile::default()), "");
-        let text = profile_prompt(&Profile { name: " Diae ".into(), gender: "male".into() });
+        let text = profile_prompt(&Profile { name: " Diae ".into(), gender: "male".into(), ..Profile::default() });
         assert!(text.starts_with("The user's name is Diae.") && text.contains("he/him"));
-        assert!(profile_prompt(&Profile { name: String::new(), gender: "female".into() }).starts_with("She is a woman"));
+        assert!(profile_prompt(&Profile { name: String::new(), gender: "female".into(), ..Profile::default() }).starts_with("She is a woman"));
     }
 
     #[test]

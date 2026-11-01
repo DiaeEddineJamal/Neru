@@ -334,6 +334,13 @@ fn push(text: String) {
     let _ = PUSH.send(Arc::new(text));
 }
 
+/// Sends an event to every connected phone (the queue, for one).
+pub fn push_event(event: &str, payload: Value) {
+    if PUSH.receiver_count() > 0 {
+        push(json!({"event": event, "payload": payload}).to_string());
+    }
+}
+
 /// Sends the session list, off the emitting thread (it may hold a session lock).
 fn push_sessions() {
     let Some(app) = APP.get().cloned() else { return };
@@ -482,9 +489,9 @@ async fn handle(app: &AppHandle, cmd: &str, args: &Value) -> Result<Value, Strin
         "hello" => Ok(hello()),
         "list_sessions" => value(phone_sessions(app)),
         "session_snapshot" => value(sessions::session_snapshot(text(args, "sessionId")?, state)),
-        "send_prompt" => send_prompt(app, text(args, "sessionId")?, text(args, "text")?, mode(args)).await,
+        "send_prompt" => send_prompt(app, text(args, "sessionId")?, text(args, "text")?, mode(args), images(args)?).await,
         "approve" => approve(app, text(args, "sessionId")?, args["always"].as_bool().unwrap_or(false), mode(args)).await.map(|_| Value::Null),
-        "deny" => deny(app, text(args, "sessionId")?).map(|_| Value::Null),
+        "deny" => deny(app, text(args, "sessionId")?, args["reason"].as_str().unwrap_or(""), args["remember"].as_bool().unwrap_or(false)).map(|_| Value::Null),
         "answer" => {
             let id = text(args, "sessionId")?;
             let answers = serde_json::from_value::<Vec<String>>(args["answers"].clone()).map_err(|_| "Missing answers")?;
@@ -524,8 +531,70 @@ async fn handle(app: &AppHandle, cmd: &str, args: &Value) -> Result<Value, Strin
             }
             value(Ok(created))
         }
+        "list_projects" => value(projects(app)),
+        "new_session" => {
+            let project = text(args, "projectPath")?;
+            let prompt = text(args, "text")?;
+            let id = crate::sessions::create_detached(&state, std::path::Path::new(&project), &crate::sessions::provisional_title(&prompt))?;
+            run_with(app, id.clone(), prompt, mode(args), images(args)?);
+            push_sessions();
+            Ok(json!({"sessionId": id}))
+        }
+        "queue_task" => value(crate::queue::add(text(args, "projectPath")?, text(args, "text")?, images(args)?, args["at"].as_u64().unwrap_or(0), mode(args))),
+        "list_queue" => value(Ok(crate::queue::list())),
+        "cancel_task" => crate::queue::cancel(&text(args, "id")?).map(|_| Value::Null),
+        "digest" => value(crate::activity::digest(&state, args["since"].as_u64().unwrap_or(0))),
+        "usage_summary" => value(Ok(crate::usage::totals())),
+        // The desktop's connectors, for the phone's own chats while it is paired (the phone calls them through here).
+        "mcp_tools" => {
+            let (specs, names) = state.mcp.tools(false);
+            Ok(Value::Array(specs.into_iter().filter_map(|spec| {
+                let function = &spec["function"];
+                let name = function["name"].as_str()?.to_string();
+                let (server, tool, read_only) = names.get(&name)?.clone();
+                Some(json!({"name": name, "server": server, "tool": tool, "description": function["description"], "inputSchema": function["parameters"], "readOnly": read_only}))
+            }).collect()))
+        }
+        "mcp_call" => {
+            let arguments = if args["arguments"].is_object() { args["arguments"].clone() } else { json!({}) };
+            let text = state.mcp.call(&text(args, "server")?, &text(args, "tool")?, arguments).await?;
+            Ok(json!({"text": text}))
+        }
         _ => Err(format!("Unknown command {cmd}")),
     }
+}
+
+/// Photos the phone sent with a prompt, at most eight.
+fn images(args: &Value) -> Result<Vec<crate::documents::ImageInput>, String> {
+    let list: Vec<crate::documents::ImageInput> = match &args["images"] {
+        Value::Null => Vec::new(),
+        value => serde_json::from_value(value.clone()).map_err(|_| "Images must be {name, dataUrl}")?,
+    };
+    if list.iter().any(|image| !image.data_url.starts_with("data:image/")) {
+        return Err("Only images can be attached".into());
+    }
+    Ok(list.into_iter().take(8).collect())
+}
+
+/// Folders the desktop has worked in: recent projects, then session folders, most recent first.
+fn projects(app: &AppHandle) -> Result<Vec<Value>, String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let mut add = |path: String, updated: u64| {
+        if !path.is_empty() && std::path::Path::new(&path).is_dir() && seen.insert(path.clone()) {
+            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
+            out.push(json!({"path": path, "name": name, "updatedAt": updated}));
+        }
+    };
+    let mut sessions = sessions::all_with_status(&app.state::<AppState>())?;
+    sessions.sort_by_key(|(summary, _)| std::cmp::Reverse(summary.updated_at));
+    for (summary, _) in sessions {
+        add(summary.project_path, summary.updated_at);
+    }
+    for path in crate::workspace::recent_projects().unwrap_or_default() {
+        add(path, 0);
+    }
+    Ok(out)
 }
 
 /// Cargo.toml's version, which releases keep equal to the app's (README, Releasing).
@@ -539,32 +608,53 @@ fn mode(args: &Value) -> String {
 }
 
 /// Steers a running session, or starts a reply in an idle one like the desktop's send button.
-async fn send_prompt(app: &AppHandle, id: String, prompt: String, mode: String) -> Result<Value, String> {
-    if agent::steer_session(id.clone(), prompt.clone(), app.state::<AppState>())? {
+/// Photos start a reply: a running agent takes text only, so they wait for its turn to end.
+async fn send_prompt(app: &AppHandle, id: String, prompt: String, mode: String, images: Vec<crate::documents::ImageInput>) -> Result<Value, String> {
+    if images.is_empty() && agent::steer_session(id.clone(), prompt.clone(), app.state::<AppState>())? {
         return Ok(json!({"steered": true}));
     }
     let shared = sessions::runtime(&app.state::<AppState>(), &id)?;
-    if sessions::lock(&shared)?.pending.is_some() {
-        return Err("Answer the waiting approval first".into());
+    {
+        let runtime = sessions::lock(&shared)?;
+        if runtime.pending.is_some() {
+            return Err("Answer the waiting approval first".into());
+        }
+        if runtime.running {
+            return Err("Neru is still working. Send the photo when it finishes, or stop it first.".into());
+        }
     }
-    run(app, id, prompt, mode);
+    run_with(app, id, prompt, mode, images);
     Ok(json!({"steered": false}))
 }
 
 /// Runs a reply in the background; the phone follows it through agent events.
 fn run(app: &AppHandle, id: String, prompt: String, mode: String) {
+    run_with(app, id, prompt, mode, Vec::new());
+}
+
+fn run_with(app: &AppHandle, id: String, prompt: String, mode: String, images: Vec<crate::documents::ImageInput>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let chat = sessions::runtime(&app.state::<AppState>(), &id)
-            .and_then(|shared| sessions::lock(&shared).map(|runtime| runtime.summary.project_path.is_empty()))
-            .unwrap_or(false);
-        let _ = app.emit("remote://session", json!({"sessionId": id, "phase": "started"}));
-        let surface = if chat { "chat" } else { "code" };
-        if let Err(error) = agent::ai_chat(prompt, Vec::new(), mode, None, None, None, None, Some(id.clone()), None, Some(surface.into()), app.clone()).await {
-            agent::emit(&app, &id, agent::AgentEvent::Notice { text: format!("Stopped: {error}") });
-        }
-        settled(&app, &id);
+        let _ = run_prompt(&app, id, prompt, images, mode).await;
     });
+}
+
+/// Runs one reply in session `id` and waits for it. Ok(true) when it stopped for an approval.
+pub async fn run_prompt(app: &AppHandle, id: String, prompt: String, images: Vec<crate::documents::ImageInput>, mode: String) -> Result<bool, String> {
+    let chat = sessions::runtime(&app.state::<AppState>(), &id)
+        .and_then(|shared| sessions::lock(&shared).map(|runtime| runtime.summary.project_path.is_empty()))
+        .unwrap_or(false);
+    let _ = app.emit("remote://session", json!({"sessionId": id, "phase": "started"}));
+    push_sessions();
+    let surface = if chat { "chat" } else { "code" };
+    let images = (!images.is_empty()).then_some(images);
+    let result = agent::ai_chat(prompt, Vec::new(), mode, None, None, images, None, Some(id.clone()), None, Some(surface.into()), app.clone()).await;
+    if let Err(error) = &result {
+        agent::emit(app, &id, agent::AgentEvent::Notice { text: format!("Stopped: {error}") });
+        crate::activity::note(&id, crate::activity::Kind::Failed, error);
+    }
+    settled(app, &id);
+    result.map(|response| response.pending.is_some())
 }
 
 /// Continues an agent run after its waiting call was answered, as the desktop does.
@@ -608,14 +698,16 @@ async fn approve(app: &AppHandle, id: String, always: bool, mode: String) -> Res
     Ok(())
 }
 
-/// The desktop's Deny button: the agent is told and the run does not continue.
-fn deny(app: &AppHandle, id: String) -> Result<(), String> {
+/// The desktop's Deny button: the agent is told (with the phone's reason, if any) and the run does not
+/// continue. With `remember`, the reason becomes a project rule.
+fn deny(app: &AppHandle, id: String, reason: &str, remember: bool) -> Result<(), String> {
     let shared = sessions::runtime(&app.state::<AppState>(), &id)?;
     let plan = matches!(sessions::lock(&shared)?.pending, Some(PendingAction::Plan { .. }));
     if plan {
-        extras::resolve_plan(Some(id.clone()), false, None, None, app.state::<AppState>())?;
-    } else {
-        crate::workspace::deny_pending_in(&shared, "User rejected this operation")?;
+        let feedback = (!reason.trim().is_empty()).then(|| reason.trim().to_string());
+        extras::resolve_plan(Some(id.clone()), false, None, feedback, app.state::<AppState>())?;
+    } else if let Some(rule) = crate::workspace::deny_with_reason(&shared, reason, remember)? {
+        agent::emit(app, &id, agent::AgentEvent::Notice { text: format!("Neru will remember for this project: {rule}") });
     }
     settled(app, &id);
     Ok(())

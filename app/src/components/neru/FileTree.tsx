@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useReducer, useRef, 
 import { ChevronDown, ChevronRight, Copy, CopyPlus, ExternalLink, FileCode2, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, FolderSearch, LoaderCircle, MessageSquarePlus, Paperclip, Pencil, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { api } from '../../api'
 import type { FileEntry } from '../../types'
+import { t } from '../../i18n'
 import { formatCount, useIndexStatus } from '../../lib/useIndex'
 import { useContextMenu, type MenuItem } from './ContextMenu'
 
@@ -65,8 +66,8 @@ function NameInput() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   if (!editing) return null
-  return <input ref={input} className="tree-rename" aria-label={editing.mode === 'rename' ? 'New name' : editing.mode === 'new_file' ? 'New file name' : 'New folder name'} value={editing.value}
-    placeholder={editing.mode === 'new_folder' ? 'folder name' : 'file name'}
+  return <input ref={input} className="tree-rename" aria-label={editing.mode === 'rename' ? t('New name') : editing.mode === 'new_file' ? t('New file name') : t('New folder name')} value={editing.value}
+    placeholder={editing.mode === 'new_folder' ? t('folder name') : t('file name')}
     onChange={event => setEditing({ ...editing, value: event.target.value })}
     onKeyDown={event => { if (event.key === 'Enter') commit(); if (event.key === 'Escape') setEditing(null) }}
     onBlur={() => commit()} />
@@ -96,15 +97,15 @@ function TreeNode({ entry, depth, onSelect, selected, changed }: TreeProps & { e
   return (
     <>
       {renaming ? <div style={{ paddingLeft: 4 + depth * 14 }}><NameInput /></div>
-        : <button className={`tree-row ${selected === entry.path ? 'selected' : ''} ${touched ? 'changed' : ''} ${flashing ? 'fresh' : ''}`} style={{ paddingLeft: 12 + depth * 14 }} onClick={toggle} onContextMenu={event => menu(event, entry)} onKeyDown={event => { if (event.key === 'F2') { event.preventDefault(); setEditing({ mode: 'rename', path: entry.path, value: entry.name }) } if (event.key === 'Delete') { event.preventDefault(); remove(entry) } }} title={touched ? `${entry.path} · changed by Neru` : entry.path}>
+        : <button className={`tree-row ${selected === entry.path ? 'selected' : ''} ${touched ? 'changed' : ''} ${flashing ? 'fresh' : ''}`} style={{ paddingLeft: 12 + depth * 14 }} onClick={toggle} onContextMenu={event => menu(event, entry)} onKeyDown={event => { if (event.key === 'F2') { event.preventDefault(); setEditing({ mode: 'rename', path: entry.path, value: entry.name }) } if (event.key === 'Delete') { event.preventDefault(); remove(entry) } }} title={touched ? t('{path} · changed by Neru', { path: entry.path }) : entry.path}>
           {entry.isDir ? (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="tree-spacer" />}
           <Icon size={14} strokeWidth={1.7} />
           <span className="truncate">{entry.name}</span>
-          {touched && <i className="tree-dot" aria-label="Changed" />}
+          {touched && <i className="tree-dot" aria-label={t('Changed')} />}
         </button>}
       {open && creatingHere && <div style={{ paddingLeft: 4 + (depth + 1) * 14 }}><NameInput /></div>}
       {children?.slice(0, shown).map(child => <TreeNode key={child.path} entry={child} depth={depth + 1} onSelect={onSelect} selected={selected} changed={changed} />)}
-      {children && children.length > shown && <button type="button" className="tree-more" style={{ paddingLeft: 12 + (depth + 1) * 14 }} onClick={() => setShown(value => value + 500)}>Show {Math.min(500, children.length - shown)} more of {children.length - shown}</button>}
+      {children && children.length > shown && <button type="button" className="tree-more" style={{ paddingLeft: 12 + (depth + 1) * 14 }} onClick={() => setShown(value => value + 500)}>{t('Show {n} more of {total}', { n: Math.min(500, children.length - shown), total: children.length - shown })}</button>}
       {open && !children && !error && <div className="tree-loading" style={{ paddingLeft: 12 + (depth + 1) * 14 }} aria-hidden><i /><i /></div>}
       {open && error && <div className="tree-error">{error}</div>}
     </>
@@ -213,7 +214,7 @@ export function FileTree({ projectKey, onSelect, selected, version = 0, changed 
     const name = current.value.trim()
     setEditing(null)
     if (!name || (current.mode === 'rename' && name === nameOf(current.path))) return
-    if (/[\\/:*?"<>|]/.test(name) && current.mode === 'rename') { onError?.('A name cannot contain \\ / : * ? " < > |'); return }
+    if (/[\\/:*?"<>|]/.test(name) && current.mode === 'rename') { onError?.(t('A name cannot contain \\ / : * ? " < > |')); return }
     committing.current = true
     const target = current.mode === 'rename' ? [parentOf(current.path), name].filter(Boolean).join('/') : [norm(current.path), name].filter(Boolean).join('/')
     const run = current.mode === 'rename' ? api.fileAction('rename', current.path, target) : api.fileAction(current.mode, target)
@@ -221,9 +222,8 @@ export function FileTree({ projectKey, onSelect, selected, version = 0, changed 
   }
 
   const remove = async (entry: FileEntry) => {
-    const what = entry.isDir ? `the folder “${entry.name}” and everything in it` : `“${entry.name}”`
     let sure = false
-    try { const { ask } = await import('@tauri-apps/plugin-dialog'); sure = await ask(`Delete ${what}? Neru keeps a checkpoint, so Rewind can bring it back.`, { title: 'Delete', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' }) } catch { sure = window.confirm(`Delete ${what}?`) }
+    try { const { ask } = await import('@tauri-apps/plugin-dialog'); sure = await ask(entry.isDir ? t('Delete the folder “{name}” and everything in it? Neru keeps a checkpoint, so Rewind can bring it back.', { name: entry.name }) : t('Delete “{name}”? Neru keeps a checkpoint, so Rewind can bring it back.', { name: entry.name }), { title: t('Delete'), kind: 'warning', okLabel: t('Delete'), cancelLabel: t('Cancel') }) } catch { sure = window.confirm(entry.isDir ? t('Delete the folder “{name}” and everything in it?', { name: entry.name }) : t('Delete “{name}”?', { name: entry.name })) }
     if (!sure) return
     api.fileAction('delete', entry.path).then(() => done(entry.path)).catch(fail)
   }
@@ -231,28 +231,28 @@ export function FileTree({ projectKey, onSelect, selected, version = 0, changed 
   const menu = (event: React.MouseEvent, entry: FileEntry | null) => {
     const folder = entry ? (entry.isDir ? entry.path : parentOf(entry.path)) : ''
     const create: MenuItem[] = [
-      { label: 'New file…', icon: <FilePlus2 size={14} />, onSelect: () => setEditing({ mode: 'new_file', path: folder, value: '' }) },
-      { label: 'New folder…', icon: <FolderPlus size={14} />, onSelect: () => setEditing({ mode: 'new_folder', path: folder, value: '' }) },
+      { label: t('New file…'), icon: <FilePlus2 size={14} />, onSelect: () => setEditing({ mode: 'new_file', path: folder, value: '' }) },
+      { label: t('New folder…'), icon: <FolderPlus size={14} />, onSelect: () => setEditing({ mode: 'new_folder', path: folder, value: '' }) },
     ]
     if (!entry) {
-      openMenu(event, [...create, 'separator', { label: 'Open File Location', icon: <FolderSearch size={14} />, onSelect: () => api.revealPath(absolute('')).catch(fail) }, { label: 'Refresh', icon: <RefreshCw size={14} />, onSelect: () => { void api.indexRefresh().catch(() => undefined); done() } }])
+      openMenu(event, [...create, 'separator', { label: t('Open File Location'), icon: <FolderSearch size={14} />, onSelect: () => api.revealPath(absolute('')).catch(fail) }, { label: t('Refresh'), icon: <RefreshCw size={14} />, onSelect: () => { void api.indexRefresh().catch(() => undefined); done() } }])
       return
     }
     openMenu(event, [
-      ...(entry.isDir ? create : [{ label: 'Open', icon: <FileCode2 size={14} />, onSelect: () => onSelect(entry.path) } as MenuItem]),
-      ...(!entry.isDir ? [{ label: 'Open in external editor', icon: <ExternalLink size={14} />, onSelect: () => api.openInEditor(entry.path).catch(fail) } as MenuItem] : []),
+      ...(entry.isDir ? create : [{ label: t('Open'), icon: <FileCode2 size={14} />, onSelect: () => onSelect(entry.path) } as MenuItem]),
+      ...(!entry.isDir ? [{ label: t('Open in external editor'), icon: <ExternalLink size={14} />, onSelect: () => api.openInEditor(entry.path).catch(fail) } as MenuItem] : []),
       'separator',
-      ...(!entry.isDir && onAttach ? [{ label: 'Attach to message', icon: <Paperclip size={14} />, onSelect: () => onAttach(entry.path) } as MenuItem] : []),
-      ...(onAsk ? [{ label: 'Ask Neru about this', icon: <MessageSquarePlus size={14} />, onSelect: () => onAsk(entry.path) } as MenuItem] : []),
+      ...(!entry.isDir && onAttach ? [{ label: t('Attach to message'), icon: <Paperclip size={14} />, onSelect: () => onAttach(entry.path) } as MenuItem] : []),
+      ...(onAsk ? [{ label: t('Ask Neru about this'), icon: <MessageSquarePlus size={14} />, onSelect: () => onAsk(entry.path) } as MenuItem] : []),
       'separator',
-      { label: 'Rename…', icon: <Pencil size={14} />, shortcut: 'F2', onSelect: () => setEditing({ mode: 'rename', path: entry.path, value: entry.name }) },
-      ...(!entry.isDir ? [{ label: 'Duplicate', icon: <CopyPlus size={14} />, onSelect: () => api.fileAction('duplicate', entry.path).then(() => done()).catch(fail) } as MenuItem] : []),
+      { label: t('Rename…'), icon: <Pencil size={14} />, shortcut: 'F2', onSelect: () => setEditing({ mode: 'rename', path: entry.path, value: entry.name }) },
+      ...(!entry.isDir ? [{ label: t('Duplicate'), icon: <CopyPlus size={14} />, onSelect: () => api.fileAction('duplicate', entry.path).then(() => done()).catch(fail) } as MenuItem] : []),
       'separator',
-      { label: 'Copy path', icon: <Copy size={14} />, onSelect: () => copy(absolute(norm(entry.path))) },
-      { label: 'Copy relative path', icon: <Copy size={14} />, onSelect: () => copy(norm(entry.path)) },
-      { label: 'Open File Location', icon: <FolderSearch size={14} />, onSelect: () => api.revealPath(entry.path).catch(fail) },
+      { label: t('Copy path'), icon: <Copy size={14} />, onSelect: () => copy(absolute(norm(entry.path))) },
+      { label: t('Copy relative path'), icon: <Copy size={14} />, onSelect: () => copy(norm(entry.path)) },
+      { label: t('Open File Location'), icon: <FolderSearch size={14} />, onSelect: () => api.revealPath(entry.path).catch(fail) },
       'separator',
-      { label: 'Delete', icon: <Trash2 size={14} />, danger: true, shortcut: 'Del', onSelect: () => void remove(entry) },
+      { label: t('Delete'), icon: <Trash2 size={14} />, danger: true, shortcut: 'Del', onSelect: () => void remove(entry) },
     ])
   }
 
@@ -264,9 +264,9 @@ export function FileTree({ projectKey, onSelect, selected, version = 0, changed 
     <div className="file-tree" onContextMenu={event => { if (event.target === event.currentTarget) menu(event, null) }}>
       <div className="tree-filter">
         <Search size={13} aria-hidden />
-        <input value={filter} onChange={event => setFilter(event.target.value)} placeholder="Filter files…" aria-label="Filter files" spellCheck={false}
+        <input value={filter} onChange={event => setFilter(event.target.value)} placeholder={t('Filter files…')} aria-label={t('Filter files')} spellCheck={false}
           onKeyDown={event => { if (event.key === 'Escape') setFilter(''); if (event.key === 'Enter' && matches?.[0]) onSelect(matches[0]) }} />
-        {filtering && <button type="button" className="tree-filter-clear" aria-label="Clear filter" onClick={() => setFilter('')}><X size={12} /></button>}
+        {filtering && <button type="button" className="tree-filter-clear" aria-label={t('Clear filter')} onClick={() => setFilter('')}><X size={12} /></button>}
       </div>
       {rootError && <div className="inline-error">{rootError}</div>}
       {filtering ? <>
@@ -275,17 +275,17 @@ export function FileTree({ projectKey, onSelect, selected, version = 0, changed 
           <span className="truncate">{nameOf(path)}</span>
           <span className="tree-hit-dir truncate">{parentOf(path)}</span>
         </button>)}
-        {matches && matches.length === 0 && <div className="empty-small">No files match “{filter.trim()}”.</div>}
+        {matches && matches.length === 0 && <div className="empty-small">{t('No files match “{query}”.', { query: filter.trim() })}</div>}
       </> : <>
         {creatingAtRoot && <div style={{ paddingLeft: 4 }}><NameInput /></div>}
         {rootEntries?.slice(0, rootShown).map(entry => <TreeNode key={entry.path} entry={entry} depth={0} onSelect={onSelect} selected={selected} changed={changed} />)}
-        {rootEntries && rootEntries.length > rootShown && <button type="button" className="tree-more" onClick={() => setRootShown(value => value + 500)}>Show {Math.min(500, rootEntries.length - rootShown)} more of {rootEntries.length - rootShown}</button>}
-        {rootEntries && rootEntries.length === 0 && !rootError && !creatingAtRoot && <div className="empty-small" onContextMenu={event => menu(event, null)}>This folder is empty. Ask Neru to create the first files, or right-click to add one.</div>}
+        {rootEntries && rootEntries.length > rootShown && <button type="button" className="tree-more" onClick={() => setRootShown(value => value + 500)}>{t('Show {n} more of {total}', { n: Math.min(500, rootEntries.length - rootShown), total: rootEntries.length - rootShown })}</button>}
+        {rootEntries && rootEntries.length === 0 && !rootError && !creatingAtRoot && <div className="empty-small" onContextMenu={event => menu(event, null)}>{t('This folder is empty. Ask Neru to create the first files, or right-click to add one.')}</div>}
       </>}
-      {status && <div className="tree-index" role="status" aria-live="polite" title={status.state === 'ready' ? `${formatCount(status.files)} files and ${formatCount(status.symbols)} symbols indexed for instant search` : undefined}>
-        {status.state === 'indexing' ? <><LoaderCircle size={11} className="animate-spin" aria-hidden /> Indexing… {formatCount(status.files)}{status.total > 0 ? ` of ${formatCount(status.total)}` : ''} files</>
-          : status.state === 'ready' ? <><i className="tree-index-dot" aria-hidden /> Indexed {formatCount(status.files)} files{status.symbols > 0 ? ` · ${formatCount(status.symbols)} symbols` : ''}</>
-          : 'Search index unavailable'}
+      {status && <div className="tree-index" role="status" aria-live="polite" title={status.state === 'ready' ? t('{files} files and {symbols} symbols indexed for instant search', { files: formatCount(status.files), symbols: formatCount(status.symbols) }) : undefined}>
+        {status.state === 'indexing' ? <><LoaderCircle size={11} className="animate-spin" aria-hidden /> {status.total > 0 ? t('Indexing… {n} of {total} files', { n: formatCount(status.files), total: formatCount(status.total) }) : t('Indexing… {n} files', { n: formatCount(status.files) })}</>
+          : status.state === 'ready' ? <><i className="tree-index-dot" aria-hidden /> {status.symbols > 0 ? t('Indexed {n} files · {symbols} symbols', { n: formatCount(status.files), symbols: formatCount(status.symbols) }) : t('Indexed {n} files', { n: formatCount(status.files) })}</>
+          : t('Search index unavailable')}
       </div>}
     </div>
   </TreeContext.Provider>

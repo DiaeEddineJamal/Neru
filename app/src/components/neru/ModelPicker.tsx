@@ -3,6 +3,7 @@ import { Brain, Check, CircleAlert, CodeXml, Eye, ListChecks, LoaderCircle, Sear
 import { api } from '../../api'
 import type { ApiFormat } from '../../providerCatalog'
 import type { ModelInfo, ProbeResult } from '../../types'
+import { t } from '../../i18n'
 import { cn } from '@/lib/utils'
 
 export type ModelFilter = 'all' | 'vision' | 'reasoning' | 'tools' | 'code' | 'free'
@@ -51,41 +52,38 @@ export function groupModels(models: ModelInfo[]): { key: string; title: string; 
   ].filter(group => group.items.length > 0)
 }
 
-function guessNote(info: ModelInfo) {
-  return info.source === 'name' ? ' (guessed from the model name)' : ''
-}
 
 export function ModelBadges({ info }: { info: ModelInfo }) {
   const context = contextLabel(info.contextWindow)
   return <span className="model-badges">
-    {info.vision && <span className="model-badge vision" title={`Reads images${guessNote(info)}`}><Eye size={12} strokeWidth={2} /></span>}
-    {info.reasoning && <span className="model-badge reasoning" title={`Reasoning model${guessNote(info)}`}><Brain size={12} strokeWidth={2} /></span>}
-    {info.tools && <span className="model-badge tools" title={`Can call tools, which Neru needs to edit files and run commands${guessNote(info)}`}><Wrench size={12} strokeWidth={2} /></span>}
-    {info.kind === 'code' && <span className="model-badge code" title="Tuned for code"><CodeXml size={12} strokeWidth={2} /></span>}
-    {info.free && <span className="model-badge free" title="Free to use">free</span>}
-    {context && <span className="model-badge context" title={`${info.contextWindow?.toLocaleString()} tokens of context`}>{context}</span>}
-    {info.verified === 'ok' && <span className="model-badge ok" title={info.verifiedReason || 'A test request worked'}><Check size={12} strokeWidth={2.4} /></span>}
-    {info.verified === 'unavailable' && <span className="model-badge bad" title={info.verifiedReason || 'The provider does not serve this model to this key'}><CircleAlert size={12} strokeWidth={2} /></span>}
+    {info.vision && <span className="model-badge vision" title={info.source === 'name' ? t('Reads images (guessed from the model name)') : t('Reads images')}><Eye size={12} strokeWidth={2} /></span>}
+    {info.reasoning && <span className="model-badge reasoning" title={info.source === 'name' ? t('Reasoning model (guessed from the model name)') : t('Reasoning model')}><Brain size={12} strokeWidth={2} /></span>}
+    {info.tools && <span className="model-badge tools" title={info.source === 'name' ? t('Can call tools, which Neru needs to edit files and run commands (guessed from the model name)') : t('Can call tools, which Neru needs to edit files and run commands')}><Wrench size={12} strokeWidth={2} /></span>}
+    {info.kind === 'code' && <span className="model-badge code" title={t('Tuned for code')}><CodeXml size={12} strokeWidth={2} /></span>}
+    {info.free && <span className="model-badge free" title={t('Free to use')}>{t('free')}</span>}
+    {context && <span className="model-badge context" title={t('{n} tokens of context', { n: info.contextWindow?.toLocaleString() ?? '' })}>{context}</span>}
+    {info.verified === 'ok' && <span className="model-badge ok" title={info.verifiedReason || t('A test request worked')}><Check size={12} strokeWidth={2.4} /></span>}
+    {info.verified === 'unavailable' && <span className="model-badge bad" title={info.verifiedReason || t('The provider does not serve this model to this key')}><CircleAlert size={12} strokeWidth={2} /></span>}
   </span>
 }
 
 export function ModelFilters({ models, filter, onFilter, hidden, showUnavailable, onShowUnavailable }: {
   models: ModelInfo[]; filter: ModelFilter; onFilter: (filter: ModelFilter) => void; hidden: number; showUnavailable: boolean; onShowUnavailable: (show: boolean) => void
 }) {
-  return <div className="model-filters" role="group" aria-label="Filter models">
+  return <div className="model-filters" role="group" aria-label={t('Filter models')}>
     {FILTERS.map(item => {
       const count = models.filter(item.test).length
       if (item.id !== 'all' && count === 0) return null
-      return <button key={item.id} type="button" className={cn('model-chip', filter === item.id && 'on')} aria-pressed={filter === item.id} title={item.hint} onClick={() => onFilter(item.id)}>{item.label}<span>{count}</span></button>
+      return <button key={item.id} type="button" className={cn('model-chip', filter === item.id && 'on')} aria-pressed={filter === item.id} title={t(item.hint)} onClick={() => onFilter(item.id)}>{t(item.label)}<span>{count}</span></button>
     })}
-    {(hidden > 0 || showUnavailable) && <button type="button" className={cn('model-chip warn', showUnavailable && 'on')} aria-pressed={showUnavailable} title="Models this provider refused when checked" onClick={() => onShowUnavailable(!showUnavailable)}>{showUnavailable ? 'Hide unavailable' : `Show unavailable`}<span>{hidden}</span></button>}
+    {(hidden > 0 || showUnavailable) && <button type="button" className={cn('model-chip warn', showUnavailable && 'on')} aria-pressed={showUnavailable} title={t('Models this provider refused when checked')} onClick={() => onShowUnavailable(!showUnavailable)}>{showUnavailable ? t('Hide unavailable') : t('Show unavailable')}<span>{hidden}</span></button>}
   </div>
 }
 
 export function ModelSearch({ value, onChange, count, inputRef, onEnter }: { value: string; onChange: (value: string) => void; count: number; inputRef?: Ref<HTMLInputElement>; onEnter?: () => void }) {
   return <div className="model-search">
     <Search size={13} aria-hidden />
-    <input ref={inputRef} value={value} onChange={event => onChange(event.target.value)} placeholder={`Search ${count} models`} aria-label="Search models" spellCheck={false}
+    <input ref={inputRef} value={value} onChange={event => onChange(event.target.value)} placeholder={t('Search {n} models', { n: count })} aria-label={t('Search models')} spellCheck={false}
       onKeyDown={event => { if (event.key === 'Enter' && onEnter) { event.preventDefault(); onEnter() } }} />
   </div>
 }
@@ -153,12 +151,12 @@ export function SettingsModelPicker({ providerId, baseUrl, apiKey, models, onMod
       const result = await api.probeModel(providerId, formatFor(info.id), baseUrl, apiKey, info.id)
       if (!mounted.current) return
       onModels(current => applyProbe(current, result))
-      if (result.status === 'unavailable') { setNotice({ tone: 'error', text: `${info.id} is not available on this provider: ${result.reason}. Kept ${value || 'your previous model'}.` }); return }
-      if (result.status === 'badKey') { setNotice({ tone: 'error', text: `${result.reason}. Check the API key, then pick a model again.` }); return }
-      if (result.status === 'unknown') setNotice({ tone: 'note', text: `Could not confirm ${shortModelName(info.id)} right now (${result.reason}). It may still work.` })
+      if (result.status === 'unavailable') { setNotice({ tone: 'error', text: value ? t('{model} is not available on this provider: {reason}. Kept {previous}.', { model: info.id, reason: result.reason, previous: value }) : t('{model} is not available on this provider: {reason}. Kept your previous model.', { model: info.id, reason: result.reason }) }); return }
+      if (result.status === 'badKey') { setNotice({ tone: 'error', text: t('{reason}. Check the API key, then pick a model again.', { reason: result.reason }) }); return }
+      if (result.status === 'unknown') setNotice({ tone: 'note', text: t('Could not confirm {model} right now ({reason}). It may still work.', { model: shortModelName(info.id), reason: result.reason }) })
       onSelect(info.id)
     } catch (cause) {
-      if (mounted.current) { setNotice({ tone: 'note', text: `Could not check ${shortModelName(info.id)} (${cause instanceof Error ? cause.message : String(cause)}). Using it anyway.` }); onSelect(info.id) }
+      if (mounted.current) { setNotice({ tone: 'note', text: t('Could not check {model} ({reason}). Using it anyway.', { model: shortModelName(info.id), reason: cause instanceof Error ? cause.message : String(cause) }) }); onSelect(info.id) }
     } finally { if (mounted.current) setPicking('') }
   }
 
@@ -171,9 +169,10 @@ export function SettingsModelPicker({ providerId, baseUrl, apiKey, models, onMod
     try {
       const outcome = await api.checkModels(id, providerId, baseUrl, apiKey, targets)
       if (!mounted.current) return
-      const parts = [`${outcome.ok} work`, `${outcome.unavailable} unavailable`]
-      if (outcome.unknown) parts.push(`${outcome.unknown} could not be confirmed`)
-      setSummary(`${outcome.cancelled ? 'Stopped. ' : ''}${parts.join(', ')}.${outcome.note ? ` ${outcome.note}` : ''}`)
+      const counts = outcome.unknown
+        ? t('{ok} work, {unavailable} unavailable, {unknown} could not be confirmed.', { ok: outcome.ok, unavailable: outcome.unavailable, unknown: outcome.unknown })
+        : t('{ok} work, {unavailable} unavailable.', { ok: outcome.ok, unavailable: outcome.unavailable })
+      setSummary(`${outcome.cancelled ? `${t('Stopped.')} ` : ''}${counts}${outcome.note ? ` ${outcome.note}` : ''}`)
       if (outcome.unavailable > 0) setShowUnavailable(false)
     } catch (cause) {
       if (mounted.current) setNotice({ tone: 'error', text: cause instanceof Error ? cause.message : String(cause) })
@@ -181,34 +180,34 @@ export function SettingsModelPicker({ providerId, baseUrl, apiKey, models, onMod
   }
   const cancel = () => { if (runId.current) void api.cancelCheckModels(runId.current).catch(() => undefined) }
 
-  if (models.length === 0) return <div className="model-picker empty"><p>{loading ? 'Looking up models…' : emptyText}</p></div>
+  if (models.length === 0) return <div className="model-picker empty"><p>{loading ? t('Looking up models…') : emptyText}</p></div>
 
   return <div className="model-picker">
     <ModelSearch value={query} onChange={setQuery} count={models.length} />
     <ModelFilters models={models} filter={filter} onFilter={setFilter} hidden={hidden} showUnavailable={showUnavailable} onShowUnavailable={setShowUnavailable} />
-    <div className="model-picker-list" role="listbox" aria-label="Models">
+    <div className="model-picker-list" role="listbox" aria-label={t('Models')}>
       {groups.map(group => <div key={group.key} className="model-group">
-        <p className="model-group-title">{group.title}<span>{group.items.length}</span></p>
+        <p className="model-group-title">{t(group.title)}<span>{group.items.length}</span></p>
         {group.items.map(info => <button key={info.id} type="button" role="option" aria-selected={info.id === value} disabled={Boolean(picking)} className={cn('model-row', info.id === value && 'selected', info.verified === 'unavailable' && 'unavailable')} onClick={() => void pick(info)}>
           <ModelRowText info={info} unique={isUnique(info)} />
-          {picking === info.id ? <span className="model-row-status"><LoaderCircle size={13} className="animate-spin" />Checking…</span> : <ModelBadges info={info} />}
+          {picking === info.id ? <span className="model-row-status"><LoaderCircle size={13} className="animate-spin" />{t('Checking…')}</span> : <ModelBadges info={info} />}
         </button>)}
       </div>)}
-      {shown.length === 0 && <p className="model-picker-none">No models match{query ? ` “${query}”` : ' this filter'}.</p>}
+      {shown.length === 0 && <p className="model-picker-none">{query ? t('No models match “{query}”.', { query }) : t('No models match this filter.')}</p>}
     </div>
     {notice && <p className={cn('model-notice-line', notice.tone)} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p>}
     <div className="model-picker-foot">
       {authoritative
-        ? <span className="model-foot-text">{providerId === 'openrouter' ? 'Only the models your OpenRouter account can use, with tool calling. Free-tier keys see free models only.' : 'These models are installed or served right now.'}</span>
+        ? <span className="model-foot-text">{providerId === 'openrouter' ? t('Only the models your OpenRouter account can use, with tool calling. Free-tier keys see free models only.') : t('These models are installed or served right now.')}</span>
         : run
           ? <>
-            <span className="model-foot-text" aria-live="polite">{run.done}/{run.total} checked</span>
+            <span className="model-foot-text" aria-live="polite">{t('{done}/{total} checked', { done: run.done, total: run.total })}</span>
             <span className="model-progress" aria-hidden><i style={{ width: `${run.total ? Math.round(run.done / run.total * 100) : 0}%` }} /></span>
-            <button type="button" className="button subtle small" onClick={cancel}><Square size={11} /> Stop</button>
+            <button type="button" className="button subtle small" onClick={cancel}><Square size={11} /> {t('Stop')}</button>
           </>
           : <>
-            <button type="button" className="button subtle small" onClick={() => void check()} disabled={loading || Boolean(picking)} title="Sends one tiny request per model to see which ones this provider actually serves"><ListChecks size={13} /> Check availability</button>
-            <span className="model-foot-text">{summary || (checked || hidden ? `${checked} confirmed${hidden ? `, ${hidden} unavailable` : ''}. ` : 'Some listed models may not be served to your key. ')}</span>
+            <button type="button" className="button subtle small" onClick={() => void check()} disabled={loading || Boolean(picking)} title={t('Sends one tiny request per model to see which ones this provider actually serves')}><ListChecks size={13} /> {t('Check availability')}</button>
+            <span className="model-foot-text">{summary || (checked || hidden ? `${hidden ? t('{checked} confirmed, {hidden} unavailable.', { checked, hidden }) : t('{checked} confirmed.', { checked })} ` : `${t('Some listed models may not be served to your key.')} `)}</span>
           </>}
       {footer}
     </div>
