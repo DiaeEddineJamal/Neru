@@ -198,8 +198,26 @@ impl Default for AppState {
     }
 }
 
+/// Async work (commands, agent turns) runs on a tokio runtime with large thread stacks. An agent turn is
+/// one big future, and tokio's default 2 MB is not enough for it in debug builds ("has overflowed its
+/// stack" when a chat is sent). Called once, before anything else uses the async runtime.
+fn roomy_runtime() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_stack_size(16 * 1024 * 1024)
+            .build()
+            .expect("could not start the async runtime");
+        tauri::async_runtime::set(runtime.handle().clone());
+        // Lives as long as the app.
+        std::mem::forget(runtime);
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    roomy_runtime();
     builder(|app| {
         fit_main_window(&app);
         remote::init(&app);
@@ -240,6 +258,7 @@ fn fit_main_window(app: &tauri::AppHandle) {
 
 /// The terminal version (`neru` on the command line): the same core with no window.
 pub fn run_cli() {
+    roomy_runtime();
     cli::run();
 }
 

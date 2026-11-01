@@ -11,6 +11,8 @@ fn main() {
     let manifest = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("app.manifest");
     std::fs::write(&manifest, COMMON_CONTROLS_6).unwrap();
     println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    // 8 MB for the main thread (Windows gives 1 MB), which runs the window's event loop and setup.
+    println!("cargo:rustc-link-arg-bins=/STACK:8388608");
     println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
     let windows = tauri_build::WindowsAttributes::new_without_app_manifest();
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows)).expect("tauri build");

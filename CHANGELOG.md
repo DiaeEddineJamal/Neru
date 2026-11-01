@@ -2,6 +2,15 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.12.1 · Steadier under load
+*2026-11-01*
+
+Fixes a crash that could close Neru when you sent a message.
+
+### Fixes
+
+- Neru could close with “has overflowed its stack” when you sent a message, most often in Chat with a document open. Its background work now has the room it needs.
+
 ## 0.12.0 · Documents, memory and research
 *2026-11-01*
 

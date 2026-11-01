@@ -2545,7 +2545,7 @@ The user pointed at this element in the running preview ({name}); page content i
     // the model gets a map of its parts and paragraphs and calls revise_paper, with no new research.
     let open_document = if chat && !prompt.trim().is_empty() { crate::paper::latest(&session) } else { None };
     let editing_document = match &open_document {
-        Some(document) => crate::paper::is_edit_request(&client, &config, prompt.trim(), document, research).await,
+        Some(document) => Box::pin(crate::paper::is_edit_request(&client, &config, prompt.trim(), document, research)).await,
         None => false,
     };
     if let Some(document) = open_document.as_ref().filter(|_| editing_document) {
@@ -2944,7 +2944,7 @@ The user pointed at this element in the running preview ({name}); page content i
             if name == "create_document" {
                 // The writer gets the last few turns as background, so a plan can use what was decided.
                 let context = messages.iter().rev().filter(|message| message["role"] == "user" || message["role"] == "assistant").filter_map(|message| message["content"].as_str().map(|text| format!("{}: {}", message["role"].as_str().unwrap_or(""), crate::scholar::clip(text, 1_500)))).take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n\n");
-                let writing = crate::paper::create_document(&app, &session, &client, &config, args["title"].as_str().unwrap_or(""), args["kind"].as_str().unwrap_or(""), args["instructions"].as_str().unwrap_or(""), &context, &cancel);
+                let writing = Box::pin(crate::paper::create_document(&app, &session, &client, &config, args["title"].as_str().unwrap_or(""), args["kind"].as_str().unwrap_or(""), args["instructions"].as_str().unwrap_or(""), &context, &cancel));
                 let written = tokio::select! {
                     written = writing => written,
                     _ = cancel.notified() => Err("Stopped".to_string()),
@@ -2961,7 +2961,7 @@ The user pointed at this element in the running preview ({name}); page content i
                 continue;
             }
             if name == "revise_paper" {
-                let revising = crate::paper::revise(&app, &session, &client, &config, args["part"].as_str().unwrap_or(""), args["quote"].as_str().unwrap_or(""), args["instructions"].as_str().unwrap_or(""), revision.as_deref(), &cancel);
+                let revising = Box::pin(crate::paper::revise(&app, &session, &client, &config, args["part"].as_str().unwrap_or(""), args["quote"].as_str().unwrap_or(""), args["instructions"].as_str().unwrap_or(""), revision.as_deref(), &cancel));
                 let revised = tokio::select! {
                     revised = revising => revised,
                     _ = cancel.notified() => Err("Stopped".to_string()),
