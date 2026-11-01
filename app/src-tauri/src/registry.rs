@@ -26,6 +26,9 @@ pub struct Registry {
     /// The keyless endpoint a first message goes to before any key is added.
     #[serde(default)]
     pub starter_base_url: Option<String>,
+    /// Models to run on this computer, each role's best first (hardware.rs picks what fits).
+    #[serde(default)]
+    pub local_models: Vec<crate::hardware::LocalModel>,
 }
 
 const BUILT_IN: &str = include_str!("../../../registry/models.json");

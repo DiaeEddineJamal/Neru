@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "updated": "2026-11-01",
   "codingFamilies": [
     ["qwen3-coder", 100],
@@ -28,5 +28,79 @@
     "modelscope": 2000,
     "openrouter": 50
   },
-  "starterBaseUrl": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"
+  "starterBaseUrl": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+  "localModels": [
+    {
+      "tag": "qwen3-coder:30b",
+      "sizeGb": 19,
+      "activeGb": 2.0,
+      "roles": [
+        "agent"
+      ]
+    },
+    {
+      "tag": "gpt-oss:20b",
+      "sizeGb": 14,
+      "activeGb": 2.2,
+      "roles": [
+        "agent"
+      ]
+    },
+    {
+      "tag": "devstral:24b",
+      "sizeGb": 14,
+      "activeGb": 14,
+      "roles": [
+        "agent"
+      ]
+    },
+    {
+      "tag": "gemma3:4b",
+      "sizeGb": 3.3,
+      "activeGb": 3.3,
+      "roles": [
+        "helper"
+      ]
+    },
+    {
+      "tag": "llama3.2:3b",
+      "sizeGb": 2.0,
+      "activeGb": 2.0,
+      "roles": [
+        "helper"
+      ]
+    },
+    {
+      "tag": "gemma3:1b",
+      "sizeGb": 0.8,
+      "activeGb": 0.8,
+      "roles": [
+        "helper"
+      ]
+    },
+    {
+      "tag": "qwen2.5-coder:7b",
+      "sizeGb": 4.7,
+      "activeGb": 4.7,
+      "roles": [
+        "complete"
+      ]
+    },
+    {
+      "tag": "qwen2.5-coder:1.5b",
+      "sizeGb": 1.0,
+      "activeGb": 1.0,
+      "roles": [
+        "complete"
+      ]
+    },
+    {
+      "tag": "nomic-embed-text",
+      "sizeGb": 0.27,
+      "activeGb": 0.27,
+      "roles": [
+        "embed"
+      ]
+    }
+  ]
 }

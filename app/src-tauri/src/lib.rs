@@ -20,6 +20,7 @@ mod editor_ai;
 mod extras;
 mod fallback;
 mod git;
+mod hardware;
 mod hooks;
 mod imports;
 mod index;
@@ -391,6 +392,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             usage::reset_usage,
             taskstats::task_stats,
             limits::free_capacity,
+            hardware::local_advice,
             engine::engine_settings,
             engine::set_engine_settings,
             engine::generate_commit_message,

@@ -592,6 +592,18 @@ pub async fn doctor(app: AppHandle) -> Result<Vec<Check>, String> {
         };
         checks.push(Check { name: "Ollama speed".into(), ok: flash && cache.is_some(), detail, fix: "Set OLLAMA_FLASH_ATTENTION=1 and OLLAMA_KV_CACHE_TYPE=q8_0 for Ollama (on Windows: setx OLLAMA_FLASH_ATTENTION 1 and setx OLLAMA_KV_CACHE_TYPE q8_0), then restart Ollama. Long contexts then use about half the memory and prompts read faster.".into() });
     }
+    // What this computer could run locally (hardware.rs); informational, so never a failure.
+    if let Ok(advice) = crate::hardware::local_advice().await {
+        let hardware = &advice.hardware;
+        let graphics = hardware.gpus.iter().find(|gpu| gpu.dedicated).map_or_else(|| "no graphics card with its own memory".to_string(), |gpu| format!("{} ({:.0} GB)", gpu.name, gpu.vram_gb));
+        let picks = advice.picks.iter().map(|pick| format!("{} {}", pick.role, pick.tag)).collect::<Vec<_>>().join(", ");
+        checks.push(Check {
+            name: "Local models".into(),
+            ok: true,
+            detail: format!("{:.0} GB memory, {graphics}. {} Fits: {}", hardware.ram_gb, advice.verdict, if picks.is_empty() { "none".into() } else { picks }),
+            fix: String::new(),
+        });
+    }
     let root = state.root.lock().map_err(|e| e.to_string())?.clone().unwrap_or_else(|| std::path::PathBuf::from("."));
     checks.push(Check {
         name: "Sandbox".into(),
