@@ -26,3 +26,8 @@
 .lm-custom input { flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-xs); }
 .lm-other { display: flex; align-items: center; gap: 12px; }
 .lm-other code { flex: 1 1 auto; font-size: var(--fs-xs); }
+.lm-speed { display: inline-flex; align-items: center; gap: 5px; color: var(--secondary) !important; }
+.lm-speed.is-agent { color: var(--sage) !important; }
+.lm-speed.is-too-slow { color: var(--danger) !important; }
+.lm-link { align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--sage); font-size: var(--fs-xs); cursor: pointer; }
+.lm-link:hover { text-decoration: underline; }

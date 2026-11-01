@@ -173,7 +173,10 @@ export interface OllamaStatus {
   baseUrl: string
   models: { name: string; sizeGb: number; parameters: string; quantization: string }[]
   pulling: string[]
+  /** Measured on this computer, by tag. */
+  speeds: Record<string, LocalSpeed>
 }
+export interface LocalSpeed { promptPerSecond: number; generatePerSecond: number; loadSeconds: number; verdict: 'agent' | 'slow-agent' | 'helper' | 'too-slow'; sentence: string; measuredAt: number }
 export interface PullProgress { tag: string; status: string; completed: number; total: number; done: boolean; error: string | null }
 
 /** What one free plan has left today, across its models (limits.rs `ProviderCapacity`). */

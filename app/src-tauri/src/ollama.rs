@@ -89,6 +89,8 @@ pub struct OllamaStatus {
     pub models: Vec<InstalledModel>,
     /// Downloads in progress, by tag.
     pub pulling: Vec<String>,
+    /// Speeds measured on this computer, by tag.
+    pub speeds: HashMap<String, Speed>,
 }
 
 /// Installed models from `/api/tags`.
@@ -120,7 +122,7 @@ pub async fn ollama_status() -> Result<OllamaStatus, String> {
     };
     let (version, models) = if running { (get("/api/version").await.and_then(|body| body["version"].as_str().map(str::to_string)), get("/api/tags").await.map(|body| parse_tags(&body)).unwrap_or_default()) } else { (None, Vec::new()) };
     let pulling = PULLS.lock().map(|pulls| pulls.keys().cloned().collect()).unwrap_or_default();
-    Ok(OllamaStatus { installed: running || program().is_some(), running, version, base_url: base_url(), models, pulling })
+    Ok(OllamaStatus { installed: running || program().is_some(), running, version, base_url: base_url(), models, pulling, speeds: speeds() })
 }
 
 /// Starts Ollama's server when it is installed but not running (the tray app usually does this).
@@ -286,9 +288,120 @@ pub async fn ollama_delete(tag: String) -> Result<(), String> {
     Ok(())
 }
 
+// ---------- speed check ----------
+
+/// What a model managed on this computer, measured with Ollama's own timings.
+#[derive(Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Speed {
+    /// Tokens a second reading the prompt: how long a long conversation takes to start answering.
+    pub prompt_per_second: f32,
+    /// Tokens a second writing.
+    pub generate_per_second: f32,
+    /// Seconds to load the model into memory the first time.
+    pub load_seconds: f32,
+    /// "agent", "slow-agent", "helper" or "too-slow".
+    pub verdict: String,
+    pub sentence: String,
+    /// Unix seconds.
+    pub measured_at: u64,
+}
+
+/// Turns measured speeds into a verdict. A Code session sends prompts of several thousand tokens, so
+/// prompt speed matters as much as writing speed; a chore writes a line or two.
+pub fn judge(prompt: f32, generate: f32) -> (&'static str, String) {
+    // Seconds to read a typical 6,000-token first request.
+    let start = 6_000.0 / prompt.max(1.0);
+    if generate >= 15.0 && prompt >= 300.0 {
+        ("agent", format!("Fast enough for Code: it writes about {generate:.0} tokens a second and starts a long reply in about {start:.0} s."))
+    } else if generate >= 6.0 && prompt >= 60.0 {
+        ("slow-agent", format!("Works for Code, slowly: about {generate:.0} tokens a second, and a long first request takes about {} to start. Fine as a helper.", human_seconds(start)))
+    } else if generate >= 6.0 {
+        ("helper", format!("Good for chores (titles, summaries, commit messages) at about {generate:.0} tokens a second, but too slow reading long prompts for Code."))
+    } else {
+        ("too-slow", format!("Too slow on this computer (about {generate:.1} tokens a second). A smaller model will help more."))
+    }
+}
+
+fn human_seconds(seconds: f32) -> String {
+    if seconds >= 90.0 { format!("{:.0} min", seconds / 60.0) } else { format!("{seconds:.0} s") }
+}
+
+/// Reads `/api/generate`'s timings (nanoseconds) into a `Speed`.
+pub fn speed_from(body: &Value, now: u64) -> Option<Speed> {
+    let per_second = |count: &str, duration: &str| {
+        let (count, nanos) = (body[count].as_f64()?, body[duration].as_f64()?);
+        (count > 0.0 && nanos > 0.0).then(|| (count / (nanos / 1e9)) as f32)
+    };
+    let prompt = per_second("prompt_eval_count", "prompt_eval_duration")?;
+    let generate = per_second("eval_count", "eval_duration")?;
+    let (verdict, sentence) = judge(prompt, generate);
+    Some(Speed { prompt_per_second: prompt, generate_per_second: generate, load_seconds: (body["load_duration"].as_f64().unwrap_or(0.0) / 1e9) as f32, verdict: verdict.into(), sentence, measured_at: now })
+}
+
+fn speeds_path() -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    crate::workspace::data_dir().ok().map(|dir| dir.join("local-speeds.json"))
+}
+
+/// Speeds measured earlier, by model tag.
+pub fn speeds() -> HashMap<String, Speed> {
+    speeds_path().and_then(|path| std::fs::read(path).ok()).and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+}
+
+/// A prompt of about a thousand tokens of ordinary code, so prompt reading is measured on real text.
+fn speed_prompt() -> String {
+    let block = "function totalWithTax(items, rate) {\n  let sum = 0\n  for (const item of items) {\n    sum += item.price * item.quantity\n  }\n  return Math.round(sum * (1 + rate) * 100) / 100\n}\n\n";
+    format!("{}Explain in two sentences what the code above does.", block.repeat(18))
+}
+
+/// Measures `tag` on this computer and keeps the result. Loading a large model can take a minute.
+#[tauri::command]
+pub async fn ollama_speed(tag: String) -> Result<Speed, String> {
+    let tag = tag.trim().to_string();
+    if running().await.is_none() {
+        return Err("Ollama is not running.".into());
+    }
+    // Unloaded again a minute later, so a large model does not keep the memory after the check.
+    let payload = json!({"model": tag, "prompt": speed_prompt(), "stream": false, "keep_alive": "1m", "options": {"num_predict": 64, "num_ctx": 4096, "temperature": 0}});
+    let response = crate::providers::http().post(format!("{}/api/generate", root())).json(&payload).timeout(Duration::from_secs(600)).send().await.map_err(|e| format!("Ollama could not be reached: {e}"))?;
+    let body = crate::providers::read_response(response).await?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let speed = speed_from(&body, now).ok_or("Ollama did not report its timings.")?;
+    if let Some(path) = speeds_path() {
+        let mut all = speeds();
+        all.insert(tag, speed.clone());
+        if let Ok(bytes) = serde_json::to_vec_pretty(&all) {
+            let _ = std::fs::write(path, bytes);
+        }
+    }
+    Ok(speed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speeds_come_from_ollamas_own_timings() {
+        let body = json!({"load_duration": 4_200_000_000u64, "prompt_eval_count": 1_000, "prompt_eval_duration": 2_000_000_000u64, "eval_count": 64, "eval_duration": 5_000_000_000u64});
+        let speed = speed_from(&body, 1).unwrap();
+        assert_eq!((speed.prompt_per_second.round(), speed.generate_per_second.round(), speed.load_seconds.round()), (500.0, 13.0, 4.0));
+        assert_eq!(speed.verdict, "slow-agent");
+        assert!(speed_from(&json!({"eval_count": 0}), 1).is_none());
+    }
+
+    #[test]
+    fn verdicts_weigh_prompt_and_writing_speed() {
+        assert_eq!(judge(800.0, 40.0).0, "agent");
+        let (verdict, sentence) = judge(60.0, 12.0);
+        assert_eq!(verdict, "slow-agent");
+        assert!(sentence.contains("2 min"), "6,000 tokens at 60 a second: {sentence}");
+        assert_eq!(judge(30.0, 20.0).0, "helper", "writes fast but reads long prompts too slowly");
+        assert_eq!(judge(500.0, 3.0).0, "too-slow");
+    }
 
     #[test]
     fn download_progress_adds_up_every_layer() {

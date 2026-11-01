@@ -79,7 +79,14 @@ Original plan:
 Original plan:
 - The repair request sends the tool's parameter schema as `format`, so the answer always parses.
 
-### L4. Speed check (S)
+### L4. Speed check (S) ✅ done
+
+- `ollama_speed`: one non-streaming `/api/generate` with about 1,000 tokens of ordinary code and 64 tokens to write. It reads Ollama's own timings (`prompt_eval_*`, `eval_*`, `load_duration`), which leave model loading out of the speeds. `keep_alive: 1m` unloads a large model soon after.
+- `judge` weighs both speeds, because a Code session's first request runs to several thousand tokens: **agent** (writes ≥15 tokens/s and reads ≥300), **slow-agent** (≥6 and ≥60; says how long a 6,000-token start takes), **helper** (writes fast enough but reads long prompts too slowly) or **too-slow**.
+- Results are saved per model (`local-speeds.json`) and come back with `ollama_status`. The library measures a model right after it downloads, shows the sentence under each installed model with the raw speeds on hover, and offers "Check its speed" for models installed earlier.
+- Not yet: measured speeds do not feed back into the recommendations or the helper lane's ranking, and the estimates from L0 have not been compared with real measurements (no Ollama on the development machine).
+
+Original plan:
 - After a download, a short benchmark through Ollama's own timings (`prompt_eval_duration`, `eval_duration`) gives prompt and generation speed and a verdict: fine for the agent, helpers only, or too slow.
 
 ### L5. Bundled engine (L, decide later)

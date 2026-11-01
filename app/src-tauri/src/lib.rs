@@ -399,6 +399,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             ollama::ollama_pull,
             ollama::ollama_cancel_pull,
             ollama::ollama_delete,
+            ollama::ollama_speed,
             engine::engine_settings,
             engine::set_engine_settings,
             engine::generate_commit_message,

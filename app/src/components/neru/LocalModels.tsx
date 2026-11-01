@@ -26,9 +26,9 @@ function Progress({ progress, onCancel }: { progress: PullProgress; onCancel: ()
   </span>
 }
 
-export function LocalModelsView({ advice, status, pulls, error, busy, onPull, onCancel, onDelete, onStart, onRefresh }: {
-  advice: LocalAdvice | null; status: OllamaStatus | null; pulls: Record<string, PullProgress>; error: string | null; busy: boolean
-  onPull: (tag: string) => void; onCancel: (tag: string) => void; onDelete: (tag: string) => void; onStart: () => void; onRefresh: () => void
+export function LocalModelsView({ advice, status, pulls, measuring = {}, error, busy, onPull, onCancel, onDelete, onSpeed = () => undefined, onStart, onRefresh }: {
+  advice: LocalAdvice | null; status: OllamaStatus | null; pulls: Record<string, PullProgress>; measuring?: Record<string, boolean>; error: string | null; busy: boolean
+  onPull: (tag: string) => void; onCancel: (tag: string) => void; onDelete: (tag: string) => void; onSpeed?: (tag: string) => void; onStart: () => void; onRefresh: () => void
 }) {
   const [confirm, setConfirm] = useState<string | null>(null)
   const [custom, setCustom] = useState('')
@@ -73,7 +73,11 @@ export function LocalModelsView({ advice, status, pulls, error, busy, onPull, on
       {status.models.length === 0 ? <p className="lm-empty">{t('No models yet. Download one above.')}</p>
         : <ul className="lm-list">
           {status.models.map(model => <li key={model.name}>
-            <span className="lm-name"><code>{model.name}</code><small>{[model.parameters, model.quantization, size(model.sizeGb)].filter(Boolean).join(' · ')}</small></span>
+            <span className="lm-name"><code>{model.name}</code><small>{[model.parameters, model.quantization, size(model.sizeGb)].filter(Boolean).join(' · ')}</small>
+              {measuring[model.name] ? <small className="lm-speed"><LoaderCircle size={11} className="animate-spin" /> {t('Measuring its speed on this computer… Loading a large model can take a minute.')}</small>
+                : status.speeds[model.name] ? <small className={cn('lm-speed', `is-${status.speeds[model.name].verdict}`)} title={t('Reads {prompt} tokens/s, writes {write} tokens/s', { prompt: Math.round(status.speeds[model.name].promptPerSecond), write: Math.round(status.speeds[model.name].generatePerSecond) })}>{status.speeds[model.name].sentence}</small>
+                  : <button type="button" className="lm-link" onClick={() => onSpeed(model.name)}>{t('Check its speed')}</button>}
+            </span>
             {confirm === model.name
               ? <span className="lm-confirm"><button type="button" className="button danger small" onClick={() => { setConfirm(null); onDelete(model.name) }}>{t('Remove')}</button><button type="button" className="button subtle small" onClick={() => setConfirm(null)}>{t('Keep')}</button></span>
               : <button type="button" className="icon-button" onClick={() => setConfirm(model.name)} aria-label={t('Remove {name}', { name: model.name })} title={t('Remove')}><Trash2 size={14} /></button>}
@@ -94,10 +98,15 @@ export function LocalModels({ onChanged }: { onChanged?: () => void }) {
   const [pulls, setPulls] = useState<Record<string, PullProgress>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [measuring, setMeasuring] = useState<Record<string, boolean>>({})
   // The parent passes a new function every render; keep the latest without resubscribing.
   const changed = useRef(onChanged)
   useEffect(() => { changed.current = onChanged })
   const refresh = useCallback(() => { void api.ollamaStatus().then(setStatus).catch(cause => setError(errorText(cause))) }, [])
+  const measure = useCallback((tag: string) => {
+    setMeasuring(current => ({ ...current, [tag]: true }))
+    void api.ollamaSpeed(tag).then(refresh).catch(cause => setError(t('Could not measure {tag}: {error}', { tag, error: errorText(cause) }))).finally(() => setMeasuring(current => ({ ...current, [tag]: false })))
+  }, [refresh])
   useEffect(() => {
     void api.localAdvice().then(setAdvice).catch(() => undefined)
     refresh()
@@ -109,10 +118,12 @@ export function LocalModels({ onChanged }: { onChanged?: () => void }) {
         if (progress.error && progress.status !== 'cancelled') setError(t('{tag} did not download: {error}', { tag: progress.tag, error: progress.error }))
         refresh()
         changed.current?.()
+        // A new model is measured straight away, so its real speed replaces the estimate.
+        if (!progress.error) measure(progress.tag)
       }
     })
     return () => { void stop.then(unlisten => unlisten()).catch(() => undefined) }
-  }, [refresh])
+  }, [refresh, measure])
   const pull = (tag: string) => {
     setError(null)
     setPulls(current => ({ ...current, [tag]: { tag, status: 'starting', completed: 0, total: 0, done: false, error: null } }))
@@ -124,5 +135,5 @@ export function LocalModels({ onChanged }: { onChanged?: () => void }) {
   }
   const remove = (tag: string) => { setError(null); void api.ollamaDelete(tag).then(() => { refresh(); changed.current?.() }).catch(cause => setError(errorText(cause))) }
   const start = () => { setBusy(true); setError(null); void api.ollamaStart().then(refresh).catch(cause => setError(errorText(cause))).finally(() => setBusy(false)) }
-  return <LocalModelsView advice={advice} status={status} pulls={pulls} error={error} busy={busy} onPull={pull} onCancel={tag => void api.ollamaCancelPull(tag)} onDelete={remove} onStart={start} onRefresh={refresh} />
+  return <LocalModelsView advice={advice} status={status} pulls={pulls} measuring={measuring} error={error} busy={busy} onPull={pull} onSpeed={measure} onCancel={tag => void api.ollamaCancelPull(tag)} onDelete={remove} onStart={start} onRefresh={refresh} />
 }

@@ -13,7 +13,7 @@ const advice: LocalAdvice = {
   agent: true,
   verdict: 'This computer can run qwen3-coder:30b for the agent itself, slowly.',
 }
-const running: OllamaStatus = { installed: true, running: true, version: '0.12.9', baseUrl: 'http://127.0.0.1:11434/v1', models: [{ name: 'gemma3:4b', sizeGb: 3.1, parameters: '4.3B', quantization: 'Q4_K_M' }], pulling: [] }
+const running: OllamaStatus = { installed: true, running: true, version: '0.12.9', baseUrl: 'http://127.0.0.1:11434/v1', models: [{ name: 'gemma3:4b', sizeGb: 3.1, parameters: '4.3B', quantization: 'Q4_K_M' }], pulling: [], speeds: {} }
 const handlers = () => ({ onPull: vi.fn(), onCancel: vi.fn(), onDelete: vi.fn(), onStart: vi.fn(), onRefresh: vi.fn() })
 
 describe('LocalModelsView', () => {
@@ -43,6 +43,18 @@ describe('LocalModelsView', () => {
     expect(on.onDelete).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     expect(on.onDelete).toHaveBeenCalledWith('gemma3:4b')
+  })
+
+  it('shows a measured speed, or offers to measure it', () => {
+    const on = { ...handlers(), onSpeed: vi.fn() }
+    const { rerender } = render(<LocalModelsView advice={advice} status={running} pulls={{}} error={null} busy={false} {...on} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check its speed' }))
+    expect(on.onSpeed).toHaveBeenCalledWith('gemma3:4b')
+    rerender(<LocalModelsView advice={advice} status={running} pulls={{}} measuring={{ 'gemma3:4b': true }} error={null} busy={false} {...on} />)
+    expect(screen.getByText(/Measuring its speed/)).toBeTruthy()
+    const speed = { promptPerSecond: 120, generatePerSecond: 11, loadSeconds: 3, verdict: 'slow-agent' as const, sentence: 'Works for Code, slowly.', measuredAt: 1 }
+    rerender(<LocalModelsView advice={advice} status={{ ...running, speeds: { 'gemma3:4b': speed } }} pulls={{}} error={null} busy={false} {...on} />)
+    expect(screen.getByText('Works for Code, slowly.').getAttribute('title')).toBe('Reads 120 tokens/s, writes 11 tokens/s')
   })
 
   it('points to the installer, or offers to start Ollama', () => {
