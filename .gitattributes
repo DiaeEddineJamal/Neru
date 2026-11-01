@@ -1,3 +1,6 @@
 # The install scripts are served raw from main and piped into a shell, so keep their line endings.
 install.sh text eol=lf
 install.ps1 text eol=lf
+
+# Signed bytes: a line-ending change would break the signature.
+app/src-tauri/tests/fixtures/registry/* -text

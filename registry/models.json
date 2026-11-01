@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "updated": "2026-11-01",
+  "codingFamilies": [
+    ["qwen3-coder", 100],
+    ["qwen3.8-coder", 100],
+    ["kimi-k", 95],
+    ["glm-5", 94],
+    ["glm-4", 90],
+    ["deepseek-v", 90],
+    ["gemini-3", 90],
+    ["devstral", 88],
+    ["gpt-oss-120b", 86],
+    ["minimax-m", 85],
+    ["qwen3", 82],
+    ["deepseek-r", 80],
+    ["gemini-2.5-pro", 80],
+    ["codestral", 78],
+    ["gemini-2.5-flash", 76],
+    ["mistral-large", 75],
+    ["llama-4", 70],
+    ["gpt-oss", 68],
+    ["llama-3.3-70b", 62],
+    ["openrouter/free", 60],
+    ["gemma", 50]
+  ],
+  "dailyLimits": {
+    "modelscope": 2000,
+    "openrouter": 50
+  },
+  "starterBaseUrl": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"
+}

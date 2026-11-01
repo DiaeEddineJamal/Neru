@@ -586,33 +586,8 @@ fn record_failure(current: &ProviderConfig, error: &str) -> Failure {
 /// Rough coding strength by model family, independent of version numbers. Higher is better.
 pub fn coding_score(id: &str) -> i64 {
     let name = id.to_lowercase();
-    const FAMILIES: &[(&str, i64)] = &[
-        ("qwen3-coder", 100),
-        ("qwen3.8-coder", 100),
-        ("kimi-k", 95),
-        ("glm-5", 94),
-        ("glm-4", 90),
-        ("deepseek-v", 90),
-        ("gemini-3", 90),
-        ("devstral", 88),
-        ("gpt-oss-120b", 86),
-        ("minimax-m", 85),
-        ("qwen3", 82),
-        ("deepseek-r", 80),
-        ("gemini-2.5-pro", 80),
-        ("codestral", 78),
-        ("gemini-2.5-flash", 76),
-        ("mistral-large", 75),
-        ("llama-4", 70),
-        ("gpt-oss", 68),
-        ("llama-3.3-70b", 62),
-        ("openrouter/free", 60),
-        ("gemma", 50),
-    ];
-    let family = FAMILIES
-        .iter()
-        .find(|(part, _)| name.contains(part))
-        .map_or(30, |(_, score)| *score);
+    // Family scores live in the model registry, which updates without a release (registry.rs).
+    let family = crate::registry::with(|registry| registry.coding_families.iter().find(|(part, _)| name.contains(part.as_str())).map_or(30, |(_, score)| *score));
     // Small or cut-down variants code worse; "coder" and "pro" variants better.
     let mut score = family;
     for (part, delta) in [("coder", 6), ("pro", 4), ("-lite", -12), ("mini", -10), ("nano", -15), ("small", -8), ("vision", -10), ("guard", -100)] {
@@ -913,7 +888,8 @@ pub async fn needs_starter(config: &ProviderConfig) -> bool {
 /// The best keyless model to answer with until a key is added, or None when the privacy `rule` keeps
 /// work off cloud models or the list cannot be read.
 pub async fn starter_model(rule: &str) -> Option<ProviderConfig> {
-    let mut config = ProviderConfig { provider_id: "ovhcloud".into(), api_format: "openai-chat".into(), base_url: STARTER_BASE_URL.into(), model: String::new(), api_key: String::new() };
+    let base_url = crate::registry::get().starter_base_url.unwrap_or_else(|| STARTER_BASE_URL.into());
+    let mut config = ProviderConfig { provider_id: "ovhcloud".into(), api_format: "openai-chat".into(), base_url, model: String::new(), api_key: String::new() };
     if crate::privacy::blocked_reason(rule, &config).is_some() {
         return None;
     }

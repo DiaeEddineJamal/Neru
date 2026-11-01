@@ -358,13 +358,9 @@ pub struct ProviderCapacity {
     pub resets_in: String,
 }
 
-/// Daily request allowances free plans document but do not report in headers.
+/// Daily request allowances free plans document but do not report in headers (registry.rs).
 fn documented_daily(provider_id: &str) -> Option<u64> {
-    match provider_id {
-        "modelscope" => Some(2_000),
-        "openrouter" => Some(50),
-        _ => None,
-    }
+    crate::registry::with(|registry| registry.daily_limits.get(provider_id).copied())
 }
 
 pub fn capacity(provider_id: &str, current: bool) -> ProviderCapacity {

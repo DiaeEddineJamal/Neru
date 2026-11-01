@@ -37,6 +37,7 @@ mod privacy;
 mod preview_proxy;
 mod providers;
 mod queue;
+mod registry;
 mod remote;
 mod repomap;
 mod remote_tunnel;
@@ -226,6 +227,8 @@ pub fn run() {
         queue::init(&app);
         automations::init(&app);
         tauri::async_runtime::spawn(mcp::start_enabled(app));
+        // Model scores and free-plan facts change faster than releases (registry.rs).
+        tauri::async_runtime::spawn(registry::refresh());
     })
     .build(context())
     .expect("error while building Neru")

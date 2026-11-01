@@ -93,7 +93,16 @@ Original plan:
   - Eval: two new scenarios (`alias-args`, `edit-miss-block`) each cost one request less: 3→2 and 4→3, in both profiles. Across the 24 runs: 62→58.
 - **3c. File summaries cached by content hash (M).** Store a one-line purpose and key exports per file, written on the small-model lane or from tree-sitter, keyed by hash and reused across sessions. These feed the map and the context pack.
 
-### P4. Model registry updated without a release (M)
+### P4. Model registry updated without a release (M) ✅ done
+
+- `registry/models.json` holds the coding-family scores, the daily allowances free plans document, and the keyless starter endpoint. It is built into the app (`include_str!`, one file for both copies).
+- `registry.rs`: when the app starts, it fetches `models.json` and `models.json.sig` from the `registry` release. It uses them only when the signature checks out against the app-update public key in `tauri.conf.json` and the version is higher than the copy in use. The fetched copy is cached in the data folder and checked again on every start. Any failure is quiet: the copy in use keeps working.
+- `coding_score`, the capacity panel's documented allowances and the starter endpoint read from it; the old constants are gone. Lookups in sorting loops borrow it rather than copying it.
+- `.github/workflows/registry.yml`: a push to main that changes the file checks that its version went up, signs it with `TAURI_SIGNING_PRIVATE_KEY`, and uploads both files to the `registry` release. That release is a pre-release and never "latest", so app updates are not affected.
+- Tests: the built-in copy reads, and a copy signed with a throwaway test key is accepted while a one-byte change is rejected. The fixture is pinned in `.gitattributes` so line-ending conversion cannot break its signature.
+- Not yet: FREE_PROVIDERS, `lean()` size hints and the frontend's key prefixes are still in code. FREE_PROVIDERS is deliberately left there: it decides which models can be switched to without billing.
+
+Original plan:
 - `models.json` in the Neru repo, signed with the existing updater key, fetched at startup with a copy built into the app as fallback. It holds family scores, lean/small flags, free limits, tool support, key prefixes, recommended onboarding provider and preset fixes.
 - `coding_score`, `lean()` and the free limits read from it; today's constants become the built-in copy.
 - Later, a separate decision: opt-in anonymous health sharing across installs, which needs a backend.

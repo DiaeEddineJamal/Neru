@@ -1,0 +1,61 @@
+# Publishes registry/models.json (model scores, free-plan allowances, the keyless starter endpoint)
+# without an app release. The file is signed with the same key as app updates and uploaded with its
+# .sig to the `registry` release; installed copies fetch both when they start (registry.rs) and use the
+# file only when the signature checks out and its version is newer than what they have.
+#
+# To publish: edit registry/models.json, raise "version", and push to main.
+name: Model registry
+
+on:
+  push:
+    branches: [main]
+    paths: ['registry/models.json']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check the file and its version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(node -e "const r = require('./registry/models.json'); if (!Number.isInteger(r.version) || !Array.isArray(r.codingFamilies)) process.exit(1); console.log(r.version)")
+          published=0
+          if gh release download registry --repo "$GITHUB_REPOSITORY" --pattern models.json --dir /tmp/published 2>/dev/null; then
+            published=$(node -e "console.log(require('/tmp/published/models.json').version)")
+          fi
+          echo "version $version, published $published"
+          # Installed copies ignore a file that is not newer, so publishing one would change nothing.
+          if [ "$version" -le "$published" ]; then
+            echo "::error::Raise \"version\" in registry/models.json above $published to publish it."
+            exit 1
+          fi
+
+      - name: Sign
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx --yes @tauri-apps/cli@2 signer sign registry/models.json
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view registry --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Never the latest release: installed apps look for updates in releases/latest, which skips
+            # pre-releases.
+            gh release create registry --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Model registry" \
+              --notes "Model scores and free-plan facts Neru fetches between releases. Not an app release." --prerelease --latest=false
+          fi
+          gh release upload registry registry/models.json registry/models.json.sig --clobber --repo "$GITHUB_REPOSITORY"

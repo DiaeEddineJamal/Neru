@@ -2542,6 +2542,7 @@ dependencies = [
  "if-addrs",
  "ignore",
  "log",
+ "minisign-verify",
  "percent-encoding",
  "portable-pty",
  "qrcode",
