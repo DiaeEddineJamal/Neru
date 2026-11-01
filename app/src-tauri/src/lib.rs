@@ -56,6 +56,7 @@ mod styles;
 mod stream;
 mod subagent;
 mod tasks;
+mod taskstats;
 mod team;
 mod team_agents;
 mod team_mcp;
@@ -384,6 +385,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             privacy::set_project_privacy,
             usage::usage_totals,
             usage::reset_usage,
+            taskstats::task_stats,
             engine::engine_settings,
             engine::set_engine_settings,
             engine::generate_commit_message,

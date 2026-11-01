@@ -1,0 +1,62 @@
+{
+  "lean/answer": {
+    "requests": 1
+  },
+  "lean/read": {
+    "requests": 2
+  },
+  "lean/parallel-read": {
+    "requests": 2
+  },
+  "lean/edit": {
+    "requests": 2
+  },
+  "lean/edit-miss": {
+    "requests": 3
+  },
+  "lean/bad-json": {
+    "requests": 3
+  },
+  "lean/text-protocol": {
+    "requests": 2
+  },
+  "lean/rate-limit": {
+    "requests": 2
+  },
+  "lean/server-error": {
+    "requests": 2
+  },
+  "lean/multi-step": {
+    "requests": 5
+  },
+  "full/answer": {
+    "requests": 1
+  },
+  "full/read": {
+    "requests": 2
+  },
+  "full/parallel-read": {
+    "requests": 2
+  },
+  "full/edit": {
+    "requests": 2
+  },
+  "full/edit-miss": {
+    "requests": 3
+  },
+  "full/bad-json": {
+    "requests": 3
+  },
+  "full/text-protocol": {
+    "requests": 2
+  },
+  "full/rate-limit": {
+    "requests": 2
+  },
+  "full/server-error": {
+    "requests": 2
+  },
+  "full/multi-step": {
+    "requests": 5
+  }
+}

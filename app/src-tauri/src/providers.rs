@@ -157,6 +157,8 @@ pub fn chat_request(
     tools: &Value,
     effort: Option<&str>,
 ) -> RequestBuilder {
+    // Every caller sends what it builds here, so this is where a task counts its requests.
+    crate::taskstats::request(config);
     // The leading system message asked for its own cache breakpoint (a Chat project's block).
     let cache_break = messages
         .first()

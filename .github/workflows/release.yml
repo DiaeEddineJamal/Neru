@@ -177,8 +177,11 @@ jobs:
             # The CLI needs a display for WebKitGTK; bubblewrap lets the run exercise the sandbox.
             sudo apt-get install -y xvfb bubblewrap
             xvfb-run -a node app/scripts/smoke.mjs "$out/neru-cli$exe"
+            # Free plans run out of requests first: fail if scripted tasks start costing more of them.
+            xvfb-run -a node app/scripts/eval-requests.mjs "$out/neru-cli$exe"
           else
             node app/scripts/smoke.mjs "$out/neru-cli$exe"
+            node app/scripts/eval-requests.mjs "$out/neru-cli$exe"
           fi
 
       # Team runs other agents' CLIs: a stub CLI checks starting one, feeding it the prompt and

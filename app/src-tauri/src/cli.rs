@@ -1995,6 +1995,10 @@ impl<'a> Cli<'a> {
                 if let Some(error) = &error {
                     summary["error"] = json!(error);
                 }
+                // What the last task cost: requests on every model, rounds, failed edits, waits, tokens.
+                if let Some(task) = crate::taskstats::report(&self.session).last {
+                    summary["task"] = json!(task);
+                }
                 if self.output == Output::Json {
                     summary["tools"] = json!(tools);
                 }

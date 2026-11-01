@@ -284,7 +284,8 @@ pub fn spawn(mut job: Job) -> Running {
             job.config.model = model.clone();
         }
     }
-    Running(Guard(tokio::spawn(run(job))))
+    // Its requests count towards the task that started it.
+    Running(Guard(tokio::spawn(crate::taskstats::carry(run(job)))))
 }
 
 pub(crate) fn system_prompt(role: &Role, root: &std::path::Path, map: &str) -> String {

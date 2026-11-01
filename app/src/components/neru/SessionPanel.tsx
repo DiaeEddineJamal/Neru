@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { BookOpen, Check, ChevronRight, Circle, ExternalLink, Plug, RotateCw, Sparkles, Wrench } from '@/components/icons'
 import { api } from '../../api'
-import type { ContextUsage, McpServer, OutputStyle, SkillView, Todo, TrustStatus } from '../../types'
+import type { ContextUsage, McpServer, OutputStyle, SkillView, TaskReport, Todo, TrustStatus } from '../../types'
 import { cn } from '@/lib/utils'
 import { t } from '../../i18n'
 import './SessionPanel.css'
@@ -53,6 +53,36 @@ function ContextSection({ context, onCompact, canCompact }: { context: ContextUs
   </div>
 }
 
+const seconds = (ms: number) => ms >= 60_000 ? `${Math.floor(ms / 60_000)}m ${Math.round(ms % 60_000 / 1000)}s` : `${Math.round(ms / 1000)}s`
+
+/** What the running (or last) task cost. Free plans run out of requests first, so requests lead. */
+export function TaskSection({ report }: { report: TaskReport | null }) {
+  const task = report?.current ?? report?.last
+  if (!task) return <p className="sp-empty">{t('Send a message to see how many requests it takes.')}</p>
+  const running = Boolean(report?.current)
+  const typical = report?.typical && report.typical.tasks >= 3 ? report.typical : null
+  const models = Object.entries(task.models).sort((a, b) => b[1] - a[1])
+  const rows: [string, string, string?][] = [
+    ['Tool rounds', String(task.rounds), t('{n} tool calls', { n: task.toolCalls })],
+    ...(task.failedEdits ? [['Failed edits', String(task.failedEdits), 'Edits whose text did not match the file; each costs another request'] as [string, string, string]] : []),
+    ...(task.parseFailures ? [['Unreadable tool calls', String(task.parseFailures)] as [string, string]] : []),
+    ...(task.retries ? [['Retries', String(task.retries), 'Sent again after a dropped connection or a server error'] as [string, string, string]] : []),
+    ...(task.switches ? [['Model switches', String(task.switches)] as [string, string]] : []),
+    ...(task.waitedMs >= 1000 ? [['Waited on rate limits', seconds(task.waitedMs)] as [string, string]] : []),
+    ['Tokens in / out', `${tokenLabel(task.inputTokens)} / ${tokenLabel(task.outputTokens)}`, task.cachedTokens ? t('{n} read from the provider’s cache', { n: tokenLabel(task.cachedTokens) }) : undefined],
+  ]
+  return <div className="sp-context">
+    <div className="sp-context-total">
+      <strong>{t(task.requests === 1 ? '{n} request' : '{n} requests', { n: task.requests })}</strong>
+      <span>{running ? t('this task so far') : task.outcome === 'error' ? t('last task, ended with an error') : task.outcome === 'stopped' ? t('last task, stopped') : t('last task')}{typical ? ` · ${t('typical {n}', { n: typical.requests })}` : ''}</span>
+    </div>
+    <ul className="sp-legend">
+      {rows.map(([label, value, hint]) => <li key={label} title={hint ? t(hint) : undefined}>{t(label)}<span>{value}</span></li>)}
+    </ul>
+    {models.length > 1 && <><p className="sp-subhead">{t('Requests by model')}</p><ul className="sp-legend">{models.map(([model, count]) => <li key={model} title={model}><span className="sp-model">{model.split('/').slice(1).join('/') || model}</span><span>{count}</span></li>)}</ul></>}
+  </div>
+}
+
 const STATUS: Record<McpServer['status'], string> = { connected: 'Connected', starting: 'Starting', error: 'Error', off: 'Off', needs_auth: 'Needs sign-in', needs_trust: 'Needs trust' }
 
 function ServerRow({ server }: { server: McpServer }) {
@@ -68,8 +98,8 @@ function ServerRow({ server }: { server: McpServer }) {
   </li>
 }
 
-export function SessionPanel({ context, todos, canCompact, onCompact, onOpenSettings, onError }: {
-  context: ContextUsage | null; todos: Todo[]; canCompact: boolean; onCompact: () => void
+export function SessionPanel({ sessionId, context, todos, canCompact, onCompact, onOpenSettings, onError }: {
+  sessionId?: string | null; context: ContextUsage | null; todos: Todo[]; canCompact: boolean; onCompact: () => void
   onOpenSettings: (tab: 'connectors' | 'skills' | 'styles' | 'privacy') => void; onError: (message: string) => void
 }) {
   const [servers, setServers] = useState<McpServer[]>([])
@@ -78,6 +108,7 @@ export function SessionPanel({ context, todos, canCompact, onCompact, onOpenSett
   const [skills, setSkills] = useState<SkillView[]>([])
   const [styles, setStyles] = useState<OutputStyle[]>([])
   const [trust, setTrust] = useState<TrustStatus | null>(null)
+  const [cost, setCost] = useState<{ sessionId: string; report: TaskReport } | null>(null)
 
   const load = useCallback(() => {
     const quiet = <T,>(promise: Promise<T>, set: (value: T) => void) => void promise.then(set).catch(() => undefined)
@@ -89,6 +120,13 @@ export function SessionPanel({ context, todos, canCompact, onCompact, onOpenSett
     quiet(api.projectTrustStatus(), setTrust)
   }, [])
   useEffect(load, [load])
+  // The context changes after every model reply, which is when the task's counts move too.
+  useEffect(() => {
+    if (!sessionId) return
+    let live = true
+    void api.taskStats(sessionId).then(report => { if (live) setCost({ sessionId, report }) }).catch(() => undefined)
+    return () => { live = false }
+  }, [sessionId, context])
 
   const openMemory = (scope: 'project' | 'user') => void api.openMemoryFile(scope).then(() => load()).catch(cause => onError(cause instanceof Error ? cause.message : String(cause)))
   const chooseStyle = (name: string) => void api.setOutputStyle(name).then(setStyles).catch(cause => onError(cause instanceof Error ? cause.message : String(cause)))
@@ -102,6 +140,10 @@ export function SessionPanel({ context, todos, canCompact, onCompact, onOpenSett
 
     <Section id="context" title="Context">
       <ContextSection context={context} onCompact={onCompact} canCompact={canCompact} />
+    </Section>
+
+    <Section id="cost" title="Task cost">
+      <TaskSection report={cost && cost.sessionId === sessionId ? cost.report : null} />
     </Section>
 
     {todos.length > 0 && <Section id="tasks" title="Tasks" count={`${done}/${todos.length}`}>

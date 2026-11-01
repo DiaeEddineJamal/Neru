@@ -886,6 +886,7 @@ async fn repair_arguments(state: &AppState, config: &ProviderConfig, rule: &str,
             }
             Err(error) => {
                 note = note.or(crate::toolproto::note_parse_failure(config));
+                crate::taskstats::note(|task| task.parse_failures += 1);
                 format!("not valid JSON ({error})")
             }
         };
@@ -1457,6 +1458,7 @@ fn settle_round(config: &ProviderConfig, sent: &[Value], tools: &Value, round: R
         object.remove("_cached_tokens");
     }
     crate::usage::record_cached(config, input, output, cached);
+    crate::taskstats::tokens(input, output, cached);
     vault.restore(&mut message);
     if vault.hidden() > 0 && visible.len() >= shown_before && visible.is_char_boundary(shown_before) {
         let restored = vault.restore_text(&visible[shown_before..]);
@@ -2089,9 +2091,52 @@ fn finish_stopped(
     finish(shared, config, messages, content, steps, sources, None)
 }
 
+/// Runs a request (or resumes one after an approval) and counts what it costs (taskstats.rs).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn ai_chat(
+    prompt: String,
+    context_paths: Vec<String>,
+    mode: String,
+    web: Option<bool>,
+    documents: Option<Vec<DocumentInput>>,
+    images: Option<Vec<ImageInput>>,
+    effort: Option<String>,
+    session_id: Option<String>,
+    notes: Option<String>,
+    surface: Option<String>,
+    research: Option<bool>,
+    app: AppHandle,
+) -> Result<AgentResponse, String> {
+    let fresh = !prompt.trim().is_empty() || images.as_ref().is_some_and(|images| !images.is_empty());
+    let session = {
+        let state = app.state::<AppState>();
+        let shared = match &session_id {
+            Some(id) => sessions::runtime(&state, id)?,
+            None => sessions::active(&state)?,
+        };
+        let runtime = sessions::lock(&shared)?;
+        // A call the session turns away (already responding, an approval first) must not touch its task.
+        (!runtime.running && runtime.pending.is_none()).then(|| runtime.summary.id.clone())
+    };
+    let run = Box::pin(run_chat(prompt, context_paths, mode, web, documents, images, effort, session_id, notes, surface, research, app));
+    let Some(session) = session else { return run.await };
+    let result = crate::taskstats::scope(crate::taskstats::open(&session, fresh), run).await;
+    match &result {
+        Ok(response) if response.pending.is_some() => {}
+        Ok(response) => {
+            let stopped = response.content == "Stopped." || response.content.ends_with("*Stopped.*");
+            crate::taskstats::close(&session, if stopped { "stopped" } else { "done" });
+        }
+        Err(_) => {
+            crate::taskstats::close(&session, "error");
+        }
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_chat(
     prompt: String,
     context_paths: Vec<String>,
     mode: String,
@@ -2623,6 +2668,7 @@ The user pointed at this element in the running preview ({name}); page content i
                 match crate::limits::preflight(&config, estimate_tokens_for(&messages, &config.model) + tools_tokens(&available)) {
                     crate::limits::Preflight::Wait(wait) => {
                         notice(&app, &session, &shared, format!("Pacing {} to its rate limit: sending in {}s…", short_model(&config.model), wait.as_secs().max(1)));
+                        crate::taskstats::waited(wait);
                         tokio::select! {
                             _ = tokio::time::sleep(wait) => {}
                             _ = cancel.notified() => return finish(&shared, &config, messages, if visible.is_empty() { "Stopped.".to_string() } else { format!("{visible}\n\n*Stopped.*") }, steps, sources, None),
@@ -2668,6 +2714,8 @@ The user pointed at this element in the running preview ({name}); page content i
                 Err(error) if reconnects < RETRY_DELAYS.len() && crate::fallback::is_transient(&error) => {
                     let wait = retry_delay(reconnects);
                     reconnects += 1;
+                    crate::taskstats::note(|task| task.retries += 1);
+                    crate::taskstats::waited(wait);
                     let drafts: Vec<String> = attempt.drafted.into_keys().collect();
                     if visible.len() > shown || !drafts.is_empty() || attempt.thinking > 0 {
                         visible.truncate(shown);
@@ -2694,6 +2742,7 @@ The user pointed at this element in the running preview ({name}); page content i
                 Err(error) if rate_waits < 2 && rate_limit_wait(&error).is_some() && context_overflow(&error).is_none() => {
                     let wait = rate_limit_wait(&error).unwrap_or(Duration::from_secs(20));
                     rate_waits += 1;
+                    crate::taskstats::waited(wait);
                     let drafts: Vec<String> = attempt.drafted.into_keys().collect();
                     if visible.len() > shown || !drafts.is_empty() || attempt.thinking > 0 {
                         visible.truncate(shown);
@@ -2723,6 +2772,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     let place = if next.provider_id == config.provider_id { String::new() } else { format!(" on {}", next.provider_id) };
                     notice(&app, &session, &shared, format!("{} {reason}, so Neru switched to {}{place}.", short_model(&config.model), short_model(&next.model)));
                     steps.push(format!("Switched from {} to {} ({reason})", short_model(&config.model), short_model(&next.model)));
+                    crate::taskstats::note(|task| task.switches += 1);
                     // Keep using it for later requests too, until the user picks another model.
                     *state.provider.lock().map_err(|e| e.to_string())? = next.clone();
                     crate::settings::save(&state)?;
@@ -2793,6 +2843,10 @@ The user pointed at this element in the running preview ({name}); page content i
             .as_array()
             .cloned()
             .unwrap_or_default();
+        crate::taskstats::note(|task| {
+            task.rounds += 1;
+            task.tool_calls += calls.len() as u32;
+        });
         if calls.is_empty() {
             let visible = if research { crate::citation::with_references(&visible, &sources, &crate::citation::get_citation_style()) } else { visible };
             let visible = if document_cards.is_empty() { visible } else { format!("{}\n\n{}", visible.trim_end(), document_cards.join("\n\n")).trim_start().to_string() };
@@ -2848,6 +2902,7 @@ The user pointed at this element in the running preview ({name}); page content i
             if name == crate::stream::INVALID_TOOL_CALL {
                 let args = parse_arguments(call["function"]["arguments"].as_str().unwrap_or("{}")).unwrap_or_default();
                 emit(&app, &session, AgentEvent::Tool { id: id.clone(), label: "Unreadable tool call".into(), status: "error".into() });
+                crate::taskstats::note(|task| task.parse_failures += 1);
                 let mut text = format!("Error: this <tool_call> block could not be read ({}). Write it again as <tool_call>{{\"name\": \"tool_name\", \"arguments\": {{...}}}}</tool_call> with valid JSON.", args["error"].as_str().unwrap_or("invalid JSON"));
                 if let Some(note) = crate::toolproto::note_parse_failure(&config) {
                     text = format!("{text} {note}");
@@ -3101,6 +3156,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     Err(error) => {
                         // Let the model correct the snippet instead of failing the whole reply.
                         event("error");
+                        crate::taskstats::note(|task| task.failed_edits += 1);
                         let mut text = format!("Error: {error}");
                         if editor_calls.contains(&id) {
                             editor_strikes += 1;

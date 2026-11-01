@@ -132,6 +132,27 @@ export interface DigestItem {
 
 export interface Digest { since: number; items: DigestItem[]; usage: UsageTotals }
 
+/** What one task (a message to Neru's final reply, approvals included) cost. */
+export interface TaskStats {
+  sessionId: string; started: number; finished: number
+  /** Every request sent to a model, helpers and failed ones included. */
+  requests: number
+  /** Requests by "provider/model". */
+  models: Record<string, number>
+  rounds: number; toolCalls: number; failedEdits: number; parseFailures: number
+  retries: number; switches: number; waitedMs: number
+  inputTokens: number; outputTokens: number; cachedTokens: number
+  /** "done", "stopped" or "error"; empty while running or waiting for an approval. */
+  outcome: string
+}
+
+export interface TaskReport {
+  current: TaskStats | null
+  last: TaskStats | null
+  /** Medians of recent finished tasks across all sessions. */
+  typical: { tasks: number; requests: number; rounds: number; failedEdits: number } | null
+}
+
 /** One rate limit on the API key, as the provider last reported it. */
 export interface Quota { label: string; limit: number | null; remaining: number | null; resetsIn: string | null }
 

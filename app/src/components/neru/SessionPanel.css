@@ -34,6 +34,7 @@
 .sp-legend li i { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 3px; }
 .sp-legend li span { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 .sp-context .button { margin-top: 8px; }
+.sp-legend li .sp-model { margin-left: 0; overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }
 
 .sp-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
 .sp-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 6px 6px; margin-left: -6px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); font-size: var(--fs-sm); text-align: start; }
