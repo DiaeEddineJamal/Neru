@@ -102,14 +102,15 @@ function useElapsed() {
 
 const elapsedText = (seconds: number) => seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`
 
-export function AgentStatus({ phase }: { phase: AgentPhase }) {
+export function AgentStatus({ phase, quill = false }: { phase: AgentPhase; quill?: boolean }) {
   const reduce = useReducedMotion() ?? false
   const steady = useSteadyPhase(phase)
   const seconds = useElapsed()
   const draft = useLiveDraft()
   const fade = { duration: reduce ? 0 : 0.5, ease: EASE_OUT }
-  // While a document is being written or edited, a quill writes in place of the orb, as in Claude.
-  if (draft) {
+  // In Research mode, while the paper is being written or edited, a quill writes in place of the orb, as in
+  // Claude. Otherwise the orbs stay; the document panel shows its own quill.
+  if (draft && quill) {
     const label = draft.heading === 'Title' ? t('Editing the title…') : draft.heading === 'Abstract' ? t('Writing the abstract…') : t('Writing “{heading}”…', { heading: draft.heading })
     return <div className="agent-status" role="status" aria-live="polite" aria-label={label}>
       <span className="agent-orb agent-quill" aria-hidden><Quill size={18} /></span>
@@ -609,6 +610,8 @@ export interface ConversationProps {
   onErrorAction?: (action: ErrorAction) => void
   /** A reply built something viewable: offer to open it in the Browser section. */
   previewOffer?: boolean
+  /** Research mode is on: the status shows the quill while a paper is being written. */
+  research?: boolean
   onOpenPreview?: () => void
   onDismissPreview?: () => void
   /** Rewinds to before the n-th request you sent (0-based). */
@@ -631,8 +634,8 @@ export function Conversation(props: ConversationProps) {
       : <AssistantMessage key={entry.id} id={entry.id} content={entry.content} sources={entry.sources ?? []} tools={(entry.steps ?? []).map((label, index) => ({ id: `${entry.id}-${index}`, label, status: label.endsWith('(failed)') ? 'error' : 'done' }))} drafts={entry.files} thinking={entry.thinking} status="complete" live={false} feedback={props.feedback[entry.id] ?? null} onFeedback={value => props.onFeedback(entry.id, value)} />, ...settledAfter(entry.id)] })}
     {resolved.filter(item => item.after !== null && !known.has(item.after)).map(item => <div className="approval-row" key={item.id}><ApprovalCard pending={item.pending} status={item.status} projectPath={props.projectPath} /></div>)}
     {props.progressNote && <NoteLine text={props.progressNote} working />}
-    {live && <AssistantMessage content={live.text} sources={live.sources} tools={live.tools} drafts={live.drafts} thinking={live.thinking} research={live.research} status="streaming" live footer={phase && <AgentStatus phase={phase} />} />}
-    {!live && busy && phase && <div className="approval-row"><AgentStatus phase={phase} /></div>}
+    {live && <AssistantMessage content={live.text} sources={live.sources} tools={live.tools} drafts={live.drafts} thinking={live.thinking} research={live.research} status="streaming" live footer={phase && <AgentStatus phase={phase} quill={props.research} />} />}
+    {!live && busy && phase && <div className="approval-row"><AgentStatus phase={phase} quill={props.research} /></div>}
     {failed && !busy && <Message from="assistant"><span className="message-avatar"><Mascot size={36} /></span><div className="message-body"><ErrorNotice error={failed} onAction={action => action === 'retry' ? props.onRetry() : props.onErrorAction?.(action)} /></div></Message>}
     {props.previewOffer && !pending && <div className="approval-row"><div className="preview-offer" role="status">
       <span className="preview-offer-icon" aria-hidden><Globe size={16} /></span>

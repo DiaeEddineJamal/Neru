@@ -411,6 +411,8 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .provider-settings input::placeholder { color: var(--muted); }
 .provider-settings .nselect { width: 100%; min-width: 0; height: 38px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: var(--bg); color: var(--text); font-size: var(--fs-base); }
 .provider-settings input:focus, .provider-settings .nselect.is-open { border-color: var(--moss); }
+/* A dropdown beside a row's text keeps its own width; full width would squeeze the text to one letter per line. */
+.provider-settings .settings-row > .nselect.settings-select { flex: 0 0 auto; width: auto; min-width: 200px; }
 .provider-description { margin: -6px 0 18px; color: var(--muted); font-size: var(--fs-sm); }
 .provider-description p { margin: 0; }
 .provider-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px !important; }

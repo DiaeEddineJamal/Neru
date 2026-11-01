@@ -20,6 +20,14 @@ export const useOpenPaper = () => useSyncExternalStore(subscribe, () => open)
 export const useLiveDraft = () => useSyncExternalStore(subscribe, () => live)
 export const useSaves = () => useSyncExternalStore(subscribe, () => saves)
 
+/** Nothing is being written any more: the turn ended, or another chat is on screen. Without this a draft
+ *  that never got its `paper://saved` (a stop, a failed save) kept the quill up in place of the orbs. */
+export function clearLiveDraft(sessionId?: string) {
+  if (!live || (sessionId && live.sessionId !== sessionId)) return
+  live = null
+  notify()
+}
+
 /** The paper card in a reply, when Research mode wrote one. */
 export function paperIdIn(content: string): string | null {
   const block = /```neru-document\n([\s\S]*?)\n```/.exec(content)
@@ -41,10 +49,12 @@ export function listenForPapers(activeSession: () => string | null) {
       notify()
     })
     void listen<Saved>('paper://saved', event => {
-      if (event.payload.sessionId !== activeSession()) return
+      // The draft ends with its save even when that chat is no longer on screen.
+      if (live?.id === event.payload.id) live = null
+      if (event.payload.sessionId !== activeSession()) { notify(); return }
       saves += 1
       if (event.payload.status === 'writing' && open !== event.payload.id) open = event.payload.id
-      if (live?.id === event.payload.id || event.payload.status !== 'writing') live = null
+      if (event.payload.status !== 'writing') live = null
       notify()
     })
   }).catch(() => undefined)

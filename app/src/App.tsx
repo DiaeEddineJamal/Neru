@@ -73,7 +73,7 @@ import { actionFor, loadBindings } from '@/lib/shortcuts'
 import { BtwPanel, ComparePanel, type CompareTarget } from './components/neru/SidePanels'
 import { DocumentsPanel } from './components/neru/DocumentsPanel'
 import { ArtifactPane } from './components/neru/ArtifactPane'
-import { closePaper, listenForPapers, openPaper, paperIdIn, useOpenPaper } from '@/lib/artifactStore'
+import { clearLiveDraft, closePaper, listenForPapers, openPaper, paperIdIn, useOpenPaper } from '@/lib/artifactStore'
 import { SPEC_STEPS } from '@/lib/review'
 import { ShortcutsSettings } from './components/neru/ShortcutsSettings'
 import { OutputStyles } from './components/neru/OutputStyles'
@@ -493,7 +493,7 @@ function App() {
     }).catch(() => undefined)
   }, [providerReady, provider.configured, provider.providerId, provider.baseUrl, provider.model, provider.apiFormat])
   useEffect(() => { document.documentElement.dataset.theme = light ? 'light' : 'dark'; writeStored('neru.theme', light ? 'light' : 'dark') }, [light])
-  useEffect(() => { activeRef.current = activeSessionId }, [activeSessionId])
+  useEffect(() => { activeRef.current = activeSessionId; clearLiveDraft() }, [activeSessionId])
   // After an update, show what changed once. A first install is covered by onboarding instead.
   useEffect(() => {
     if (!isTauri()) return
@@ -926,6 +926,7 @@ function App() {
       if (notifications && (!here() || !document.hasFocus())) void notifyUser(sessions.find(item => item.id === sessionId)?.title ?? 'Neru', t('Stopped with an error: {error}', { error: errorText(cause) }))
     } finally {
       delete liveBy.current[sessionId]
+      clearLiveDraft(sessionId)
       if (here()) { liveRef.current = null; setLive(null) }
       stoppedSessions.current.delete(sessionId)
       if (clean) queueReleased.current.add(sessionId)
@@ -1784,7 +1785,7 @@ function App() {
   <div className="workspace-row"><div className="workspace">
     {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''} ${paperOpen && activeSessionId ? 'with-artifact' : docsShown && activeSessionId ? 'with-review' : ''}`}>
       {threadOpen
-        ? <Conversation onErrorAction={errorAction} previewOffer={previewOffer && !responding} onOpenPreview={openPreview} onDismissPreview={() => setPreviewOffer(false)} messages={messages} live={live} phase={responding ? agentPhase(live, agentMode) : null} busy={responding || busy} pending={pending} pendingStatus={pendingStatus} resolved={resolved} progressNote={progressNote} failed={failed} projectPath={project?.path}
+        ? <Conversation onErrorAction={errorAction} research={surface === 'chat' && research} previewOffer={previewOffer && !responding} onOpenPreview={openPreview} onDismissPreview={() => setPreviewOffer(false)} messages={messages} live={live} phase={responding ? agentPhase(live, agentMode) : null} busy={responding || busy} pending={pending} pendingStatus={pendingStatus} resolved={resolved} progressNote={progressNote} failed={failed} projectPath={project?.path}
             feedback={feedback} onFeedback={(id, value) => setFeedback(current => { const next = { ...current, [id]: value }; writeStored('neru.feedback', next); return next })}
             onRetry={() => void runChat('', false)} onRewind={(index, restoreCode) => void rewind(index, restoreCode)} onApprove={() => void approve()} onAlwaysAllow={() => void alwaysAllow()} onDeny={() => void reject()} onResolvePlan={(approve, mode, feedback) => void resolvePlan(approve, mode, feedback)} onAnswer={answers => void answerQuestion(answers)} />
         : chatHome
