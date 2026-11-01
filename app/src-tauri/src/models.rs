@@ -457,6 +457,16 @@ pub fn remember(provider_id: &str, models: &[ModelInfo]) {
     }
 }
 
+/// Whether to send images to this model: what the provider's model list said, else a guess from
+/// its name.
+pub fn reads_images(provider_id: &str, model: &str) -> bool {
+    let known = KNOWN.lock().ok().and_then(|known| known.get(&known_key(provider_id, model)).copied());
+    match known {
+        Some((vision, _)) => vision,
+        None => traits_from_name(model).vision,
+    }
+}
+
 /// True when the provider itself said this model cannot read images.
 pub fn certainly_text_only(provider_id: &str, model: &str) -> bool {
     KNOWN

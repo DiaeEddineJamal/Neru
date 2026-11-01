@@ -290,7 +290,7 @@ fn compare_url(web: &str, base: &str, branch: &str, title: Option<&str>, body: O
     }
 }
 
-fn gh_available() -> bool {
+pub(crate) fn gh_available() -> bool {
     Command::new("gh").hidden()
         .arg("--version")
         .output()
@@ -509,7 +509,7 @@ pub fn parse_pr(body: &serde_json::Value) -> PrStatus {
     }
 }
 
-fn gh(root: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn gh(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("gh").hidden()
         .args(args)
         .env("GH_PROMPT_DISABLED", "1")

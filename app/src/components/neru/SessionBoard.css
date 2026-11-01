@@ -1,0 +1,26 @@
+/* The session board: four columns of session cards. Pills and buttons come from the Team styles. */
+.session-board { display: flex; flex-direction: column; gap: 16px; height: 100%; min-height: 0; padding: 24px 28px; }
+.session-board-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.session-board-head h2 { margin: 0; font-size: var(--fs-lg, 18px); }
+.session-board-head p { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-sm); }
+.session-board-columns { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: 12px; flex: 1; min-height: 0; overflow-x: auto; }
+.session-board-column { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.session-board-column > header { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 6px; font-size: var(--fs-sm); color: var(--secondary); }
+.session-board-column.is-needs-you > header strong { color: var(--text); }
+.session-board-column .empty-small { padding: 8px 4px; }
+.session-card { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; transition: border-color .15s ease-out; }
+.session-card:hover, .session-card:focus-visible { border-color: var(--moss, var(--sage)); outline: none; }
+.session-card.active { border-color: var(--sage); }
+.session-card-title { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-sm); color: var(--text); }
+.session-card-title svg { flex: 0 0 auto; color: var(--sage); }
+.session-board-column.is-needs-you .session-card-title svg { color: var(--amber, #d29b3a); }
+.session-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--muted); }
+.session-card-branch { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', Consolas, monospace; }
+.session-card-pr { display: inline-flex; align-items: center; gap: 4px; color: var(--secondary); text-decoration: none; }
+.session-card-pr:hover { color: var(--text); }
+.session-card-pr.is-failing { color: var(--danger, #d4645c); }
+.session-card-pr.is-passing { color: var(--sage); }
+.session-card-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.session-card-actions .button { gap: 4px; }
+@media (max-width: 900px) { .session-board-columns { grid-template-columns: repeat(2, minmax(180px, 1fr)); } }
+.team-pill.is-amber { background: color-mix(in oklch, var(--amber, #d29b3a) 22%, transparent); color: var(--text); }

@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CitationStyle, Source, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
-import type { Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
+import type { BoardCard, Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
 import type { Route } from './lib/browser'
 
 export const api = {
@@ -67,6 +67,10 @@ export const api = {
   recentProjects: () => invoke<string[]>('recent_projects'),
   listSessions: () => invoke<SessionSummary[]>('list_sessions'),
   listAllSessions: () => invoke<SessionSummary[]>('list_all_sessions'),
+  sessionBoard: (withPr = false) => invoke<BoardCard[]>('session_board', { withPr }),
+  boardAction: (sessionId: string, action: 'commit' | 'pr' | 'merge', message?: string) => invoke<string>('board_action', { sessionId, action, message: message ?? null }),
+  inlineEdit: (path: string, selection: string, instruction: string, before: string, after: string) => invoke<string>('inline_edit', { path, selection, instruction, before, after }),
+  inlineComplete: (prefix: string, suffix: string, path: string) => invoke<string>('inline_complete', { prefix, suffix, path }),
   currentSession: () => invoke<SessionSnapshot | null>('current_session'),
   createSession: (worktree = false) => invoke<SessionSnapshot>('create_session', { worktree }),
   createChatSession: () => invoke<SessionSnapshot>('create_chat_session'),

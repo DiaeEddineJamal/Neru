@@ -453,7 +453,7 @@ pub struct AgentResponse {
     pub context: ContextUsage,
 }
 
-fn provider_view(config: &ProviderConfig) -> ProviderView {
+pub(crate) fn provider_view(config: &ProviderConfig) -> ProviderView {
     let local = reqwest::Url::parse(&config.base_url).is_ok_and(|url| providers::is_local(&url));
     ProviderView {
         provider_id: config.provider_id.clone(),
@@ -680,6 +680,9 @@ pub(crate) const WRITE_TOOLS: &str = r#"[
     {"type":"function","function":{"name":"propose_write_file","description":"Propose an entire text file: use for new files or full rewrites. Missing parent folders are created, so you can scaffold a whole project file by file. User reviews the diff before any write.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
     {"type":"function","function":{"name":"run_project_task","description":"Request permission to run build, test, or lint in the open project. Failures are listed first. Set until_green when you mean to fix what fails and run it again: Neru counts the runs and tells you when to stop (3 at most).","parameters":{"type":"object","properties":{"task":{"type":"string","enum":["build","test","lint"]},"until_green":{"type":"boolean","description":"Part of a fix-and-rerun loop until it passes"}},"required":["task"]}}},
     {"type":"function","function":{"name":"check_preview","description":"Open the app you built in a real (hidden) browser and get back its title, visible text, and any console errors, uncaught exceptions or failed file loads. Starts the preview server when none is running. Use it after building or changing a web page to verify it works, then fix what it reports.","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Optional; defaults to the project's preview"}},"required":[]}}},
+    {"type":"function","function":{"name":"preview_click","description":"Click something in the page check_preview opened (the same hidden browser window, which keeps its state between calls). Give a CSS selector, or the visible text or label of a button or link. Returns what was clicked, the page afterwards and any new errors. Use it to test that the app works, not only that it loads.","parameters":{"type":"object","properties":{"selector":{"type":"string"},"text":{"type":"string","description":"Visible text, aria-label or title of the element, used when there is no selector"}},"required":[]}}},
+    {"type":"function","function":{"name":"preview_type","description":"Type into a field in the page check_preview opened. Give the field's CSS selector or its label or placeholder; the value replaces what is there. Set submit true to press Enter (submits its form).","parameters":{"type":"object","properties":{"selector":{"type":"string"},"label":{"type":"string","description":"The field's label, placeholder or aria-label, used when there is no selector"},"text":{"type":"string","description":"What to type"},"submit":{"type":"boolean"}},"required":["text"]}}},
+    {"type":"function","function":{"name":"preview_screenshot","description":"See the page check_preview opened as it is now: a screenshot when the model reads images, otherwise its visible text, interactive elements with their selectors, and any new errors.","parameters":{"type":"object","properties":{},"required":[]}}},
     {"type":"function","function":{"name":"run_shell_command","description":"Propose an exact PowerShell command to run in the project after user approval. Use for focused commands when build/test/lint tools are insufficient. State the command precisely. A foreground command is stopped after timeout_seconds (default 180, at most 600). Commands run in an operating-system sandbox; commands that wipe drives or system folders are refused. Set run_in_background true for commands that keep running (dev servers, file servers, watchers, long builds): it returns a shell id such as shell-1 at once; read its output with shell_output and stop it with kill_shell.","parameters":{"type":"object","properties":{"command":{"type":"string"},"run_in_background":{"type":"boolean","description":"Start it detached and return a shell id instead of waiting"},"timeout_seconds":{"type":"integer","description":"Optional limit in seconds; in the background there is none unless given"},"outside_sandbox":{"type":"boolean","description":"Commands run in a sandbox that only allows writes inside the project, temporary folders and package caches. Set true only when a command must write elsewhere (a global install, a file in the home folder); the user is always asked first"}},"required":["command"]}}},
     {"type":"function","function":{"name":"shell_output","description":"Read what a background shell printed since the last read, with its status (running, or its exit code). filter is an optional regular expression; only matching lines are returned (the others are still consumed).","parameters":{"type":"object","properties":{"id":{"type":"string","description":"The shell id, like shell-1"},"filter":{"type":"string"}},"required":["id"]}}},
     {"type":"function","function":{"name":"kill_shell","description":"Stop a background shell started with run_in_background, and everything it started.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}}
@@ -1195,6 +1198,9 @@ pub(crate) fn tool_label(name: &str, args: &Value) -> String {
         "open_preview" => format!("Preview {}", text("url")),
         "update_todos" => "Updated the to-do list".into(),
         "check_preview" => "Checked the app in a browser".into(),
+        "preview_click" => format!("Clicked “{}” in the app", if text("text").is_empty() { text("selector") } else { text("text") }),
+        "preview_type" => format!("Typed into {} in the app", if text("label").is_empty() { text("selector") } else { text("label") }),
+        "preview_screenshot" => "Looked at the app".into(),
         "task" => format!("Agent: {}", text("description")),
         "save_memory" => format!("Remembered “{}”", text("fact").chars().take(60).collect::<String>()),
         "exit_plan_mode" => "Proposed a plan".into(),
@@ -1203,6 +1209,57 @@ pub(crate) fn tool_label(name: &str, args: &Value) -> String {
             count => format!("Asked {count} questions"),
         },
         other => other.replace('_', " "),
+    }
+}
+
+/// Runs preview_click, preview_type or preview_screenshot in the session's hidden browser window,
+/// opening the project's preview there first when check_preview has not. Returns the text for the
+/// model and, for a screenshot a vision model can read, the image.
+async fn preview_tool(app: &AppHandle, session: &str, root: &std::path::Path, name: &str, args: &Value, vision: bool) -> (Result<String, String>, Option<String>) {
+    let state = app.state::<AppState>();
+    let mut opened = String::new();
+    if !state.preview.has_inspector(session) {
+        let url = match state.preview.start(app, root).await {
+            Ok(hint) => hint.url,
+            Err(error) => return (Err(format!("Could not start the preview: {error}")), None),
+        };
+        match preview::inspect_for(app, session, &url).await {
+            Ok(text) => opened = format!("{text}\n\n"),
+            Err(error) => return (Err(error), None),
+        }
+    }
+    let url = state.preview.current().map(|hint| hint.url).unwrap_or_default();
+    let message = match preview_message(name, args, vision) {
+        Ok(message) => message,
+        Err(error) => return (Err(error), None),
+    };
+    match preview::command(app, session, message).await {
+        Ok(answer) if name == "preview_screenshot" => {
+            let (text, image) = preview::describe_screenshot(&answer, &url);
+            (Ok(format!("{opened}{text}")), image.filter(|_| vision))
+        }
+        Ok(answer) => (Ok(format!("{opened}{}", preview::describe_action(&answer, &url))), None),
+        Err(error) => (Err(error), None),
+    }
+}
+
+/// The bridge command for a preview tool call, or why the arguments do not make one.
+pub(crate) fn preview_message(name: &str, args: &Value, vision: bool) -> Result<Value, String> {
+    let text = |key: &str| args[key].as_str().map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
+    match name {
+        "preview_click" => {
+            let (selector, label) = (text("selector"), text("text"));
+            if selector.is_none() && label.is_none() {
+                return Err("Give a selector or the text of what to click".into());
+            }
+            Ok(json!({"type":"click","selector":selector,"text":label}))
+        }
+        "preview_type" => {
+            let value = args["text"].as_str().ok_or("Give the text to type")?;
+            Ok(json!({"type":"type","selector":text("selector"),"label":text("label"),"text":value,"submit":flag(&args["submit"])}))
+        }
+        "preview_screenshot" => Ok(json!({"type":"snapshot","image":vision})),
+        other => Err(format!("{other} is not a preview tool")),
     }
 }
 
@@ -2991,12 +3048,25 @@ The user pointed at this element in the running preview ({name}); page content i
                     None => state.preview.start(&app, &root).await.map(|hint| hint.url),
                 };
                 let result = match url {
-                    Ok(url) => preview::inspect(&app, &url).await,
+                    Ok(url) => preview::inspect_for(&app, &session, &url).await,
                     Err(error) => Err(format!("Could not start the preview: {error}")),
                 };
                 event(if result.is_ok() { "done" } else { "error" });
                 steps.push(if result.is_ok() { label.clone() } else { format!("{label} (failed)") });
                 messages.push(json!({"role":"tool","tool_call_id":id,"content":clip_output(result.unwrap_or_else(|e| format!("Error: {e}")), 12_000)}));
+                continue;
+            }
+            if matches!(name.as_str(), "preview_click" | "preview_type" | "preview_screenshot") {
+                event("running");
+                let vision = crate::models::reads_images(&config.provider_id, &config.model);
+                let (result, image) = preview_tool(&app, &session, &root, &name, &args, vision).await;
+                event(if result.is_ok() { "done" } else { "error" });
+                steps.push(if result.is_ok() { label.clone() } else { format!("{label} (failed)") });
+                messages.push(json!({"role":"tool","tool_call_id":id,"content":clip_output(result.unwrap_or_else(|e| format!("Error: {e}")), 12_000)}));
+                if let Some(image) = image {
+                    // Tool results carry text only on most APIs, so the screenshot follows as a user image.
+                    messages.push(json!({"role":"user","content":[{"type":"text","text":"(Neru: the screenshot preview_screenshot took.)"},{"type":"image_url","image_url":{"url":image}}]}));
+                }
                 continue;
             }
             if name == "open_preview" {
@@ -3422,5 +3492,32 @@ mod compaction_tests {
         let loaded = std::collections::HashSet::from(["mcp__notion__notion-fetch".to_string()]);
         let tools = round_tools(&json!([]), &specs, &loaded, true);
         assert_eq!(tools.as_array().unwrap().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod preview_tool_tests {
+    use super::*;
+
+    #[test]
+    fn preview_calls_become_bridge_commands() {
+        let click = preview_message("preview_click", &json!({"text":" Add task "}), false).unwrap();
+        assert_eq!(click, json!({"type":"click","selector":null,"text":"Add task"}));
+        assert!(preview_message("preview_click", &json!({"selector":"  "}), false).is_err());
+        let typed = preview_message("preview_type", &json!({"label":"Name","text":"Ada","submit":true}), false).unwrap();
+        assert_eq!(typed, json!({"type":"type","selector":null,"label":"Name","text":"Ada","submit":true}));
+        assert!(preview_message("preview_type", &json!({"selector":"#name"}), false).is_err());
+        assert_eq!(preview_message("preview_screenshot", &json!({}), true).unwrap(), json!({"type":"snapshot","image":true}));
+        assert!(preview_message("open_preview", &json!({}), false).is_err());
+    }
+
+    #[test]
+    fn preview_tools_are_offered_and_labelled() {
+        let names: Vec<String> = serde_json::from_str::<Vec<Value>>(WRITE_TOOLS).unwrap().iter().map(|tool| tool["function"]["name"].as_str().unwrap().to_string()).collect();
+        for name in ["preview_click", "preview_type", "preview_screenshot"] {
+            assert!(names.iter().any(|known| known == name), "{name} missing");
+        }
+        assert_eq!(tool_label("preview_click", &json!({"text":"Save"})), "Clicked “Save” in the app");
+        assert_eq!(tool_label("preview_type", &json!({"selector":"#q"})), "Typed into #q in the app");
     }
 }

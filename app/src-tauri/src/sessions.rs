@@ -66,6 +66,24 @@ pub struct SessionSummary {
     /// The title was written by the model or the user, so it is not replaced again.
     #[serde(default)]
     pub titled: bool,
+    /// Where the session stands on the board: running, needs-you, done or merged. Filled in when
+    /// listing; never meaningful on disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// The pull request for the session's branch, when the board looked it up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<SessionPr>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPr {
+    pub number: u64,
+    pub url: String,
+    /// OPEN, MERGED or CLOSED.
+    pub state: String,
+    /// "passing", "failing", "pending", or empty without checks.
+    pub checks: String,
 }
 
 /// An edit Neru applied, and how long the transcript was at the time, for rewinding code.
@@ -270,7 +288,7 @@ fn write(session: &SessionFile) -> Result<(), String> {
     fs::rename(&temp, &target).map_err(|e| e.to_string())
 }
 
-fn all_for(root: &Path) -> Result<Vec<SessionSummary>, String> {
+pub(crate) fn all_for(root: &Path) -> Result<Vec<SessionSummary>, String> {
     let root = root.to_string_lossy();
     Ok(all_sessions()?
         .into_iter()
@@ -512,6 +530,8 @@ pub fn create_with_id(
             worktree,
             running: false,
             titled: false,
+            status: None,
+            pr: None,
         },
         conversation: vec![],
         transcript: vec![],
@@ -544,6 +564,8 @@ pub fn create_detached(state: &AppState, root: &Path, title: &str) -> Result<Str
             worktree: None,
             running: false,
             titled: true,
+            status: None,
+            pr: None,
         },
         conversation: vec![],
         transcript: vec![],
@@ -594,10 +616,12 @@ fn mark_running(state: &AppState, list: &mut [SessionSummary]) {
         return;
     };
     for summary in list {
-        summary.running = map
+        let (running, waiting) = map
             .get(&summary.id)
-            .and_then(|shared| shared.lock().ok().map(|runtime| runtime.running))
-            .unwrap_or(false);
+            .and_then(|shared| shared.lock().ok().map(|runtime| (runtime.running, runtime.pending.is_some())))
+            .unwrap_or((false, false));
+        summary.running = running;
+        summary.status = Some(if waiting { "needs-you" } else if running { "running" } else { "done" }.into());
     }
 }
 
@@ -662,6 +686,8 @@ pub fn fork_session(id: String, state: State<'_, AppState>) -> Result<SessionSna
             worktree: None,
             running: false,
             titled: true,
+            status: None,
+            pr: None,
         },
         conversation,
         transcript,

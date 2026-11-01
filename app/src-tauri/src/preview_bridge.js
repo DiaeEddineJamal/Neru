@@ -4,11 +4,17 @@
  * It never reads cookies or storage and only runs when the page is a direct child frame of Neru. */
 (() => {
   'use strict';
-  if (window.__neruBridge || window.parent === window) return;
-  try { const ancestors = location.ancestorOrigins; if (ancestors && ancestors.length > 1) return; } catch (_) { /* not supported */ }
+  // In Neru's hidden inspector window (check_preview, preview_click…) the page is the top window and
+  // replies go through the inspector's report channel instead of postMessage.
+  const agent = window.__neruAgent === true && typeof window.__neruReport === 'function';
+  if (window.__neruBridge || (window.parent === window && !agent)) return;
+  if (!agent) try { const ancestors = location.ancestorOrigins; if (ancestors && ancestors.length > 1) return; } catch (_) { /* not supported */ }
   window.__neruBridge = true;
 
-  const post = (type, data) => { try { parent.postMessage(Object.assign({ __neru: 1, type }, data), '*'); } catch (_) { /* parent gone */ } };
+  const post = (type, data) => {
+    if (agent) { if (type === 'result' || type === 'snapshot') window.__neruReport(data.id, data); return; }
+    try { parent.postMessage(Object.assign({ __neru: 1, type }, data), '*'); } catch (_) { /* parent gone */ }
+  };
   const clip = (text, max) => { const limit = max || 1200; return text.length > limit ? text.slice(0, limit) + '…' : text; };
   const fmt = value => {
     if (typeof value === 'string') return value;
@@ -492,12 +498,111 @@
     return { dataUrl: canvas.toDataURL('image/jpeg', 0.86), width: canvas.width, height: canvas.height };
   }
 
+  // ---------- acting on the page (preview_click, preview_type) ----------
+  const visibleBox = element => { const rect = element.getBoundingClientRect(); const style = getComputedStyle(element); return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'; };
+  const textOf = element => String(element.innerText || element.value || element.getAttribute('aria-label') || element.getAttribute('title') || element.getAttribute('placeholder') || '').replace(/\s+/g, ' ').trim();
+  const CLICKABLE = 'button,a[href],[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],input[type="submit"],input[type="button"],input[type="checkbox"],input[type="radio"],label,summary,select,[onclick],[tabindex]';
+  const FIELDS = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]),textarea,select,[contenteditable=""],[contenteditable="true"]';
+  // An element by CSS selector, else the visible clickable (or field) whose text best matches.
+  function findTarget(selector, text, pool) {
+    if (selector) { const found = query(selector); if (found) return found; }
+    const wanted = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!wanted) return null;
+    let best = null, bestScore = 0;
+    const consider = element => {
+      if (!visibleBox(element)) return;
+      let label = textOf(element).toLowerCase();
+      if (!label && element.id) { const tag = document.querySelector('label[for="' + safe(element.id) + '"]'); if (tag) label = textOf(tag).toLowerCase(); }
+      if (!label) return;
+      const score = label === wanted ? 3 : label.startsWith(wanted) ? 2 : label.indexOf(wanted) >= 0 ? 1 + wanted.length / (label.length + 1) : 0;
+      if (score > bestScore) { best = element; bestScore = score; }
+    };
+    document.querySelectorAll(pool).forEach(consider);
+    if (!best && pool === CLICKABLE) document.querySelectorAll('body *').forEach(element => { if (!element.children.length) consider(element); });
+    return best;
+  }
+  const brief = element => { const info = describe(element); return { tag: info.tag, selector: info.selector, text: info.text }; };
+  // What the page shows now, and the errors recorded since the last command (inspector only).
+  function pageState() {
+    const errors = Array.isArray(window.__neruErrors) ? window.__neruErrors : [];
+    const seen = window.__neruErrorsSeen || 0;
+    window.__neruErrorsSeen = errors.length;
+    const body = document.body;
+    return { url: location.href, title: document.title, text: body ? clip(body.innerText || '', 3000) : '', errors: errors.slice(seen) };
+  }
+  function interactive() {
+    const items = [];
+    document.querySelectorAll(CLICKABLE + ',' + FIELDS).forEach(element => {
+      if (items.length >= 60 || !visibleBox(element)) return;
+      items.push({ tag: element.tagName.toLowerCase(), type: element.getAttribute('type') || '', text: clip(textOf(element), 80), selector: selectorOf(element) });
+    });
+    return items;
+  }
+  const settleThen = (id, build) => setTimeout(() => {
+    try { post('result', Object.assign({ id }, build(), { page: pageState() })); } catch (error) { post('result', { id, error: String((error && error.message) || error) }); }
+  }, 500);
+  function act(message) {
+    const id = message.id;
+    try {
+      if (message.type === 'query') {
+        const matches = message.selector ? Array.prototype.slice.call(document.querySelectorAll(message.selector), 0, 20).map(brief) : interactive();
+        post('result', { id, matches });
+        return;
+      }
+      if (message.type === 'click') {
+        const element = findTarget(message.selector, message.text, CLICKABLE);
+        if (!element) { post('result', { id, error: 'No element matches ' + (message.selector || '“' + message.text + '”'), page: pageState(), elements: interactive() }); return; }
+        const target = brief(element);
+        element.scrollIntoView({ block: 'center' });
+        const rect = element.getBoundingClientRect();
+        const init = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+        ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(name => element.dispatchEvent(name.indexOf('pointer') === 0 && window.PointerEvent ? new PointerEvent(name, init) : new MouseEvent(name, init)));
+        if (typeof element.focus === 'function') element.focus();
+        element.click();
+        settleThen(id, () => ({ clicked: target }));
+        return;
+      }
+      if (message.type === 'type') {
+        const element = findTarget(message.selector, message.label, FIELDS) || (!message.selector && !message.label && document.activeElement !== document.body ? document.activeElement : null);
+        if (!element) { post('result', { id, error: 'No field matches ' + (message.selector || '“' + (message.label || '') + '”'), page: pageState(), elements: interactive() }); return; }
+        const value = String(message.text || '');
+        element.scrollIntoView({ block: 'center' });
+        if (typeof element.focus === 'function') element.focus();
+        if (element.isContentEditable) element.textContent = value;
+        else {
+          // The prototype's setter, so React and other frameworks see the change.
+          const proto = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : element.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+          const property = Object.getOwnPropertyDescriptor(proto, 'value');
+          if (property && property.set) property.set.call(element, value); else element.value = value;
+        }
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        if (message.submit) {
+          const key = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+          const go = element.dispatchEvent(new KeyboardEvent('keydown', key));
+          element.dispatchEvent(new KeyboardEvent('keyup', key));
+          if (go && element.form) { if (typeof element.form.requestSubmit === 'function') element.form.requestSubmit(); else element.form.submit(); }
+        }
+        const target = brief(element);
+        settleThen(id, () => ({ typed: target }));
+        return;
+      }
+      if (message.type === 'snapshot') {
+        const summary = { page: pageState(), elements: interactive() };
+        if (!message.image) { post('snapshot', Object.assign({ id }, summary)); return; }
+        snapshot().then(result => post('snapshot', Object.assign({ id }, summary, result)), error => post('snapshot', Object.assign({ id, error: String((error && error.message) || error) }, summary)));
+      }
+    } catch (error) { post('result', { id, error: String((error && error.message) || error) }); }
+  }
+  if (agent) window.__neruRun = act;
+
   // ---------- commands from Neru ----------
   addEventListener('message', event => {
     if (event.source !== parent) return;
     const message = event.data;
     if (!message || message.__neruCmd !== 1) return;
     switch (message.type) {
+      case 'click': case 'type': case 'query': act(message); break;
       case 'mode': setMode(message.mode === 'inspect' || message.mode === 'annotate' ? message.mode : 'off'); break;
       case 'annotations': ui(); notes = Array.isArray(message.notes) ? message.notes : []; frame(); break;
       case 'focus': {

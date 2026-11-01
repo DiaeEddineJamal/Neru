@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { BookOpen, Clock, Compass, ChevronRight, Command, Copy, FileDown, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Link, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquarePen, Sun, Trash2, Users } from 'lucide-react'
+import { BookOpen, Clock, Compass, ChevronRight, Command, Copy, FileDown, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Link, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquareKanban, SquarePen, Sun, Trash2, Users } from 'lucide-react'
 import { useContextMenu } from './ContextMenu'
 import { Mascot } from './Mascot'
 import type { ProjectInfo, Section, SessionSummary } from '../../types'
@@ -15,6 +15,7 @@ const mod = isMac ? '⌘' : 'Ctrl'
 
 const tools: { id: Section; label: string; icon: typeof Folder }[] = [
   { id: 'search', label: 'Search', icon: Search },
+  { id: 'board', label: 'Board', icon: SquareKanban },
 ]
 
 const readStorage = <T,>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }

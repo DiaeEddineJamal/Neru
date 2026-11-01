@@ -13,7 +13,7 @@ use tokio::{
 };
 
 pub const BRIDGE_PATH: &str = "/__neru/bridge.js";
-const BRIDGE_JS: &str = include_str!("preview_bridge.js");
+pub(crate) const BRIDGE_JS: &str = include_str!("preview_bridge.js");
 const BRIDGE_TAG: &str = "<script src=\"/__neru/bridge.js\" data-neru=\"bridge\"></script>";
 const MAX_HEAD: usize = 64 * 1024;
 const MAX_HTML: usize = 24 * 1024 * 1024;

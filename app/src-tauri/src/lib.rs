@@ -1,6 +1,7 @@
 mod activity;
 mod agent;
 mod agents;
+mod board;
 mod cli;
 mod cli_ui;
 mod cli_setup;
@@ -9,6 +10,7 @@ mod commands;
 mod diagnostics;
 mod documents;
 mod engine;
+mod editor_ai;
 mod extras;
 mod fallback;
 mod git;
@@ -433,6 +435,10 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             agent::compact_session,
             agent::refresh_context,
             agent::auto_title_session,
+            editor_ai::inline_edit,
+            editor_ai::inline_complete,
+            board::session_board,
+            board::board_action,
             skills::list_skills,
             skills::import_skills,
             skills::remove_skill,

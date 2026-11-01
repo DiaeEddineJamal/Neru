@@ -62,7 +62,7 @@ pub fn map_tool(name: &str) -> Vec<&'static str> {
         const NERU: &[&str] = &[
             "list_directory", "read_file", "read_files", "search_text", "find_symbol", "find_files", "project_map", "git_status", "git_diff", "web_search", "fetch_url",
             "read_skill", "add_review_comment", "open_preview", "propose_edit", "propose_write_file", "propose_delete", "propose_move", "propose_create_folder",
-            "run_project_task", "run_shell_command", "shell_output", "kill_shell", "check_preview", "update_todos", "task", "save_memory",
+            "run_project_task", "run_shell_command", "shell_output", "kill_shell", "check_preview", "preview_click", "preview_type", "preview_screenshot", "update_todos", "task", "save_memory",
         ];
         NERU.iter().copied().filter(|tool| *tool == name).collect()
     };

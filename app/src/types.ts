@@ -1,4 +1,4 @@
-export type Section = 'home' | 'explorer' | 'search' | 'git' | 'terminal' | 'preview' | 'settings' | 'team'
+export type Section = 'home' | 'explorer' | 'search' | 'git' | 'terminal' | 'preview' | 'settings' | 'team' | 'board'
 
 export interface ProjectInfo {
   name: string
@@ -245,6 +245,28 @@ export interface SessionSummary {
   updatedAt: number
   worktree?: { path: string; branch: string; base: string }
   running?: boolean
+  /** Where it stands on the session board; filled in when listing. */
+  status?: SessionStatus
+  /** The pull request for a worktree session's branch, when the board looked it up. */
+  pr?: SessionPr
+}
+
+export type SessionStatus = 'running' | 'needs-you' | 'done' | 'merged'
+
+export interface SessionPr {
+  number: number
+  url: string
+  /** OPEN, MERGED or CLOSED. */
+  state: string
+  checks: '' | 'passing' | 'failing' | 'pending'
+}
+
+export interface BoardCard {
+  session: SessionSummary
+  branch: string
+  base: string
+  dirty: number
+  ahead: number
 }
 
 export interface SessionSnapshot {
