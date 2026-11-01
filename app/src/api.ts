@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CitationStyle, Source, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
 import type { ChatProject, ChatProjectDetail, ChatProjectListItem, ChatProjectPatch } from './types'
-import type { Allowance, BoardCard, CheckResult, Digest, EngineSettings, Profile, QueuedTask, TaskReport, UsageTotals } from './types'
+import type { Allowance, BoardCard, CheckResult, Digest, EngineSettings, Profile, ProviderCapacity, QueuedTask, TaskReport, UsageTotals } from './types'
 import type { OutputStyle, Paper, PaperCard, ServerPrompt, ServerResource, SessionDocument, SideAnswer } from './types'
 import type { MemoryCategory, MemoryPrefs, MemoryStore } from './types'
 import type { Route } from './lib/browser'
@@ -175,6 +175,7 @@ export const api = {
   setProjectPrivacy: (rule: PrivacyRule | null) => invoke<{ rule: PrivacyRule | null; global: PrivacyRule }>('set_project_privacy', { rule }),
   usageTotals: () => invoke<UsageTotals>('usage_totals'),
   taskStats: (sessionId: string) => invoke<TaskReport>('task_stats', { sessionId }),
+  freeCapacity: () => invoke<ProviderCapacity[]>('free_capacity'),
   resetUsage: () => invoke<UsageTotals>('reset_usage'),
   engineSettings: () => invoke<EngineSettings>('engine_settings'),
   setEngineSettings: (settings: EngineSettings) => invoke<EngineSettings>('set_engine_settings', { settings }),

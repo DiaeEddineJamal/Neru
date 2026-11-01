@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import type { AgentMode, ContextUsage, Effort, ModelInfo, SlashCommand } from '../../types'
 import { t } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
+import { FreeCapacity } from './FreeCapacity'
 
 export type VoiceEngine = 'local' | 'transcription' | 'system'
 type VoiceState = 'idle' | 'listening' | 'paused' | 'transcribing'
@@ -210,6 +211,7 @@ function ContextMeter({ usage }: { usage: ContextUsage }) {
         </span>
       })}</span>}
       {quotas.length === 0 && <small>{t('Rate limits appear here after the first reply, when the provider reports them.')}</small>}
+      <FreeCapacity refresh={usage} />
       {share > 0.9 && <small>{t('Nearly full. Start a new session, rewind, or run /compact.')}</small>}
     </span>
   </span>

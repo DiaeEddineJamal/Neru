@@ -1393,13 +1393,18 @@ fn rate_limit_wait(error: &str) -> Option<Duration> {
 }
 
 /// What the user can do when no other model could take over from one that failed with `error`.
-fn no_fallback_hint(error: &str) -> String {
+fn no_fallback_hint(error: &str, provider_id: &str) -> String {
     // Cerebras left this list when its free plan ended; each provider below has its own free daily allowance.
     const MORE_KEYS: &str = "add a free key from another provider in Settings → Model provider (Gemini, NVIDIA, Mistral, OpenRouter and Groq each have their own daily allowance) and Neru switches to it when this one runs out.";
     if crate::fallback::is_client_locked(error) {
         format!("{}. You can also {MORE_KEYS}", crate::models::client_locked_reason(error))
     } else if crate::fallback::needs_credits(error) {
         format!("Add credits to this account, pick a free model, or {MORE_KEYS}")
+    } else if crate::fallback::is_monthly(error) {
+        // "Try again in a minute" would send a request that fails the same way.
+        format!("This allowance starts over in {}. Until then, pick another model or {MORE_KEYS}", crate::limits::human(crate::limits::until_monthly_reset().as_secs()))
+    } else if crate::fallback::is_daily(error) {
+        format!("This model's daily allowance starts over in {}. Until then, pick another model or {MORE_KEYS}", crate::limits::human(crate::limits::until_daily_reset(provider_id).as_secs()))
     } else {
         format!("Try again in a minute, pick another model, or {MORE_KEYS}")
     }
@@ -2794,7 +2799,7 @@ The user pointed at this element in the running preview ({name}); page content i
                             skip_preflight = true;
                             continue;
                         }
-                        return Err(format!("{error}\n\n{} {reason}, and no other model is available right now. {}", short_model(&config.model), no_fallback_hint(&error)));
+                        return Err(format!("{error}\n\n{} {reason}, and no other model is available right now. {}", short_model(&config.model), no_fallback_hint(&error, &config.provider_id)));
                     };
                     let place = if next.provider_id == config.provider_id { String::new() } else { format!(" on {}", next.provider_id) };
                     notice(&app, &session, &shared, format!("{} {reason}, so Neru switched to {}{place}.", short_model(&config.model), short_model(&next.model)));

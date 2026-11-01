@@ -67,7 +67,15 @@ Original plan:
 - At the first daily limit, show: "Add a second free key to roughly double your daily work". The nudge comes when the user feels the limit, with a real number from P0.
 - **Done when:** a new user goes from install to first Code answer in under 2 minutes with one free key.
 
-### P2. Show capacity and waits (S–M)
+### P2. Show capacity and waits (S–M) ✅ done (the per-task estimate is still to do)
+
+- **Free plans today**, in the context ring's panel beside the message box: every free provider with a saved key (and the one in use), with requests used today, what is left when known, a bar, models resting after a limit with when the first is back, and when the current provider's day starts over. The total reads "1,960+ requests left", with "+" when some plans' allowance is unknown. Built on `limits::capacity` and the `free_capacity` command. "Left" comes from what the provider reported today (rate-limit headers, OpenRouter's /key), or else from documented allowances (ModelScope 2,000, OpenRouter 50).
+- **Daily counts are saved** (`request-counts.json`, a key fingerprint only, never the key), so a restart no longer makes a spent free plan look fresh.
+- **When nothing can take over:** a spent daily or monthly allowance no longer says "Try again in a minute". It says when the allowance starts over.
+- Already in place before P2: pacing, retry, per-minute and switch notices with their wait or reason.
+- Not yet: an estimate before a large task, and an accurate split by model for providers like Gemini whose allowance is per model.
+
+Original plan:
 - A small meter by the composer showing today's free capacity across all keys (requests left, next reset), built from the quota ledger that already exists.
 - Wait and switch states inline in the conversation with an ETA: "Gemini resets in 4 min; continuing on NVIDIA Qwen3 Coder."
 - Once P0 has data: an estimate before a large task ("about 15 requests; 140 left today").

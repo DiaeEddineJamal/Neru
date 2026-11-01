@@ -156,6 +156,18 @@ export interface TaskReport {
 /** One rate limit on the API key, as the provider last reported it. */
 export interface Quota { label: string; limit: number | null; remaining: number | null; resetsIn: string | null }
 
+/** What one free plan has left today, across its models (limits.rs `ProviderCapacity`). */
+export interface ProviderCapacity {
+  providerId: string
+  current: boolean
+  usedToday: number
+  limit: number | null
+  left: number | null
+  restingModels: number
+  backIn: string | null
+  resetsIn: string
+}
+
 export interface ContextUsage {
   used: number
   /** The model's context window. */

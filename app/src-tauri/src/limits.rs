@@ -36,8 +36,9 @@ static STORE: LazyLock<Mutex<Store>> = LazyLock::new(|| Mutex::new(load()));
 /// The quotas each (provider, model, key) last reported, and when (see `ledger_key`).
 static QUOTAS: LazyLock<Mutex<HashMap<String, (std::time::Instant, u64, Vec<Quota>)>>> = LazyLock::new(Default::default);
 /// Requests and tokens Neru sent per (provider, model, key) in the current minute, hour and day, for
-/// providers that send no quota headers (Gemini) and for the meter.
-static COUNTS: LazyLock<Mutex<HashMap<String, Counters>>> = LazyLock::new(Default::default);
+/// providers that send no quota headers (Gemini) and for the meter. The day's counts are kept on disk,
+/// so a restart does not make a spent free plan look fresh.
+static COUNTS: LazyLock<Mutex<HashMap<String, Counters>>> = LazyLock::new(|| Mutex::new(load_days()));
 /// Keys that must not be sent to before a time (Unix seconds): a Retry-After, or a spent daily quota.
 static BLOCKED: LazyLock<Mutex<HashMap<String, (u64, String)>>> = LazyLock::new(Default::default);
 
@@ -62,6 +63,29 @@ fn load() -> Store {
 
 fn save(store: &Store) {
     if let (Some(path), Ok(text)) = (path(), serde_json::to_string_pretty(store)) {
+        let _ = fs::write(path, text);
+    }
+}
+
+fn counts_path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    data_dir().ok().map(|dir| dir.join("request-counts.json"))
+}
+
+/// The day windows saved by `save_days`: (day start, requests, tokens) per ledger key.
+fn load_days() -> HashMap<String, Counters> {
+    let saved: HashMap<String, (u64, u64, u64)> = counts_path().and_then(|path| fs::read_to_string(path).ok()).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+    saved.into_iter().map(|(key, (start, requests, tokens))| (key, Counters { day: Window { start, requests, tokens }, ..Counters::default() })).collect()
+}
+
+fn save_days(counts: &HashMap<String, Counters>) {
+    let Some(path) = counts_path() else { return };
+    let now = unix_now();
+    // Days that are over are dropped; two days covers every provider's clock.
+    let days: HashMap<&String, (u64, u64, u64)> = counts.iter().filter(|(_, counters)| now.saturating_sub(counters.day.start) < 2 * 86_400).map(|(key, counters)| (key, (counters.day.start, counters.day.requests, counters.day.tokens))).collect();
+    if let Ok(text) = serde_json::to_string(&days) {
         let _ = fs::write(path, text);
     }
 }
@@ -260,6 +284,7 @@ pub fn note_request(config: &ProviderConfig, tokens: u64) {
         entry.minute.add(now - now % 60, tokens);
         entry.hour.add(now - now % 3_600, tokens);
         entry.day.add(day_start(&config.provider_id, now), tokens);
+        save_days(&counts);
     }
 }
 
@@ -302,7 +327,7 @@ pub enum Preflight {
     Switch(String),
 }
 
-fn human(seconds: u64) -> String {
+pub(crate) fn human(seconds: u64) -> String {
     if seconds >= 3_600 {
         format!("{}h{}m", seconds / 3_600, seconds % 3_600 / 60)
     } else if seconds >= 60 {
@@ -310,6 +335,75 @@ fn human(seconds: u64) -> String {
     } else {
         format!("{seconds}s")
     }
+}
+
+// ---------- free capacity across keys ----------
+
+/// What one free plan has left today, for the meter beside the message box.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderCapacity {
+    pub provider_id: String,
+    /// The provider the conversation uses now.
+    pub current: bool,
+    /// Requests Neru sent to this provider today, over all its models.
+    pub used_today: u64,
+    /// The daily request allowance, as the provider reported it or as its free plan documents it.
+    pub limit: Option<u64>,
+    pub left: Option<u64>,
+    /// Models on this key resting after a limit, and how soon the first is back.
+    pub resting_models: usize,
+    pub back_in: Option<String>,
+    /// When the provider's day starts over.
+    pub resets_in: String,
+}
+
+/// Daily request allowances free plans document but do not report in headers.
+fn documented_daily(provider_id: &str) -> Option<u64> {
+    match provider_id {
+        "modelscope" => Some(2_000),
+        "openrouter" => Some(50),
+        _ => None,
+    }
+}
+
+pub fn capacity(provider_id: &str, current: bool) -> ProviderCapacity {
+    let now = unix_now();
+    let prefix = format!("{provider_id}|");
+    let today = day_start(provider_id, now);
+    let used_today = requests_today(provider_id);
+    // A daily allowance the provider reported today, on any of its models: the least left wins.
+    let reported = QUOTAS.lock().ok().and_then(|quotas| {
+        quotas
+            .iter()
+            .filter(|(key, (_, at, _))| key.starts_with(&prefix) && *at >= today)
+            .flat_map(|(_, (_, _, list))| list.iter().filter(|quota| matches!(quota.label.as_str(), "Requests per day" | "Free-model requests per day")).cloned())
+            .min_by_key(|quota| quota.remaining.unwrap_or(u64::MAX))
+    });
+    let limit = reported.as_ref().and_then(|quota| quota.limit).or_else(|| documented_daily(provider_id));
+    let left = reported.as_ref().and_then(|quota| quota.remaining).or_else(|| documented_daily(provider_id).map(|limit| limit.saturating_sub(used_today)));
+    let resting: Vec<u64> = BLOCKED.lock().map(|blocked| blocked.iter().filter(|(key, (until, _))| key.starts_with(&prefix) && *until > now).map(|(_, (until, _))| until - now).collect()).unwrap_or_default();
+    ProviderCapacity {
+        provider_id: provider_id.to_string(),
+        current,
+        used_today,
+        limit,
+        left,
+        resting_models: resting.len(),
+        back_in: resting.iter().min().map(|seconds| human(*seconds)),
+        resets_in: human(next_day(provider_id, now).saturating_sub(now)),
+    }
+}
+
+/// Every free plan with a saved key (and the one in use), for the meter beside the message box.
+#[tauri::command]
+pub fn free_capacity(state: tauri::State<'_, crate::AppState>) -> Result<Vec<ProviderCapacity>, String> {
+    let current = state.provider.lock().map_err(|e| e.to_string())?.provider_id.clone();
+    let mut ids: Vec<String> = state.provider_keys.lock().map_err(|e| e.to_string())?.keys().filter_map(|key| key.split('\n').next().map(str::to_string)).collect();
+    ids.push(current.clone());
+    ids.sort();
+    ids.dedup();
+    Ok(ids.into_iter().filter(|id| crate::fallback::FREE_PROVIDERS.contains(&id.as_str())).map(|id| capacity(&id, id == current)).collect())
 }
 
 /// Checks the ledger before sending `tokens` to this key: a block (Retry-After, a spent day), an hourly or
@@ -571,6 +665,23 @@ pub async fn refresh(config: &ProviderConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capacity_counts_today_and_what_is_left() {
+        let key = |model: &str| ProviderConfig { provider_id: "modelscope".into(), api_format: "openai-chat".into(), base_url: "https://cap.test/v1".into(), model: model.into(), api_key: "cap-test".into() };
+        note_request(&key("cap/a"), 10);
+        note_request(&key("cap/b"), 10);
+        let before = capacity("modelscope", true);
+        assert!(before.used_today >= 2 && before.current);
+        assert_eq!(before.limit, Some(2_000), "the documented allowance when nothing was reported");
+        assert_eq!(before.left, Some(2_000 - before.used_today));
+        note_daily_exhausted(&key("cap/a"));
+        let after = capacity("modelscope", true);
+        assert_eq!(after.resting_models, 1);
+        assert!(after.back_in.is_some());
+        let unknown = capacity("nvidia-cap-test", false);
+        assert_eq!((unknown.limit, unknown.left, unknown.resting_models), (None, None, 0));
+    }
     use reqwest::header::{HeaderName, HeaderValue};
 
     #[test]

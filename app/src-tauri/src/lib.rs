@@ -387,6 +387,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             usage::usage_totals,
             usage::reset_usage,
             taskstats::task_stats,
+            limits::free_capacity,
             engine::engine_settings,
             engine::set_engine_settings,
             engine::generate_commit_message,
