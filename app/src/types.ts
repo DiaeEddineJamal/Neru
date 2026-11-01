@@ -203,6 +203,12 @@ export interface Source {
 }
 
 export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'ieee' | 'harvard'
+/** The chat card for a research paper Research mode wrote (paper.rs). */
+export interface PaperCard { id: string; title: string; kind: string; words: number; sources: number; format: '' | 'docx' | 'pdf' | 'md' | 'html' | 'tex' }
+export interface PaperSection { heading: string; body: string }
+export interface PaperReference { number: number; text: string; source: Source }
+/** A research paper: Markdown sections with in-text citations already in `style`, and the works cited. */
+export interface Paper { id: string; title: string; kind: string; authors: string[]; affiliation: string; date: string; abstractText: string; keywords: string[]; sections: PaperSection[]; references: PaperReference[]; style: CitationStyle; format: PaperCard['format']; language: string; question: string; words: number; created: number }
 /** A step of Research mode's plan, as research.rs reports it. */
 export interface ResearchStep { label: string; status: 'pending' | 'running' | 'done' | 'error'; detail: string }
 

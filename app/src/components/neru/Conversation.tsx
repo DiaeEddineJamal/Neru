@@ -25,6 +25,7 @@ import { Mascot } from './Mascot'
 import { MermaidBlock, WireframeBlock } from './Diagrams'
 import { Bibliography, ResearchProgress } from './ResearchPanel'
 import { FlashcardsBlock, QuizBlock } from './StudyBlocks'
+import { DocumentCard } from './ArtifactPane'
 import { ErrorNotice } from './ErrorNotice'
 import type { ErrorAction } from '@/lib/friendlyError'
 import type { AgentMode, ChatEntry, PendingView, ResearchStep, Source, SubagentApproval, SubagentProgress, ToolEventStatus } from '../../types'
@@ -160,6 +161,7 @@ export function ResponseMarkdown({ content, sources, idPrefix, onCite, mentions 
       if (tag === 'wireframe') return <WireframeBlock html={source} />
       if (tag === 'flashcards') return <FlashcardsBlock code={source} />
       if (tag === 'quiz') return <QuizBlock code={source} />
+      if (tag === 'neru-document') return <DocumentCard code={source} />
       return <CodeBlock code={source} language={languageForFence(tag)} />
     },
   }}>{sources.length ? linkCitations(content, sources.length) : content}</ReactMarkdown>

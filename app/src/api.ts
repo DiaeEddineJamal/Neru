@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CitationStyle, Source, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
 import type { BoardCard, CheckResult, Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
-import type { OutputStyle, ServerPrompt, ServerResource, SessionDocument, SideAnswer } from './types'
+import type { OutputStyle, Paper, PaperCard, ServerPrompt, ServerResource, SessionDocument, SideAnswer } from './types'
 import type { Route } from './lib/browser'
 
 export const api = {
@@ -208,6 +208,9 @@ export const api = {
   formatBibliography: (sources: Source[], style: CitationStyle, numbered: boolean) => invoke<string[]>('format_bibliography', { sources, style, numbered }),
   exportCitations: (sources: Source[], format: 'bibtex' | 'ris') => invoke<string>('export_citations', { sources, format }),
   saveStudyFile: (path: string, contents: string) => invoke<void>('save_study_file', { path, contents }),
+  saveExportFile: (path: string, base64: string) => invoke<void>('save_export_file', { path, base64 }),
+  listPapers: (sessionId: string) => invoke<PaperCard[]>('list_session_papers', { sessionId }),
+  readPaper: (sessionId: string, id: string) => invoke<Paper>('read_session_paper', { sessionId, id }),
   readImage: (path: string) => invoke<string>('read_image', { path }),
   effortSupported: () => invoke<boolean>('effort_supported'),
   forgetKeys: () => invoke<void>('forget_keys'),

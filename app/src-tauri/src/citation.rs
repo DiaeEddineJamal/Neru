@@ -257,6 +257,33 @@ pub fn bibliography(sources: &[(usize, &Source)], style: &str, numbered: bool) -
     entries
 }
 
+/// An in-text citation for one or more sources: "(Doe & Smith, 2020; Lee et al., 2019)" in APA and
+/// Harvard, "(Doe and Smith 2020)" in Chicago author-date, "(Doe and Smith)" in MLA, "[1], [4]" in IEEE.
+pub fn in_text(group: &[(usize, &Source)], style: &str) -> String {
+    if style == "ieee" {
+        return group.iter().map(|(number, _)| format!("[{number}]")).collect::<Vec<_>>().join(", ");
+    }
+    let one = |source: &Source| {
+        let families: Vec<String> = names(source).into_iter().map(|name| name.family).collect();
+        let who = match families.len() {
+            0 => {
+                let title: String = source.title.split_whitespace().take(4).collect::<Vec<_>>().join(" ");
+                if title.is_empty() { source.domain.clone() } else { format!("“{title}”") }
+            }
+            1 => families[0].clone(),
+            2 => format!("{} {} {}", families[0], if matches!(style, "apa" | "harvard") { "&" } else { "and" }, families[1]),
+            _ => format!("{} et al.", families[0]),
+        };
+        let year = year(source);
+        match style {
+            "mla" => who,
+            "chicago" => format!("{who} {year}"),
+            _ => format!("{who}, {year}"),
+        }
+    };
+    format!("({})", group.iter().map(|(_, source)| one(source)).collect::<Vec<_>>().join("; "))
+}
+
 // ---------- BibTeX and RIS ----------
 
 fn bibtex_escape(text: &str) -> String {
@@ -436,6 +463,20 @@ pub fn export_citations(sources: Vec<Source>, format: String) -> Result<String, 
     }
 }
 
+/// Writes a document export (a research paper as Word, PDF, HTML, LaTeX or Markdown) where the user
+/// chose with the save dialog. The bytes come base64-encoded from the window.
+#[tauri::command]
+pub fn save_export_file(path: String, base64: String) -> Result<(), String> {
+    use base64::Engine;
+    let path = Path::new(&path);
+    let ext = path.extension().map(|ext| ext.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if !path.is_absolute() || !matches!(ext.as_str(), "docx" | "pdf" | "html" | "tex" | "md" | "txt" | "bib" | "ris") {
+        return Err("Save as .docx, .pdf, .html, .tex, .md, .bib or .ris".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(base64.trim()).map_err(|e| e.to_string())?;
+    fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
 /// Writes an export the user placed with the save dialog. Only reference and study files.
 #[tauri::command]
 pub fn save_study_file(path: String, contents: String) -> Result<(), String> {
@@ -450,6 +491,19 @@ pub fn save_study_file(path: String, contents: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn in_text_citations_follow_the_style() {
+        let one = paper();
+        let mut many = paper();
+        many.authors = vec!["Ann Lee".into(), "Bo Kim".into(), "Cy Park".into()];
+        many.year = Some(2019);
+        let group = [(1, &one), (2, &many)];
+        assert_eq!(in_text(&group, "apa"), "(Doe & Smith, 2004; Lee et al., 2019)");
+        assert_eq!(in_text(&group, "chicago"), "(Doe and Smith 2004; Lee et al. 2019)");
+        assert_eq!(in_text(&group, "mla"), "(Doe and Smith; Lee et al.)");
+        assert_eq!(in_text(&group, "ieee"), "[1], [2]");
+    }
 
     fn paper() -> Source {
         Source {

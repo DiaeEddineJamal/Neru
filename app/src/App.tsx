@@ -64,6 +64,8 @@ import { notifyUser } from '@/lib/notify'
 import { actionFor, loadBindings } from '@/lib/shortcuts'
 import { BtwPanel, ComparePanel, type CompareTarget } from './components/neru/SidePanels'
 import { DocumentsPanel } from './components/neru/DocumentsPanel'
+import { ArtifactPane } from './components/neru/ArtifactPane'
+import { closePaper, openPaper, paperIdIn, useOpenPaper } from '@/lib/artifactStore'
 import { SPEC_STEPS } from '@/lib/review'
 import { ShortcutsSettings } from './components/neru/ShortcutsSettings'
 import { OutputStyles } from './components/neru/OutputStyles'
@@ -618,6 +620,9 @@ function App() {
   const [docs, setDocs] = useState<SessionDocument[]>([])
   const [docOpen, setDocOpen] = useState<string | null>(null)
   const [docsShown, setDocsShown] = useState(false)
+  // The research paper open in the document panel (ArtifactPane), if any.
+  const paperOpen = useOpenPaper()
+  useEffect(() => { closePaper() }, [activeSessionId])
   useEffect(() => {
     setDocOpen(null); setDocsShown(false)
     if (isTauri() && activeSessionId) void api.sessionDocuments(activeSessionId).then(setDocs).catch(() => setDocs([]))
@@ -851,6 +856,9 @@ function App() {
       if (!summary?.titled) void api.autoTitleSession(sessionId).then(named => { if (named) setSessions(list => list.map(item => item.id === named.id ? { ...item, title: named.title, titled: true } : item)) }).catch(() => undefined)
       if (notifications && (!here() || !document.hasFocus())) void notifyUser(title, result.pending ? t('Waiting for your approval: {label}', { label: result.pending.label }) : t('Finished. The reply is ready.'))
       if (here()) {
+        // A paper Research mode wrote opens beside the chat, as Claude opens an artifact.
+        const paper = paperIdIn(result.content ?? '')
+        if (paper) openPaper(paper)
         if (!result.pending && surface !== 'chat' && webTouched.current) { webTouched.current = false; setPreviewOffer(true) }
         const finished = liveBy.current[sessionId]
         const files = finished?.drafts.map(draft => ({ ...draft, state: draftState(draft, finished.tools) }))
@@ -1724,7 +1732,7 @@ function App() {
         <button className="button primary small" disabled={trustBusy} onClick={() => void trustOpenProject()}>{trustBusy ? t('Trusting…') : t('Trust this folder')}</button>
       </div>
     </div>}
-    {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''} ${docsShown && activeSessionId ? 'with-review' : ''}`}>
+    {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''} ${paperOpen && activeSessionId ? 'with-artifact' : docsShown && activeSessionId ? 'with-review' : ''}`}>
       {threadOpen
         ? <Conversation onErrorAction={errorAction} previewOffer={previewOffer && !responding} onOpenPreview={openPreview} onDismissPreview={() => setPreviewOffer(false)} messages={messages} live={live} phase={responding ? agentPhase(live, agentMode) : null} busy={responding || busy} pending={pending} pendingStatus={pendingStatus} resolved={resolved} progressNote={progressNote} failed={failed} projectPath={project?.path}
             feedback={feedback} onFeedback={(id, value) => setFeedback(current => { const next = { ...current, [id]: value }; writeStored('neru.feedback', next); return next })}
@@ -1754,7 +1762,8 @@ function App() {
         {chatHome && <div className="chat-ideas">{CHAT_IDEAS.map(idea => <button key={idea.label} type="button" onClick={() => setPrompt(t(idea.prompt))}><idea.icon size={14} strokeWidth={1.75} />{t(idea.label)}</button>)}<button type="button" onClick={() => chooseSurface('code')}><CodeXml size={14} strokeWidth={1.75} />{t('Code')}</button></div>}
       </div>
     </main>}
-    {section === 'home' && docsShown && activeSessionId && <DocumentsPanel sessionId={activeSessionId} documents={docs} open={docOpen} onOpen={setDocOpen} onClose={() => setDocsShown(false)}
+    {section === 'home' && paperOpen && activeSessionId && <ArtifactPane key={paperOpen} sessionId={activeSessionId} id={paperOpen} onError={setError} onNotice={setNotice} />}
+    {section === 'home' && docsShown && !paperOpen && activeSessionId && <DocumentsPanel sessionId={activeSessionId} documents={docs} open={docOpen} onOpen={setDocOpen} onClose={() => setDocsShown(false)}
       onSend={message => sendReview(message)} onApprove={approveDocument} onError={setError} busy={responding || busy || Boolean(pending)} />}
     {section === 'home' && btw && <BtwPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} seed={btw.seed} onClose={() => setBtw(null)} />}
     {compare && <ComparePanel sessionId={activeSessionId} seed={compare.seed} provider={provider} models={composerModels} savedKeys={savedKeys} onKeep={(text, answer, target) => void keepCompared(text, answer, target)} onClose={() => setCompare(null)} onError={setError} />}

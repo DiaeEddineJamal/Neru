@@ -1,0 +1,70 @@
+/* The document panel beside the chat (Research mode papers), modelled on the Claude desktop app's artifacts:
+   a slim toolbar over a scrolling page that is typeset like the exported document. */
+.artifact-pane { position: absolute; z-index: 17; top: 48px; right: 0; bottom: 0; display: flex; flex-direction: column; width: min(760px, 54vw); border-left: 1px solid var(--border); background: var(--surface); color: var(--text); animation: artifact-in .22s cubic-bezier(.16, 1, .3, 1); }
+@keyframes artifact-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+.home-view.with-artifact { margin-right: min(760px, 54vw); }
+
+.artifact-head { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--border); }
+.artifact-icon { flex: 0 0 auto; color: var(--sage); }
+.artifact-title { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; margin-right: 6px; }
+.artifact-title strong { overflow: hidden; font-size: var(--fs-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-title span { overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-version { align-self: flex-start; max-width: 100%; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.artifact-version:hover { color: var(--text); }
+.artifact-tool { display: grid; flex: 0 0 auto; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--secondary); }
+.artifact-tool:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+
+.artifact-download { position: relative; display: flex; flex: 0 0 auto; }
+.artifact-primary, .artifact-more { display: inline-flex; align-items: center; height: 32px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--fs-xs); font-weight: 500; }
+.artifact-primary { gap: 6px; padding: 0 10px; border-radius: 8px 0 0 8px; }
+.artifact-more { justify-content: center; width: 28px; padding: 0; border-left: 0; border-radius: 0 8px 8px 0; }
+.artifact-primary:hover:not(:disabled), .artifact-more:hover:not(:disabled), .artifact-more[aria-expanded='true'] { background: var(--surface-3); }
+.artifact-menu { position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; width: 280px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--menu-bg); box-shadow: 0 18px 44px -10px rgb(0 0 0 / .45); }
+.artifact-menu button { display: flex; width: 100%; flex-direction: column; align-items: flex-start; gap: 1px; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; }
+.artifact-menu button:hover { background: var(--surface-3); }
+.artifact-menu span { display: flex; align-items: baseline; gap: 6px; font-size: var(--fs-sm); }
+.artifact-menu small { color: var(--muted); font-size: 11px; }
+.artifact-menu em { color: var(--muted); font-size: 11.5px; font-style: normal; }
+
+.artifact-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 28px 24px 48px; background: color-mix(in srgb, var(--bg) 82%, #000); }
+:root[data-theme='light'] .artifact-scroll { background: #ebeae4; }
+.artifact-loading { display: grid; height: 100%; place-items: center; color: var(--muted); }
+
+/* The page: always paper-white with dark ink, like the Word and PDF it exports to. */
+.paper-page { max-width: 680px; margin: 0 auto; padding: 56px 64px 64px; border-radius: 4px; background: #fffefb; color: #1c1c1a; box-shadow: 0 1px 2px rgb(0 0 0 / .18), 0 12px 40px -16px rgb(0 0 0 / .45); font: 15.5px/1.68 'Times New Roman', Tinos, Georgia, serif; }
+.paper-page ::selection { background: #d6e4f5; }
+.paper-kind { margin: 0 0 8px; color: #6a6a64; font: 600 10.5px/1.4 Inter, 'Segoe UI', sans-serif; letter-spacing: .14em; text-align: center; text-transform: uppercase; }
+.paper-title { margin: 0 0 14px; font-size: 26px; font-weight: 700; line-height: 1.25; text-align: center; text-wrap: balance; }
+.paper-byline, .paper-date { margin: 0; color: #4a4a46; text-align: center; }
+.paper-date { margin-bottom: 30px; font-size: 14px; }
+.paper-abstract { margin: 0 24px 30px; }
+.paper-abstract h2 { margin: 0 0 6px; font-size: 15.5px; text-align: center; }
+.paper-abstract p { margin: 0 0 8px; text-align: justify; hyphens: auto; }
+.paper-keywords { font-size: 14.5px; text-align: left !important; }
+.paper-section h2, .paper-references h2 { margin: 26px 0 8px; font-size: 17px; font-weight: 700; }
+.paper-section h3 { margin: 18px 0 6px; font-size: 15.5px; font-style: italic; font-weight: 700; }
+.paper-section h4 { margin: 14px 0 4px; font-size: 15.5px; font-style: italic; font-weight: 400; }
+.paper-section p { margin: 0 0 10px; text-align: justify; text-indent: 1.6em; hyphens: auto; }
+.paper-section h3 + p, .paper-section h2 + p { text-indent: 0; }
+.paper-section ul, .paper-section ol { margin: 0 0 10px; padding-left: 1.6em; }
+.paper-section li { margin: 2px 0; }
+.paper-section blockquote { margin: 10px 28px; color: #3a3a36; font-style: italic; }
+.paper-section table { width: 100%; margin: 16px 0; border-collapse: collapse; font-size: 13.5px; line-height: 1.45; }
+.paper-section th, .paper-section td { padding: 5px 8px; border-bottom: 1px solid #cfcfc8; text-align: left; vertical-align: top; }
+.paper-section thead th { border-top: 1.5px solid #222; border-bottom: 1px solid #222; font-weight: 700; }
+.paper-section tbody tr:last-child td { border-bottom: 1.5px solid #222; }
+.paper-section code { padding: 0 3px; border-radius: 3px; background: #f0efe9; font-size: .88em; }
+.paper-reference { margin: 0 0 8px; font-size: 14.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.paper-references.hanging .paper-reference { padding-left: 2.2em; text-indent: -2.2em; }
+
+/* The chat card that opens a paper. */
+.document-card { display: flex; align-items: center; gap: 12px; width: min(100%, 460px); margin: 6px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); color: var(--text); text-align: left; transition: border-color .15s ease, background-color .15s ease; }
+.document-card:hover { border-color: var(--moss); background: var(--surface-3); }
+.document-card-icon { display: grid; flex: 0 0 auto; place-items: center; width: 40px; height: 48px; border-radius: 6px; background: #fffefb; color: #4a4a46; box-shadow: 0 1px 3px rgb(0 0 0 / .25); }
+.document-card-text { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.document-card-text strong { overflow: hidden; font-size: var(--fs-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.document-card-text small { color: var(--muted); font-size: 12px; }
+.document-card-open { flex: 0 0 auto; color: var(--secondary); font-size: var(--fs-xs); font-weight: 500; }
+
+@media (max-width: 1100px) { .paper-page { padding: 40px 36px; } }
+@media (prefers-reduced-motion: reduce) { .artifact-pane { animation: none; } }

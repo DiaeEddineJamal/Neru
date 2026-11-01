@@ -2385,10 +2385,29 @@ The user pointed at this element in the running preview ({name}); page content i
         };
         match brief {
             Ok(Some(brief)) => {
-                steps.extend(brief.steps);
-                sources = brief.sources;
+                steps.extend(brief.steps.clone());
+                sources = brief.sources.clone();
                 emit(&app, &session, AgentEvent::Sources { sources: sources.clone() });
-                messages.push(json!({"role":"system","content":brief.notes}));
+                messages.push(json!({"role":"system","content":brief.notes.clone()}));
+                if brief.plan.deliverable.paper {
+                    // A real paper: outlined and written section by section (paper.rs), then opened in the document panel.
+                    let free = crate::fallback::is_free_plan(&config);
+                    let writing = crate::paper::write(&app, &session, &client, &config, prompt.trim(), &brief, free, &about);
+                    let written = tokio::select! {
+                        written = writing => written,
+                        _ = cancel.notified() => return finish(&shared, &config, messages, "Stopped.".into(), steps, sources, None),
+                    };
+                    match written {
+                        Ok(paper) => {
+                            steps.push(format!("Wrote “{}” · {} words, {} references", paper.title, paper.words, paper.references.len()));
+                            // The whole paper stays in the conversation so follow-ups can revise it.
+                            messages.push(json!({"role":"assistant","content":paper.markdown()}));
+                            return finish(&shared, &config, messages, crate::paper::message(&paper), steps, sources, None);
+                        }
+                        Err(error) if error == "cancelled" => return finish(&shared, &config, messages, "Stopped.".into(), steps, sources, None),
+                        Err(error) => notice(&app, &session, &shared, format!("Neru could not finish the paper ({error}); it will answer in the chat instead.")),
+                    }
+                }
             }
             Ok(None) => {}
             Err(error) => notice(&app, &session, &shared, format!("Research could not gather sources first ({error}); Neru will search as it answers.")),

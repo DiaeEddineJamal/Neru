@@ -53,6 +53,39 @@ pub struct Plan {
     pub field: String,
     pub from_year: Option<i32>,
     pub to_year: Option<i32>,
+    /// What the student wants back (paper.rs).
+    pub deliverable: Deliverable,
+}
+
+/// A full academic paper, or a short cited answer for a quick follow-up.
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct Deliverable {
+    pub paper: bool,
+    /// "literature review", "research paper", "essay", "report"…
+    pub kind: String,
+    /// The file the student asked for: docx, pdf, md, html or tex; empty when they named none.
+    pub format: String,
+    /// Target length in words; 0 when they named none.
+    pub words: usize,
+    /// The language to write in, as the student wrote.
+    pub language: String,
+}
+
+/// Reads the planner's deliverable fields; a request for a file or a page count means a paper.
+fn deliverable(value: &Value) -> Deliverable {
+    let text = |key: &str| value[key].as_str().unwrap_or("").trim().to_string();
+    let format = match text("format").to_lowercase().trim_start_matches('.') {
+        "docx" | "doc" | "word" => "docx",
+        "pdf" => "pdf",
+        "md" | "markdown" => "md",
+        "html" | "web" => "html",
+        "tex" | "latex" => "tex",
+        _ => "",
+    }
+    .to_string();
+    let words = value["words"].as_u64().or_else(|| value["pages"].as_u64().map(|pages| pages * 300)).unwrap_or(0).min(12_000) as usize;
+    let paper = value["deliverable"].as_str().map(|kind| kind.eq_ignore_ascii_case("paper")).unwrap_or(true) || !format.is_empty() || words > 0;
+    Deliverable { paper, kind: text("paper_type"), format, words, language: text("language") }
 }
 
 /// Reads the planner's reply: JSON when it complied, else a bulleted or numbered list.
@@ -72,6 +105,7 @@ pub fn parse_plan(text: &str, limit: usize) -> Plan {
             field: value["field"].as_str().unwrap_or("").trim().to_string(),
             from_year: value["from_year"].as_i64().map(|year| year as i32),
             to_year: value["to_year"].as_i64().map(|year| year as i32),
+            deliverable: deliverable(&value),
         },
         None => Plan {
             questions: body
@@ -79,6 +113,7 @@ pub fn parse_plan(text: &str, limit: usize) -> Plan {
                 .map(|line| line.trim().trim_start_matches(['-', '*', '•']).trim_start_matches(|c: char| c.is_ascii_digit()).trim_start_matches(['.', ')']).trim().to_string())
                 .filter(|line| line.len() > 8 && !line.ends_with(':'))
                 .collect(),
+            deliverable: Deliverable { paper: true, ..Deliverable::default() },
             ..Plan::default()
         },
     };
@@ -93,21 +128,25 @@ pub struct Brief {
     pub notes: String,
     pub sources: Vec<Source>,
     pub steps: Vec<String>,
+    /// The plan, for the paper's method section and what to deliver.
+    pub plan: Plan,
+    /// The live step list, for the paper writer to continue.
+    pub live: Vec<Step>,
 }
 
-struct Progress<'a> {
-    app: &'a AppHandle,
-    session: &'a str,
-    steps: Vec<Step>,
+pub(crate) struct Progress<'a> {
+    pub(crate) app: &'a AppHandle,
+    pub(crate) session: &'a str,
+    pub(crate) steps: Vec<Step>,
 }
 
 impl Progress<'_> {
-    fn add(&mut self, label: impl Into<String>, status: &str) -> usize {
+    pub(crate) fn add(&mut self, label: impl Into<String>, status: &str) -> usize {
         self.steps.push(Step { label: label.into(), status: status.into(), detail: String::new() });
         self.send();
         self.steps.len() - 1
     }
-    fn set(&mut self, index: usize, status: &str, detail: impl Into<String>) {
+    pub(crate) fn set(&mut self, index: usize, status: &str, detail: impl Into<String>) {
         if let Some(step) = self.steps.get_mut(index) {
             step.status = status.into();
             step.detail = detail.into();
@@ -118,12 +157,12 @@ impl Progress<'_> {
         emit(self.app, self.session, AgentEvent::Research { steps: self.steps.clone() });
     }
     /// Lines for the finished message's step list.
-    fn summary(&self) -> Vec<String> {
+    pub(crate) fn summary(&self) -> Vec<String> {
         self.steps.iter().map(|step| if step.status == "error" { format!("{} (failed)", step.label) } else if step.detail.is_empty() { step.label.clone() } else { format!("{} · {}", step.label, step.detail) }).collect()
     }
 }
 
-async fn ask_model(client: &reqwest::Client, config: &ProviderConfig, system: &str, user: String) -> Result<String, String> {
+pub(crate) async fn ask_model(client: &reqwest::Client, config: &ProviderConfig, system: &str, user: String) -> Result<String, String> {
     let cancel = tokio::sync::Notify::new();
     let mut visible = String::new();
     let messages = [json!({"role":"system","content":system}), json!({"role":"user","content":user})];
@@ -192,7 +231,7 @@ pub async fn gather(app: &AppHandle, session: &str, client: &reqwest::Client, co
     let mut progress = Progress { app, session, steps: Vec::new() };
     let row = progress.add("Planning sub-questions", "running");
     let system = format!(
-        "You plan literature research for a university student. Split their message into at most {} focused sub-questions, each a short keyword query that a paper search engine (OpenAlex, Semantic Scholar, arXiv, PubMed) can answer. Reply with JSON only: {{\"questions\": [\"…\"], \"field\": \"the academic discipline\", \"from_year\": null, \"to_year\": null}}. Set years only when the student asks for a period. Write queries in English. If the message needs no new literature (thanks, a request to reformat or shorten the previous answer, a study command about an attached file), reply {{\"questions\": []}}.{about_user}",
+        "You plan literature research for a university student. Split their message into at most {} focused sub-questions, each a short keyword query that a paper search engine (OpenAlex, Semantic Scholar, arXiv, PubMed) can answer. Reply with JSON only: {{\"questions\": [\"…\"], \"field\": \"the academic discipline\", \"from_year\": null, \"to_year\": null, \"deliverable\": \"paper\", \"paper_type\": \"literature review\", \"format\": \"\", \"words\": 0, \"language\": \"English\"}}. Set years only when the student asks for a period. Write queries in English. deliverable is \"paper\" for any research question or request for a paper, review, essay, report or document (the default), and \"answer\" only for a quick factual follow-up about earlier research. paper_type names the genre they asked for (literature review, research paper, essay, report, thesis chapter…). format is the file they asked for: docx (Word), pdf, md, html or tex (LaTeX), or empty when they named none. words is the length they asked for (pages × 300), else 0. language is the language of their message. If the message needs no new literature (thanks, a request to reformat or shorten the previous answer, a study command about an attached file), reply {{\"questions\": []}}.{about_user}",
         budget.questions
     );
     let reply = timeout_at(deadline, ask_model(client, config, &system, question.chars().take(4_000).collect())).await.map_err(|_| "Planning took too long".to_string())?;
@@ -201,7 +240,7 @@ pub async fn gather(app: &AppHandle, session: &str, client: &reqwest::Client, co
         // Without a plan the question itself is the one search.
         Err(error) => {
             progress.set(row, "error", error);
-            Plan { questions: vec![question.chars().take(200).collect()], ..Plan::default() }
+            Plan { questions: vec![question.chars().take(200).collect()], deliverable: Deliverable { paper: true, ..Deliverable::default() }, ..Plan::default() }
         }
     };
     if plan.questions.is_empty() {
@@ -285,8 +324,10 @@ pub async fn gather(app: &AppHandle, session: &str, client: &reqwest::Client, co
     if !excerpts.is_empty() {
         notes.push_str(&format!("\n\n### Full-text excerpts\n\n{}", excerpts.join("\n\n")));
     }
-    progress.add("Writing the report", "running");
-    Ok(Some(Brief { notes: scholar::clip(&notes, budget.notes_chars), sources, steps: progress.summary() }))
+    if !plan.deliverable.paper {
+        progress.add("Writing the answer", "running");
+    }
+    Ok(Some(Brief { notes: scholar::clip(&notes, budget.notes_chars), sources, steps: progress.summary(), plan, live: progress.steps }))
 }
 
 #[cfg(test)]

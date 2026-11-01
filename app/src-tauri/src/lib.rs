@@ -27,6 +27,7 @@ mod mcp;
 mod models;
 mod notebook;
 mod oauth;
+mod paper;
 mod policy;
 mod preview;
 mod privacy;
@@ -441,6 +442,9 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             extras::get_profile,
             extras::set_profile,
             extras::set_personalization,
+            paper::list_session_papers,
+            paper::read_session_paper,
+            citation::save_export_file,
             agent::run_task_command,
             agent::allow_pending_always,
             agent::session_context,
