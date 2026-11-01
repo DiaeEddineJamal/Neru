@@ -74,7 +74,7 @@ pub fn describe(root: &Path) -> String {
     match kind(root) {
         Kind::Bubblewrap => "bubblewrap: writes only inside the project, temporary folders and package caches".into(),
         Kind::Seatbelt => "sandbox-exec: writes only inside the project, temporary folders and package caches".into(),
-        Kind::JobObject if write_limit() && job::shell_runs_low() => "a Windows job object at Low integrity: writes only inside the project and a temporary folder; the process tree is capped and ended together".into(),
+        Kind::JobObject if write_limit() && low_shell() => "a Windows job object at Low integrity: writes only inside the project and a temporary folder; the process tree is capped and ended together".into(),
         Kind::JobObject => "a Windows job object: the whole process tree is contained, capped and ended together".into(),
         Kind::None if turned_off(root) => "off (turned off in settings or NERU_SANDBOX)".into(),
         Kind::None if cfg!(target_os = "linux") => "not available: install bubblewrap (sudo apt install bubblewrap) to confine commands".into(),
@@ -88,6 +88,14 @@ pub fn failure_hint(output: &str) -> Option<&'static str> {
     ["read-only file system", "operation not permitted", "sandbox", "deny file-write"].iter().any(|marker| lower.contains(marker)).then_some(
         "[This command ran in Neru's sandbox, which allows writes only inside the project, temporary folders and package caches. If it must write elsewhere, run it again with outside_sandbox true; the user is asked first.]",
     )
+}
+
+/// Whether the shell can start at Low integrity: Windows only; other systems have no job objects.
+fn low_shell() -> bool {
+    #[cfg(windows)]
+    return job::shell_runs_low();
+    #[cfg(not(windows))]
+    false
 }
 
 /// Whether Windows commands also get the Low-integrity write limit.
