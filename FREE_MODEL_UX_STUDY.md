@@ -91,7 +91,12 @@ Original plan:
   - `toolproto::fill_aliases` renames misnamed arguments (`pattern`→`query`, `filePath`→`path`, `old`→`old_string`, …) before asking for a repair request. It only renames when exactly one argument fits and the name is not one of the tool's own parameters.
   - `tools::not_found_message` scores whole blocks, anchored on their first, last and longest lines, and returns the closest block with two lines either side, numbered, telling the model it can copy from there without reading the file.
   - Eval: two new scenarios (`alias-args`, `edit-miss-block`) each cost one request less: 3→2 and 4→3, in both profiles. Across the 24 runs: 62→58.
-- **3c. File summaries cached by content hash (M).** Store a one-line purpose and key exports per file, written on the small-model lane or from tree-sitter, keyed by hash and reused across sessions. These feed the map and the context pack.
+- **3c. File descriptions (S, changed from the plan).** ✅ done
+  - Each file's own first sentence about itself (`//!`, a leading `//`, `/* */` or `# ` comment, a Python docstring, a Markdown title) is kept in its index record (`FileRec::purpose`, from `index::file_purpose`). Licence headers, shebangs, `#[...]`, `#include` and tool directives are skipped.
+  - Shown after `#` in the project map's file lines and in the ranked definitions. The context pack also lists files that matched but did not fit ("Also related, not included: path  # purpose"), so the model can pick one to read instead of searching again.
+  - **Changed from the plan:** no model-written summaries and no separate hash-keyed disk cache. A model summary costs a request per file, which is exactly what free plans run short of. Reading a header comment costs nothing, and the index already re-reads a file when it changes, so the description never goes stale.
+  - Coverage on Neru's own code: 81 of 173 source files have a usable header comment. Projects without header comments get little from this.
+  - Eval unchanged (62): the scripted scenarios use tiny files without descriptions.
 
 ### P4. Model registry updated without a release (M) ✅ done
 
@@ -109,7 +114,7 @@ Original plan:
 
 ## Suggested order
 
-P0 → 3b → P1 → 3a → P2 → P4 → 3c. P0 comes first because it makes every other item measurable. 3b is the smallest win with immediate effect.
+P0 → 3b → P1 → 3a → P2 → P4 → 3c, all done; still open: the per-task estimate (P2) and a pack for follow-up messages (3a). P0 comes first because it makes every other item measurable. 3b is the smallest win with immediate effect.
 
 ## Open decisions
 

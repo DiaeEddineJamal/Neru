@@ -127,6 +127,9 @@ pub struct FileRec {
     /// Whether the trigram data is complete; a text file that is not is scanned by every search.
     pub indexed: bool,
     pub symbols: Vec<Symbol>,
+    /// What the file says it is for: the first sentence of its leading doc comment, module docstring or
+    /// Markdown title. Empty when it says nothing. Refreshed with the record whenever the file changes.
+    pub purpose: String,
     /// Sorted, deduplicated lowercase trigrams of the content.
     tri: Vec<u32>,
 }
@@ -687,14 +690,16 @@ impl Index {
                 for rec in sources.iter().take(60) {
                     let name = rec.path.rsplit('/').next().unwrap_or(&rec.path);
                     let top: Vec<&Symbol> = rec.symbols.iter().filter(|s| s.depth == 0).collect();
-                    if top.is_empty() {
+                    if top.is_empty() && rec.purpose.is_empty() {
                         plain.push(name.to_string());
+                    } else if top.is_empty() {
+                        r2.push_str(&format!("  {name} ({}){}\n", rec.lines, described(rec)));
                     } else {
                         let mut list: Vec<String> = top.iter().take(8).map(|s| s.name.clone()).collect();
                         if top.len() > 8 {
                             list.push(format!("+{}", top.len() - 8));
                         }
-                        r2.push_str(&format!("  {name} ({}) {}\n", rec.lines, list.join(", ")));
+                        r2.push_str(&format!("  {name} ({}) {}{}\n", rec.lines, list.join(", "), described(rec)));
                     }
                 }
                 if !plain.is_empty() || assets > 0 {
@@ -708,7 +713,7 @@ impl Index {
             })
             .collect();
         let header = format!(
-            "{} files in {} folders under {}. Names in a line are top-level symbols; use project_map with path for a folder's detail, outline for line numbers.\n",
+            "{} files in {} folders under {}. Names in a line are top-level symbols, and text after # is the file's own description; use project_map with path for a folder's detail, outline for line numbers.\n",
             total,
             sections.len(),
             if prefix.is_empty() { "the project" } else { prefix }
@@ -869,7 +874,7 @@ fn scan_near(root: &Path, target: &Path) -> Vec<Stat> {
 }
 
 fn analyze(root: &Path, stat: &Stat, budget: Option<&AtomicU64>) -> FileRec {
-    let mut rec = FileRec { path: stat.path.clone(), size: stat.size, mtime: stat.mtime, lang: language(&stat.path), lines: 0, text: false, indexed: false, symbols: Vec::new(), tri: Vec::new() };
+    let mut rec = FileRec { path: stat.path.clone(), size: stat.size, mtime: stat.mtime, lang: language(&stat.path), lines: 0, text: false, indexed: false, symbols: Vec::new(), purpose: String::new(), tri: Vec::new() };
     if stat.size == 0 || stat.size > MAX_INDEXED_BYTES || is_binary_path(&stat.path) {
         return rec;
     }
@@ -887,8 +892,91 @@ fn analyze(root: &Path, stat: &Stat, budget: Option<&AtomicU64>) -> FileRec {
         let text = String::from_utf8_lossy(&bytes);
         // Real declarations from tree-sitter where Neru has the grammar; the regex outline elsewhere.
         rec.symbols = crate::repomap::symbols(&stat.path, &text).unwrap_or_else(|| extract_symbols(rec.lang, &text));
+        rec.purpose = file_purpose(&stat.path, &text);
     }
     rec
+}
+
+/// The first sentence a file opens with about itself (`//!`, a leading `//`, `/* */` or `#` comment, a
+/// Python docstring, a Markdown title), so maps can say what a file is for without anyone reading it.
+/// Licence headers, shebangs and tool directives are skipped.
+/// `  # what the file is for`, or nothing, for the end of a map line.
+pub fn described(rec: &FileRec) -> String {
+    if rec.purpose.is_empty() { String::new() } else { format!("  # {}", rec.purpose) }
+}
+
+pub fn file_purpose(path: &str, text: &str) -> String {
+    let markdown = path.ends_with(".md") || path.ends_with(".mdx");
+    let noise = |line: &str| {
+        let lower = line.to_lowercase();
+        line.starts_with("#!") || line.starts_with("#![") || line.starts_with("// @ts-") || line.starts_with("//go:") || lower.starts_with("// eslint") || lower.starts_with("/* eslint") || lower.starts_with("# -*-") || lower.contains("spdx-license") || matches!(line.trim_end_matches(';'), "'use strict'" | "\"use strict\"" | "'use client'" | "\"use client\"" | "'use server'" | "\"use server\"")
+    };
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty() && !noise(line)).take(30).peekable();
+    let Some(&first) = lines.peek() else { return String::new() };
+    let mut block: Vec<String> = Vec::new();
+    if markdown {
+        if let Some(title) = first.strip_prefix('#') {
+            block.push(title.trim_start_matches('#').trim().to_string());
+        }
+    } else if first.starts_with("\"\"\"") || first.starts_with("'''") {
+        let quote = &first[..3];
+        let rest = &first[3..];
+        if let Some((inside, _)) = rest.split_once(quote) {
+            block.push(inside.to_string());
+        } else {
+            block.push(rest.to_string());
+            lines.next();
+            for line in lines.by_ref() {
+                if let Some((inside, _)) = line.split_once(quote) {
+                    block.push(inside.to_string());
+                    break;
+                }
+                block.push(line.to_string());
+            }
+        }
+    } else if first.starts_with("/*") {
+        for line in lines.by_ref() {
+            let end = line.contains("*/");
+            block.push(line.trim_start_matches("/**").trim_start_matches("/*").split("*/").next().unwrap_or("").trim_start_matches('*').trim().to_string());
+            if end {
+                break;
+            }
+        }
+    } else {
+        // `#` and `--` only with a space after them: `#[derive]`, `#include` and `--flag` are not comments.
+        let marker = if first.starts_with("//!") {
+            "//!"
+        } else if first.starts_with("//") && !first.starts_with("///") {
+            "//"
+        } else if first.starts_with("# ") {
+            "#"
+        } else if first.starts_with("-- ") {
+            "--"
+        } else {
+            ""
+        };
+        if marker.is_empty() {
+            return String::new();
+        }
+        for line in lines.by_ref() {
+            let Some(rest) = line.strip_prefix(marker) else { break };
+            block.push(rest.trim_start_matches(['!', '/']).trim().to_string());
+        }
+    }
+    let joined = block.iter().map(|line| line.trim()).filter(|line| !line.is_empty()).collect::<Vec<_>>().join(" ");
+    let lower = joined.to_lowercase();
+    if lower.contains("copyright") || lower.contains("license") || lower.contains("licence") || lower.starts_with("auto-generated") || lower.starts_with("generated") {
+        return String::new();
+    }
+    // The first sentence, cut at a word near 100 characters.
+    let sentence = joined.split_inclusive(". ").next().unwrap_or(&joined).trim();
+    let sentence = if sentence.chars().count() > 100 {
+        let cut: String = sentence.chars().take(100).collect();
+        format!("{}…", cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head))
+    } else {
+        sentence.to_string()
+    };
+    if sentence.chars().filter(|c| c.is_alphabetic()).count() < 8 { String::new() } else { sentence }
 }
 
 fn analyze_all(root: &Path, stats: &[Stat], progress: Option<&AtomicUsize>, budget: Option<&AtomicU64>) -> Vec<FileRec> {
@@ -1239,6 +1327,11 @@ impl Handle {
         self.touch();
         self.refresh_if_stale();
         self.read().outline(path.trim_matches('/'))
+    }
+
+    /// What the file says it is for (`FileRec::purpose`), when it says anything.
+    pub fn purpose(&self, path: &str) -> Option<String> {
+        self.read().file(path.trim_matches('/')).map(|rec| rec.purpose.clone()).filter(|purpose| !purpose.is_empty())
     }
 
     pub fn map(&self, prefix: &str, budget: usize) -> String {
@@ -1620,6 +1713,23 @@ pub async fn search_files(query: String, limit: Option<usize>, state: State<'_, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn files_describe_themselves_in_their_first_sentence() {
+        assert_eq!(file_purpose("src/limits.rs", "//! What providers report about a model's size. Feeds the meter.\n//! More text.\n\nuse std::fs;\n"), "What providers report about a model's size.");
+        assert_eq!(file_purpose("src/cart.ts", "'use client'\n/**\n * Cart totals with discounts and tax.\n */\nexport function total() {}\n"), "Cart totals with discounts and tax.");
+        assert_eq!(file_purpose("app/db.py", "#!/usr/bin/env python\n\"\"\"Database helpers for the billing service.\"\"\"\nimport os\n"), "Database helpers for the billing service.");
+        assert_eq!(file_purpose("tools/sync.py", "# Syncs invoices from the old system\n# every night.\nimport os\n"), "Syncs invoices from the old system every night.");
+        assert_eq!(file_purpose("README.md", "# Neru\n\nA coding agent.\n"), "", "a title too short to say anything");
+        assert_eq!(file_purpose("docs/setup.md", "# Setting up the development machine\n"), "Setting up the development machine");
+        // Licence headers, attributes and directives are not descriptions.
+        assert_eq!(file_purpose("a.js", "/*\n * Copyright 2024 Someone. MIT License.\n */\nexport {}\n"), "");
+        assert_eq!(file_purpose("b.rs", "#[derive(Debug, Clone, PartialEq)]\npub struct Thing;\n"), "");
+        assert_eq!(file_purpose("c.c", "#include <stdio.h>\nint main() {}\n"), "");
+        assert_eq!(file_purpose("d.ts", "export const x = 1\n// A comment further down the file\n"), "");
+        let long = file_purpose("e.rs", &format!("//! {}\n", "word ".repeat(40)));
+        assert!(long.ends_with('…') && long.chars().count() <= 101, "{long}");
+    }
 
     fn temp_project(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("neru-index-{name}-{}", uuid::Uuid::new_v4()));

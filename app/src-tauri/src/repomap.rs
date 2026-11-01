@@ -351,7 +351,7 @@ pub fn render(root: &Path, records: &[&FileRec], focus_extra: &[String], budget:
     for path in order {
         let Some(record) = by_path.get(path) else { continue };
         let names = &chosen[path];
-        let mut block = format!("{path}:\n");
+        let mut block = format!("{path}:{}\n", crate::index::described(record));
         let mut symbols: Vec<&Symbol> = record.symbols.iter().filter(|s| names.contains(&s.name.as_str())).collect();
         symbols.sort_by_key(|s| s.line);
         symbols.dedup_by_key(|s| (s.name.clone(), s.line));
