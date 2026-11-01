@@ -42,7 +42,7 @@ pub(crate) const READ_TOOLS: &str = r#"[
 pub(crate) fn is_parallel_read(name: &str) -> bool {
     matches!(
         name,
-        "list_directory" | "read_file" | "read_files" | "search_text" | "find_files" | "project_map" | "find_symbol" | "git_status" | "git_diff" | "read_skill" | "web_search" | "fetch_url" | "diagnostics" | "semantic_search"
+        "list_directory" | "read_file" | "read_files" | "search_text" | "find_files" | "project_map" | "find_symbol" | "git_status" | "git_diff" | "read_skill" | "web_search" | "fetch_url" | "diagnostics" | "semantic_search" | "search_papers" | "get_paper" | "read_paper"
     )
 }
 

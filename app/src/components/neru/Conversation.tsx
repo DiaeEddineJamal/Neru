@@ -23,15 +23,17 @@ import { api } from '../../api'
 import { t } from '../../i18n'
 import { Mascot } from './Mascot'
 import { MermaidBlock, WireframeBlock } from './Diagrams'
+import { Bibliography, ResearchProgress } from './ResearchPanel'
+import { FlashcardsBlock, QuizBlock } from './StudyBlocks'
 import { ErrorNotice } from './ErrorNotice'
 import type { ErrorAction } from '@/lib/friendlyError'
-import type { AgentMode, ChatEntry, PendingView, Source, SubagentApproval, SubagentProgress, ToolEventStatus } from '../../types'
+import type { AgentMode, ChatEntry, PendingView, ResearchStep, Source, SubagentApproval, SubagentProgress, ToolEventStatus } from '../../types'
 
 /** A step of the reply. `agent` carries a sub-agent's live progress; `since` is when it started, for a ticking clock. */
 export interface LiveTool { id: string; label: string; status: ToolEventStatus; agent?: SubagentProgress & { since: number } }
 /** A file the model is writing, streamed from its unfinished tool call. */
 export interface LiveDraft { id: string; path: string; content: string; edit?: boolean; state?: FileWriteState }
-export interface LiveResponse { text: string; tools: LiveTool[]; sources: Source[]; drafts: LiveDraft[]; reasoning: number; thinking?: string }
+export interface LiveResponse { text: string; tools: LiveTool[]; sources: Source[]; drafts: LiveDraft[]; reasoning: number; thinking?: string; research?: ResearchStep[] }
 /** A settled approval, shown after the message that was last when it was decided. */
 export interface ResolvedApproval { id: string; after: string | null; pending: PendingView; status: ToolApprovalStatus }
 /** A line in the thread for something that happened to the session: a model switch, a compaction. */
@@ -156,6 +158,8 @@ export function ResponseMarkdown({ content, sources, idPrefix, onCite, mentions 
       const source = String(props.children ?? '').replace(/\n$/, '')
       if (tag === 'mermaid') return <MermaidBlock code={source} />
       if (tag === 'wireframe') return <WireframeBlock html={source} />
+      if (tag === 'flashcards') return <FlashcardsBlock code={source} />
+      if (tag === 'quiz') return <QuizBlock code={source} />
       return <CodeBlock code={source} language={languageForFence(tag)} />
     },
   }}>{sources.length ? linkCitations(content, sources.length) : content}</ReactMarkdown>
@@ -393,8 +397,8 @@ export function TodoPanel({ todos }: { todos: { content: string; status: string 
   </motion.div>
 }
 
-function AssistantMessage({ id, content, sources, tools, drafts = [], thinking = '', status, live, feedback, onFeedback, onRetry, footer }: {
-  id?: string; content: string; sources: Source[]; tools: LiveTool[]; drafts?: LiveDraft[]; thinking?: string; status: 'streaming' | 'complete' | 'error'; live: boolean
+function AssistantMessage({ id, content, sources, tools, drafts = [], thinking = '', research = [], status, live, feedback, onFeedback, onRetry, footer }: {
+  id?: string; content: string; sources: Source[]; tools: LiveTool[]; drafts?: LiveDraft[]; thinking?: string; research?: ResearchStep[]; status: 'streaming' | 'complete' | 'error'; live: boolean
   feedback?: StreamingResponseFeedback; onFeedback?: (value: StreamingResponseFeedback) => void; onRetry?: () => void; footer?: ReactNode
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false)
@@ -403,11 +407,13 @@ function AssistantMessage({ id, content, sources, tools, drafts = [], thinking =
     <span className="message-avatar"><Mascot size={36} /></span>
     <div className="message-body" data-slot="message-content">
       <Thinking text={thinking} live={live && !content && tools.length === 0} />
+      {live && <ResearchProgress steps={research} live={live} />}
       <ToolSteps tools={tools} live={live} />
       <CodeDrafts drafts={drafts} tools={tools} />
       {(content || status !== 'streaming') && <StreamingResponse status={status} copyText={content} onRetry={onRetry} sources={toCitations(sources)} sourceIdPrefix={idPrefix} sourcesOpen={sourcesOpen} onSourcesOpenChange={setSourcesOpen} feedback={feedback} onFeedbackChange={onFeedback} announce={false} contentClassName={RESPONSE_PROSE}>
         <ResponseMarkdown content={content} sources={sources} idPrefix={idPrefix} onCite={() => setSourcesOpen(true)} />
       </StreamingResponse>}
+      {status !== 'streaming' && <Bibliography sources={sources} />}
       {footer}
     </div>
   </Message>
@@ -611,7 +617,7 @@ export function Conversation(props: ConversationProps) {
       : <AssistantMessage key={entry.id} id={entry.id} content={entry.content} sources={entry.sources ?? []} tools={(entry.steps ?? []).map((label, index) => ({ id: `${entry.id}-${index}`, label, status: label.endsWith('(failed)') ? 'error' : 'done' }))} drafts={entry.files} thinking={entry.thinking} status="complete" live={false} feedback={props.feedback[entry.id] ?? null} onFeedback={value => props.onFeedback(entry.id, value)} />, ...settledAfter(entry.id)] })}
     {resolved.filter(item => item.after !== null && !known.has(item.after)).map(item => <div className="approval-row" key={item.id}><ApprovalCard pending={item.pending} status={item.status} projectPath={props.projectPath} /></div>)}
     {props.progressNote && <NoteLine text={props.progressNote} working />}
-    {live && <AssistantMessage content={live.text} sources={live.sources} tools={live.tools} drafts={live.drafts} thinking={live.thinking} status="streaming" live footer={phase && <AgentStatus phase={phase} />} />}
+    {live && <AssistantMessage content={live.text} sources={live.sources} tools={live.tools} drafts={live.drafts} thinking={live.thinking} research={live.research} status="streaming" live footer={phase && <AgentStatus phase={phase} />} />}
     {!live && busy && phase && <div className="approval-row"><AgentStatus phase={phase} /></div>}
     {failed && !busy && <Message from="assistant"><span className="message-avatar"><Mascot size={36} /></span><div className="message-body"><ErrorNotice error={failed} onAction={action => action === 'retry' ? props.onRetry() : props.onErrorAction?.(action)} /></div></Message>}
     {props.previewOffer && !pending && <div className="approval-row"><div className="preview-offer" role="status">

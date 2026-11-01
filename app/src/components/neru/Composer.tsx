@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, Check, ChevronDown, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, GraduationCap, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
 import { Liquid } from 'liquid-gooey'
 import { useReducedMotion } from 'motion/react'
 import { useMicrophone } from 'voice-glow'
@@ -248,6 +248,9 @@ export interface ComposerProps {
   roomy?: boolean
   /** Team: agents bring their own web tools, so there is no web toggle. */
   showWeb?: boolean
+  /** Chat's Research mode: academic sources, a research plan and a cited report. Hidden when undefined. */
+  research?: boolean
+  onResearchChange?: (research: boolean) => void
   /** Runs before the composer's own keys; preventDefault() stops them. */
   onKeyDown?: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void
   ariaLabel?: string
@@ -500,6 +503,7 @@ export function Composer(props: ComposerProps) {
           <MicMenu device={micDevice} onDevice={chooseMic} hold={holdToRecord} onHold={chooseHold} disabled={!mic.supported || recording || transcribing} systemEngine={props.voiceEngine === 'system'} />
         </div>
         {props.showWeb !== false && <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? t('Web search on: Neru can search and cite public pages') : t('Web search off: answers from the project only')} aria-label={t('Web search')}><Globe size={15} /></button>}
+        {props.onResearchChange && <button type="button" className={cn('prompt-toggle', props.research && 'on')} aria-pressed={props.research} onClick={() => props.onResearchChange?.(!props.research)} disabled={disabled} title={props.research ? t('Research on: Neru plans, searches papers and writes a cited report') : t('Research: search papers and write a cited report')} aria-label={t('Research mode')}><GraduationCap size={15} /></button>}
         {props.showMode !== false && <Select value={mode} onValueChange={value => props.onModeChange(value as AgentMode)} disabled={disabled || loading} className="composer-mode">
           <SelectTrigger className={cn('h-8 w-auto rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2', mode === 'bypass' && 'mode-danger')}>
             <span className="truncate text-muted-foreground" title={t(MODES.find(item => item.value === mode)?.hint ?? '')}>{t(MODES.find(item => item.value === mode)?.label ?? '')}</span>

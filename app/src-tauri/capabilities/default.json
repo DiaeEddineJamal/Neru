@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "notification:default",
     "core:window:allow-request-user-attention",
     "core:window:allow-is-focused",

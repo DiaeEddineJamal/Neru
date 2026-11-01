@@ -940,7 +940,7 @@ async fn run_neru(app: &AppHandle, task_id: &str, member: &Member, prompt: Strin
         Access::Auto => "auto",
         Access::Full => "bypass",
     };
-    let chat = crate::agent::ai_chat(prompt, vec![], mode.into(), None, None, None, None, Some(session.clone()), None, None, app.clone());
+    let chat = crate::agent::ai_chat(prompt, vec![], mode.into(), None, None, None, None, Some(session.clone()), None, None, None, app.clone());
     tokio::select! {
         response = chat => {
             let response = response?;

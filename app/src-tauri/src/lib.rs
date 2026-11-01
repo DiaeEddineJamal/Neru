@@ -4,6 +4,7 @@ mod agents;
 mod cli;
 mod cli_ui;
 mod cli_setup;
+mod citation;
 mod commands;
 mod diagnostics;
 mod documents;
@@ -30,8 +31,10 @@ mod repomap;
 mod remote_tunnel;
 mod replay;
 mod review;
+mod research;
 mod run_options;
 mod sandbox;
+mod scholar;
 mod semantic;
 mod sessions;
 mod settings;
@@ -308,6 +311,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             #[cfg(windows)]
             register_toast_app(app.config().identifier.clone());
             index::set_app(app.handle().clone());
+            scholar::set_app(app.handle().clone());
             if let Some(root) = app.state::<AppState>().root.lock().ok().and_then(|root| root.clone()) {
                 // Start indexing the last project now, so the first search or chat finds it ready.
                 index::start(&root);
@@ -512,6 +516,12 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             settings::saved_key_providers,
             voice::transcribe_audio,
             web::open_url,
+            scholar::scholar_pdf_text,
+            citation::get_citation_style,
+            citation::set_citation_style,
+            citation::format_bibliography,
+            citation::export_citations,
+            citation::save_study_file,
             cli_setup::cli_status,
             cli_setup::cli_install_path,
             remote::remote_status,

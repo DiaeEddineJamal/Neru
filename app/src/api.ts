@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
+import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CitationStyle, Source, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
 import type { Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
 import type { Route } from './lib/browser'
@@ -183,14 +183,22 @@ export const api = {
   checkModels: (runId: string, providerId: string, baseUrl: string, apiKey: string, targets: { model: string; apiFormat: ApiFormat }[]) => invoke<CheckSummary>('check_models', { runId, providerId, baseUrl, apiKey, targets }),
   cancelCheckModels: (runId: string) => invoke<void>('cancel_check_models', { runId }),
   onModelCheck: (handler: (progress: CheckProgress) => void) => listen<CheckProgress>('models://check', event => handler(event.payload)),
-  chat: (options: { prompt: string; contextPaths: string[]; mode: AgentMode; web: boolean; documents: AttachedDocument[]; effort: Effort; sessionId: string | null; notes?: string | null; surface?: 'chat' | 'code' }) => invoke<AgentResponse>('ai_chat', {
-    prompt: options.prompt, contextPaths: options.contextPaths, mode: options.mode, web: options.web, surface: options.surface ?? 'code',
+  chat: (options: { prompt: string; contextPaths: string[]; mode: AgentMode; web: boolean; documents: AttachedDocument[]; effort: Effort; sessionId: string | null; notes?: string | null; surface?: 'chat' | 'code'; research?: boolean }) => invoke<AgentResponse>('ai_chat', {
+    prompt: options.prompt, contextPaths: options.contextPaths, mode: options.mode, web: options.web, surface: options.surface ?? 'code', research: options.research ?? null,
     documents: options.documents.filter(doc => doc.kind !== 'image').map(doc => ({ path: doc.path, text: doc.text ?? null, name: doc.kind === 'element' ? doc.name : null, kind: doc.kind === 'element' ? 'element' : null })),
     images: options.documents.filter(doc => doc.kind === 'image' && doc.dataUrl).map(doc => ({ name: doc.name, dataUrl: doc.dataUrl })),
     effort: options.effort === 'auto' ? null : options.effort, sessionId: options.sessionId, notes: options.notes ?? null,
   }),
   inspectDocuments: (paths: string[]) => invoke<AttachedDocument[]>('inspect_documents', { paths }),
   documentBytes: (path: string) => invoke<ArrayBuffer>('document_bytes', { path }),
+  /** Research mode: the core saved an open-access PDF and wants its text (read with PDF.js here). */
+  onScholarPdf: (handler: (request: { requestId: string; path: string }) => void) => listen<{ requestId: string; path: string }>('scholar://pdf', event => handler(event.payload)),
+  scholarPdfText: (requestId: string, text: string | null, error: string | null) => invoke<void>('scholar_pdf_text', { requestId, text, error }),
+  citationStyle: () => invoke<CitationStyle>('get_citation_style'),
+  setCitationStyle: (style: CitationStyle) => invoke<CitationStyle>('set_citation_style', { style }),
+  formatBibliography: (sources: Source[], style: CitationStyle, numbered: boolean) => invoke<string[]>('format_bibliography', { sources, style, numbered }),
+  exportCitations: (sources: Source[], format: 'bibtex' | 'ris') => invoke<string>('export_citations', { sources, format }),
+  saveStudyFile: (path: string, contents: string) => invoke<void>('save_study_file', { path, contents }),
   readImage: (path: string) => invoke<string>('read_image', { path }),
   effortSupported: () => invoke<boolean>('effort_supported'),
   forgetKeys: () => invoke<void>('forget_keys'),

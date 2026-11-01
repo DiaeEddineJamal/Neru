@@ -1416,7 +1416,7 @@ impl<'a> Cli<'a> {
         let notes = if prompt.trim().is_empty() { None } else { self.notes() };
         let (prompt_owned, mode, web, session, effort) = (prompt.to_string(), self.mode.clone(), self.web, self.session.clone(), self.effort.clone());
         tauri::async_runtime::spawn(async move {
-            let result = agent::ai_chat(prompt_owned, vec![], mode, Some(web), None, None, effort, Some(session), notes, Some("code".into()), app).await;
+            let result = agent::ai_chat(prompt_owned, vec![], mode, Some(web), None, None, effort, Some(session), notes, Some("code".into()), None, app).await;
             let _ = done_tx.send(result);
         });
         let mut live = Live::new();
@@ -1939,7 +1939,7 @@ impl<'a> Cli<'a> {
         let notes = if prompt.trim().is_empty() { None } else { self.notes() };
         let (prompt, mode, web, session, effort) = (prompt.to_string(), self.mode.clone(), self.web, self.session.clone(), self.effort.clone());
         tauri::async_runtime::spawn(async move {
-            let _ = done_tx.send(agent::ai_chat(prompt, vec![], mode, Some(web), None, None, effort, Some(session), notes, Some("code".into()), app).await);
+            let _ = done_tx.send(agent::ai_chat(prompt, vec![], mode, Some(web), None, None, effort, Some(session), notes, Some("code".into()), None, app).await);
         });
         let color = std::io::stderr().is_terminal();
         let mut out = std::io::stdout();

@@ -1,0 +1,10 @@
+{"meta":{"count":2,"page":1,"per_page":8},"results":[
+{"id":"https://openalex.org/W3177828909","doi":"https://doi.org/10.1038/s41586-021-03819-2","title":"Highly accurate protein structure prediction with AlphaFold","display_name":"Highly accurate protein structure prediction with AlphaFold","publication_year":2021,
+ "primary_location":{"landing_page_url":"https://doi.org/10.1038/s41586-021-03819-2","source":{"display_name":"Nature","type":"journal"}},
+ "open_access":{"is_oa":true,"oa_url":"https://www.nature.com/articles/s41586-021-03819-2"},
+ "best_oa_location":{"pdf_url":"https://www.nature.com/articles/s41586-021-03819-2.pdf"},
+ "authorships":[{"author_position":"first","author":{"id":"https://openalex.org/A1","display_name":"John Jumper"}},{"author_position":"middle","author":{"id":"https://openalex.org/A2","display_name":"Richard Evans"}}],
+ "cited_by_count":25000,
+ "abstract_inverted_index":{"Proteins":[0],"are":[1],"essential":[2],"to":[3],"life":[4]}},
+{"id":"https://openalex.org/W2000000002","doi":null,"title":"A report without a DOI","publication_year":1999,"primary_location":{"landing_page_url":null,"source":null},"open_access":{"is_oa":false,"oa_url":null},"best_oa_location":null,"authorships":[],"cited_by_count":3,"abstract_inverted_index":null}
+]}

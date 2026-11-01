@@ -648,7 +648,7 @@ pub async fn run_prompt(app: &AppHandle, id: String, prompt: String, images: Vec
     push_sessions();
     let surface = if chat { "chat" } else { "code" };
     let images = (!images.is_empty()).then_some(images);
-    let result = agent::ai_chat(prompt, Vec::new(), mode, None, None, images, None, Some(id.clone()), None, Some(surface.into()), app.clone()).await;
+    let result = agent::ai_chat(prompt, Vec::new(), mode, None, None, images, None, Some(id.clone()), None, Some(surface.into()), None, app.clone()).await;
     if let Err(error) = &result {
         agent::emit(app, &id, agent::AgentEvent::Notice { text: format!("Stopped: {error}") });
         crate::activity::note(&id, crate::activity::Kind::Failed, error);

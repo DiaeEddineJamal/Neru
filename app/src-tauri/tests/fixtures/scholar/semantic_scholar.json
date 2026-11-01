@@ -1,0 +1,4 @@
+{"total":2,"offset":0,"data":[
+{"paperId":"204e3073870fae3d05bcbc2f6a8e263d9b72e776","externalIds":{"DOI":"10.48550/arXiv.1706.03762","ArXiv":"1706.03762","CorpusId":13756489},"url":"https://www.semanticscholar.org/paper/204e3073870fae3d05bcbc2f6a8e263d9b72e776","title":"Attention is All you Need","abstract":null,"venue":"Neural Information Processing Systems","year":2017,"citationCount":100000,"openAccessPdf":{"url":"https://arxiv.org/pdf/1706.03762","status":"GREEN"},"authors":[{"authorId":"40348417","name":"Ashish Vaswani"},{"authorId":"1846258","name":"Noam Shazeer"}]},
+{"paperId":"df2b0e26d0599ce3e70df8a9da02e51594e0e992","externalIds":{"ArXiv":"1810.04805"},"url":"https://www.semanticscholar.org/paper/df2b","title":"BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding","abstract":"We introduce  BERT.","venue":"NAACL","year":2019,"citationCount":90000,"openAccessPdf":null,"authors":[{"authorId":"1","name":"Jacob Devlin"}]}
+]}

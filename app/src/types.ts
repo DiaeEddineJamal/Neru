@@ -175,7 +175,16 @@ export interface Source {
   title: string
   url: string
   domain: string
+  /** Scholarly sources (Research mode) also carry what a bibliography needs. */
+  authors?: string[]
+  year?: number
+  venue?: string
+  doi?: string
 }
+
+export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'ieee' | 'harvard'
+/** A step of Research mode's plan, as research.rs reports it. */
+export interface ResearchStep { label: string; status: 'pending' | 'running' | 'done' | 'error'; detail: string }
 
 export interface ChatEntry {
   id: string
@@ -206,6 +215,7 @@ export type AgentEvent = { sessionId: string } & (
   | { type: 'reasoning'; chars: number; text: string }
   | { type: 'rewind'; text: string; drafts: string[]; thinking: number }
   | { type: 'todos'; todos: Todo[] }
+  | { type: 'research'; steps: ResearchStep[] }
   | { type: 'steered'; text: string }
   | ({ type: 'subagent' } & SubagentProgress)
   /** Added: a second model's review of the edit waiting for approval. */

@@ -6,13 +6,22 @@ use serde::{Deserialize, Serialize};
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 Neru/0.1";
 const MAX_PAGE_BYTES: usize = 2_000_000;
 
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
     pub id: String,
     pub title: String,
     pub url: String,
     pub domain: String,
+    /// Scholarly sources (scholar.rs) also carry what a bibliography needs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authors: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub venue: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub doi: String,
 }
 
 pub struct SearchHit {
@@ -45,6 +54,7 @@ pub fn cite(sources: &mut Vec<Source>, title: &str, url: &str) -> usize {
         },
         url: url.to_string(),
         domain: domain(url),
+        ..Default::default()
     });
     sources.len()
 }
@@ -154,7 +164,7 @@ fn result_url(href: &str) -> Option<String> {
     matches!(url.scheme(), "http" | "https").then(|| url.to_string())
 }
 
-fn blocked_host(url: &Url) -> bool {
+pub(crate) fn blocked_host(url: &Url) -> bool {
     let Some(host) = url.host_str() else {
         return true;
     };
@@ -284,7 +294,7 @@ pub async fn fetch(url: &str) -> Result<Page, String> {
     })
 }
 
-fn html_to_text(html: &str) -> String {
+pub(crate) fn html_to_text(html: &str) -> String {
     let mut output = String::with_capacity(html.len() / 3);
     let lower = html.to_ascii_lowercase();
     let mut index = 0;

@@ -60,6 +60,7 @@ import { expandCommand } from './components/neru/Composer'
 import { SettingsModelPicker, applyProbe, shortModelName, LISTING_IS_AUTHORITATIVE } from './components/neru/ModelPicker'
 import { notifyUser } from '@/lib/notify'
 import { extractDocumentText, imageDataUrl, isReadableDocument } from '@/lib/documents'
+import { STUDY_COMMANDS, studyPrompt } from '@/lib/study'
 import './App.css'
 
 const CodeEditor = lazy(() => import('./components/neru/CodeEditor'))
@@ -138,6 +139,7 @@ function applyAgentEvent(live: LiveResponse, event: AgentEvent): LiveResponse {
     return { ...live, text: event.text, thinking, drafts: live.drafts.filter(draft => !event.drafts.includes(draft.id)) }
   }
   if (event.type === 'sources') return { ...live, sources: event.sources }
+  if (event.type === 'research') return { ...live, research: event.steps }
   if (event.type === 'reasoning') return { ...live, reasoning: event.chars, thinking: (live.thinking ?? '') + event.text }
   if (event.type === 'draft') {
     const previous = live.drafts.find(item => item.id === event.id)
@@ -297,6 +299,7 @@ function App() {
   const [failed, setFailed] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<Record<string, StreamingResponseFeedback>>(() => readStored('neru.feedback', {}))
   const [web, setWeb] = useState(() => readStored('neru.web', true))
+  const [research, setResearch] = useState(() => readStored('neru.research', false))
   const [voiceEngine, setVoiceEngine] = useState<VoiceEngine>(() => readStored<VoiceEngine>('neru.voice.engine', 'local'))
   const [dictationLanguage, setDictationLanguage] = useState(() => readStored('neru.voice.language', 'auto'))
   const speech = useSpeechModels()
@@ -467,6 +470,17 @@ function App() {
     if (!isTauri() || !providerReady || !provider.configured) return
     void api.refreshContext(activeRef.current).then(setContext).catch(() => undefined)
   }, [providerReady, provider.providerId, provider.model, provider.configured, activeSessionId])
+  // Research mode reads open-access PDFs with the same PDF.js extraction as attached documents.
+  useEffect(() => {
+    if (!isTauri()) return
+    const unlisten = api.onScholarPdf(({ requestId, path }) => {
+      void api.documentBytes(path)
+        .then(bytes => extractDocumentText('pdf', bytes))
+        .then(text => api.scholarPdfText(requestId, text, null))
+        .catch(cause => api.scholarPdfText(requestId, null, errorText(cause)))
+    })
+    return () => { void unlisten.then(stop => stop()) }
+  }, [])
   useEffect(() => {
     if (!isTauri()) return
     const unlisten = api.onAgentEvent(event => {
@@ -777,7 +791,7 @@ function App() {
       const lastAssistant = [...messages].reverse().find(message => message.role === 'assistant')
       const mark = lastAssistant ? feedback[lastAssistant.id] : undefined
       const notes = mark === 'up' ? 'The user marked the previous reply helpful.' : mark === 'down' ? 'The user marked the previous reply not helpful. Change the approach.' : null
-      const result: AgentResponse = await api.chat({ prompt: value, contextPaths: surface === 'chat' ? [] : attached, mode: options.mode ?? agentMode, web, documents: docs, effort, sessionId, notes, surface })
+      const result: AgentResponse = await api.chat({ prompt: value, contextPaths: surface === 'chat' ? [] : attached, mode: options.mode ?? agentMode, web, documents: docs, effort, sessionId, notes, surface, research: surface === 'chat' && research })
       const summary = sessions.find(item => item.id === sessionId)
       const title = summary?.title ?? 'Neru'
       // Name the session after its task once the first reply is in.
@@ -967,6 +981,7 @@ function App() {
     { name: 'export', description: t('Save this conversation as Markdown in .neru/exports'), template: '', source: 'built-in' },
     { name: 'doctor', description: t('Check the model, tools and project setup'), template: '', source: 'built-in' },
     { name: 'help', description: t('List the available commands'), template: '', source: 'built-in' },
+    ...STUDY_COMMANDS,
   ]
   /** A local note in the conversation (like Claude Code's command output); never sent to the model. */
   const say = (markdown: string) => setMessages(current => [...current, { id: uid(), role: 'assistant', content: markdown, steps: [] }])
@@ -1053,6 +1068,10 @@ function App() {
       case 'clear': void newChat(); return true
       case 'model': case 'mode': case 'resume': case 'cost': case 'status': case 'todos': case 'memory': case 'permissions': case 'hooks': case 'export': case 'doctor': case 'help':
         void runLocal(command.name, args.trim()); return true
+      case 'summarize': case 'flashcards': case 'quiz': case 'explain': {
+        const attachedNames = documents.filter(doc => doc.kind !== 'image').map(doc => doc.name)
+        void runChat(studyPrompt(command.name, args.trim(), attachedNames)); return true
+      }
       default: return false
     }
   }
@@ -1571,6 +1590,7 @@ function App() {
           onStop={() => { if (activeSessionId) stoppedSessions.current.add(activeSessionId); void api.stopChat(activeSessionId).catch(cause => setError(errorText(cause))) }} onSteer={text => void steer(text)} loading={responding} disabled={(surface !== 'chat' && !project) || (busy && !responding) || Boolean(pending)}
           placeholder={chatHome ? t('How can I help you today?') : !project ? t('Open a project to begin…') : pending ? t('Review the pending action first…') : surface === 'chat' ? t('Message Neru…') : t('Describe a task or ask a question…')} light={light} roomy={chatHome} showMode={surface !== 'chat'}
           mode={agentMode} onModeChange={setAgentMode} web={web} onWebChange={value => { setWeb(value); writeStored('neru.web', value) }}
+          research={surface === 'chat' ? research : undefined} onResearchChange={surface === 'chat' ? value => { setResearch(value); writeStored('neru.research', value) } : undefined}
           model={provider.model} models={composerModels} providerId={provider.providerId} onModelChange={model => void changeModel(model)} modelNotice={modelNotice}
           commands={slashCommands} onCommand={runCommand}
           attachItems={attachItems} voiceEngine={voiceEngine} onVoiceStart={warmVoice} voiceReady={voiceEngine !== 'local' || Boolean(speech.active)} onVoiceUnavailable={localModelRequired} onTranscribe={transcribe} onError={setError}
