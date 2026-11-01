@@ -66,6 +66,10 @@ enum Sub {
     Doctor,
     Config,
     Update,
+    /// `neru check [name]`: the project's .neru/checks.
+    Check(Option<String>),
+    /// `neru acp`: the Agent Client Protocol over stdio.
+    Acp,
 }
 
 struct Options {
@@ -84,6 +88,8 @@ struct Options {
     run: crate::run_options::RunOptions,
     /// --session-id: resume the session with this id, or start one with it.
     session_id: Option<String>,
+    /// --queue-task: run this queued task (from the operating system's scheduler).
+    queue_task: Option<String>,
 }
 
 fn usage() -> String {
@@ -103,6 +109,8 @@ fn usage() -> String {
   neru mcp list|get|add|remove  Manage MCP connectors, as claude mcp does (neru mcp help)
   neru sessions                 List this folder's sessions
   neru doctor                   Check the model, tools and setup
+  neru check [name]             Run the project's .neru/checks (pass/fail, read only)
+  neru acp                      Serve the Agent Client Protocol on stdio (Zed, JetBrains)
   neru config                   Show where settings live and what is set
   neru update                   Update neru to the latest release
 
@@ -168,7 +176,7 @@ fn value(args: &mut std::collections::VecDeque<String>, flag: &str) -> Result<St
 const RAW_SUBCOMMANDS: [&str; 1] = ["mcp"];
 
 fn parse_args(raw: Vec<String>) -> Result<Options, Stop> {
-    let mut options = Options { prompt: None, print: false, resume_latest: false, resume: None, mode: "manual".into(), model: None, effort: None, output: Output::Text, web: true, verbose: false, sub: None, run: Default::default(), session_id: None };
+    let mut options = Options { prompt: None, print: false, resume_latest: false, resume: None, mode: "manual".into(), model: None, effort: None, output: Output::Text, web: true, verbose: false, sub: None, run: Default::default(), session_id: None, queue_task: None };
     let mut args: std::collections::VecDeque<String> = raw.into();
     let mut words: Vec<String> = Vec::new();
     while let Some(mut arg) = args.pop_front() {
@@ -228,6 +236,10 @@ fn parse_args(raw: Vec<String>) -> Result<Options, Stop> {
             "--append-system-prompt" => options.run.append_system_prompt = Some(value(&mut args, &arg)?),
             "--system-prompt" => options.run.system_prompt = Some(value(&mut args, &arg)?),
             "--session-id" => options.session_id = Some(value(&mut args, &arg)?),
+            "--queue-task" => {
+                options.queue_task = Some(value(&mut args, &arg)?);
+                options.print = true;
+            }
             "--add-dir" => {
                 let dir = value(&mut args, &arg)?;
                 let path = std::path::Path::new(&dir).canonicalize().map_err(|e| format!("--add-dir {dir}: {e}"))?;
@@ -260,6 +272,8 @@ fn parse_args(raw: Vec<String>) -> Result<Options, Stop> {
         Some("doctor") if alone => Some(Sub::Doctor),
         Some("config") if alone => Some(Sub::Config),
         Some("update" | "upgrade") if alone => Some(Sub::Update),
+        Some("check" | "checks") if words.len() <= 2 => Some(Sub::Check(words.get(1).cloned())),
+        Some("acp") if alone => Some(Sub::Acp),
         _ => None,
     };
     if options.sub.is_none() && !words.is_empty() {
@@ -524,6 +538,11 @@ fn session(app: &tauri::AppHandle, options: Options) -> i32 {
         }
     }
     interrupt_on_ctrl_c(app, &cli.session);
+    if let Some(id) = &options.queue_task {
+        let code = cli.run_queued(id);
+        cli.finish();
+        return code;
+    }
 
     if !interactive {
         let mut prompt = options.prompt.clone().unwrap_or_default();
@@ -844,6 +863,36 @@ fn subcommand(app: &tauri::AppHandle, sub: &Sub) -> i32 {
             }
             0
         }
+        Sub::Check(name) => {
+            let Ok(root) = workspace::project_root(&app.state()) else { return 1 };
+            if !configured(app) {
+                esay!("{RED}✗{RESET} No model is connected yet. Run neru login first.");
+                return 1;
+            }
+            say!("{DIM}Running checks from .neru/checks…{RESET}");
+            match tauri::async_runtime::block_on(crate::checks::run(app, "checks", &root, name.as_deref())) {
+                Ok(results) => {
+                    for result in &results {
+                        let mark = match result.status.as_str() {
+                            "pass" => format!("{GREEN}✓ PASS{RESET}"),
+                            "fail" => format!("{RED}✗ FAIL{RESET}"),
+                            "skipped" => format!("{DIM}- SKIP{RESET}"),
+                            _ => format!("{YELLOW}! ERROR{RESET}"),
+                        };
+                        say!("{mark} {BOLD}{}{RESET}{}", result.name, if result.description.is_empty() { String::new() } else { format!(" {DIM}— {}{RESET}", result.description) });
+                        for finding in &result.findings {
+                            say!("    {finding}");
+                        }
+                    }
+                    if results.iter().any(|result| matches!(result.status.as_str(), "fail" | "error")) { 1 } else { 0 }
+                }
+                Err(error) => {
+                    esay!("{RED}✗{RESET} {error}");
+                    1
+                }
+            }
+        }
+        Sub::Acp => crate::acp::serve(app),
         Sub::Doctor => {
             let checks = tauri::async_runtime::block_on(crate::extras::doctor(app.clone())).unwrap_or_default();
             print_checks(&checks);
@@ -1851,6 +1900,26 @@ impl<'a> Cli<'a> {
 
     /// `neru -p`: answers once and exits, as `claude -p` does. A call that needs approval is
     /// refused (no one can answer) and the model carries on; the refusals are reported at the end.
+    /// A queued task the operating system's scheduler started: its prompt in print mode, with the
+    /// outcome written back to the queue.
+    fn run_queued(&mut self, id: &str) -> i32 {
+        let Some(task) = crate::queue::list().into_iter().find(|task| task.id == id) else {
+            esay!("No queued task {id}; it may have been canceled.");
+            crate::automations::unschedule(id);
+            return 1;
+        };
+        if task.status != "queued" {
+            esay!("Task {id} is {}; nothing to run.", task.status);
+            return 0;
+        }
+        self.mode = task.mode.clone();
+        let _ = crate::queue::set_status(id, "running", Some(self.session.clone()), None);
+        let code = self.print_mode(&task.prompt);
+        let error = (code != 0).then(|| "The scheduled run ended with an error. Open its session to see why.".to_string());
+        let _ = crate::queue::set_status(id, if code == 0 { "done" } else { "failed" }, None, error);
+        code
+    }
+
     fn print_mode(&mut self, prompt: &str) -> i32 {
         // /init, /review and the project's own commands work here too.
         let mut prompt = prompt.to_string();
@@ -2643,6 +2712,11 @@ mod tests {
         assert_eq!(request.prompt.as_deref(), Some("update the readme"));
         assert!(matches!(parse_args(args("mcp add docs -- npx -y @docs/mcp")).unwrap().sub, Some(Sub::Mcp(list)) if list.len() == 6));
         assert!(matches!(parse_args(args("models qwen")).unwrap().sub, Some(Sub::Models(Some(_)))));
+        assert!(matches!(parse_args(args("check")).unwrap().sub, Some(Sub::Check(None))));
+        assert!(matches!(parse_args(args("check secrets")).unwrap().sub, Some(Sub::Check(Some(name))) if name == "secrets"));
+        assert!(matches!(parse_args(args("acp")).unwrap().sub, Some(Sub::Acp)));
+        let queued = parse_args(args("--queue-task abc")).unwrap();
+        assert!(queued.print && queued.queue_task.as_deref() == Some("abc"));
     }
 
     #[test]

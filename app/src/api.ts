@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CitationStyle, Source, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
-import type { BoardCard, Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
+import type { BoardCard, CheckResult, Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
 import type { Route } from './lib/browser'
 
 export const api = {
@@ -161,7 +161,11 @@ export const api = {
   /** A commit message for the staged changes, written on the small-model lane. */
   generateCommitMessage: () => invoke<string>('generate_commit_message'),
   queueList: () => invoke<QueuedTask[]>('queue_list'),
-  queueAdd: (projectPath: string, prompt: string, at: number, mode: AgentMode, images?: { name: string; dataUrl: string }[]) => invoke<QueuedTask>('queue_add', { projectPath, prompt, at, mode, images: images ?? null }),
+  queueAdd: (projectPath: string, prompt: string, at: number, mode: AgentMode, images?: { name: string; dataUrl: string }[], offline?: boolean, repeat?: 'daily' | 'weekly') => invoke<QueuedTask>('queue_add', { projectPath, prompt, at, mode, images: images ?? null, offline: offline ?? null, repeat: repeat ?? null }),
+  ciWatch: (projectPath: string, enabled: boolean) => invoke<boolean>('ci_watch', { projectPath, enabled }),
+  ciWatching: (projectPath: string) => invoke<boolean>('ci_watching', { projectPath }),
+  runChecks: (name?: string) => invoke<CheckResult[]>('run_checks', { name: name ?? null }),
+  listChecks: () => invoke<CheckResult[]>('list_checks'),
   queueCancel: (id: string) => invoke<void>('queue_cancel', { id }),
   /** Just after most free plans reset their daily quota (epoch ms). */
   queueTonight: () => invoke<number>('queue_tonight'),

@@ -1,11 +1,14 @@
 mod activity;
+mod acp;
 mod agent;
 mod agents;
+mod automations;
 mod board;
+mod checks;
+mod citation;
 mod cli;
 mod cli_ui;
 mod cli_setup;
-mod citation;
 mod commands;
 mod diagnostics;
 mod documents;
@@ -34,6 +37,7 @@ mod remote_tunnel;
 mod replay;
 mod review;
 mod research;
+mod risk;
 mod run_options;
 mod sandbox;
 mod scholar;
@@ -194,6 +198,7 @@ pub fn run() {
         fit_main_window(&app);
         remote::init(&app);
         queue::init(&app);
+        automations::init(&app);
         tauri::async_runtime::spawn(mcp::start_enabled(app));
     })
     .build(context())
@@ -355,6 +360,10 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             queue::queue_add,
             queue::queue_cancel,
             queue::queue_tonight,
+            automations::ci_watch,
+            automations::ci_watching,
+            checks::run_checks,
+            checks::list_checks,
             activity::activity_digest,
             replay::export_replay,
             replay::share_replay_gist,

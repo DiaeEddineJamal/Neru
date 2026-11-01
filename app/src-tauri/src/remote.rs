@@ -540,7 +540,7 @@ async fn handle(app: &AppHandle, cmd: &str, args: &Value) -> Result<Value, Strin
             push_sessions();
             Ok(json!({"sessionId": id}))
         }
-        "queue_task" => value(crate::queue::add(text(args, "projectPath")?, text(args, "text")?, images(args)?, args["at"].as_u64().unwrap_or(0), mode(args))),
+        "queue_task" => value(crate::queue::add(text(args, "projectPath")?, text(args, "text")?, images(args)?, args["at"].as_u64().unwrap_or(0), mode(args), false, None)),
         "list_queue" => value(Ok(crate::queue::list())),
         "cancel_task" => crate::queue::cancel(&text(args, "id")?).map(|_| Value::Null),
         "digest" => value(crate::activity::digest(&state, args["since"].as_u64().unwrap_or(0))),

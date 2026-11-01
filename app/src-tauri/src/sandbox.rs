@@ -8,8 +8,12 @@
 //!   of the same credentials.
 //! - Windows: a job object. The command and everything it starts form one unit that is ended
 //!   together, capped in process count and memory, and kept from other apps' windows, the
-//!   clipboard's contents, display and system settings, and shutting Windows down. Windows has no
-//!   per-folder write limit for ordinary processes, so there the approval rules guard files.
+//!   clipboard's contents, display and system settings, and shutting Windows down. The command
+//!   also runs at Low integrity: the project, a temporary folder and `--add-dir` folders get a Low
+//!   mandatory label, and Windows refuses its writes to everything else the user owns (no write
+//!   up). If the token or the labels cannot be set, or the shell cannot start at Low integrity
+//!   (Windows PowerShell 5.1 fails fast there on some systems; checked once), the command runs in
+//!   the job object alone. `NERU_SANDBOX_WRITES=off` keeps only the job object.
 //!
 //! The sandbox is on by default. `"sandbox": {"enabled": false}` in `~/.claude/settings.json` (or
 //! a trusted project's settings) or `NERU_SANDBOX=off` turns it off. A command the model asks to
@@ -70,6 +74,7 @@ pub fn describe(root: &Path) -> String {
     match kind(root) {
         Kind::Bubblewrap => "bubblewrap: writes only inside the project, temporary folders and package caches".into(),
         Kind::Seatbelt => "sandbox-exec: writes only inside the project, temporary folders and package caches".into(),
+        Kind::JobObject if write_limit() && job::shell_runs_low() => "a Windows job object at Low integrity: writes only inside the project and a temporary folder; the process tree is capped and ended together".into(),
         Kind::JobObject => "a Windows job object: the whole process tree is contained, capped and ended together".into(),
         Kind::None if turned_off(root) => "off (turned off in settings or NERU_SANDBOX)".into(),
         Kind::None if cfg!(target_os = "linux") => "not available: install bubblewrap (sudo apt install bubblewrap) to confine commands".into(),
@@ -85,11 +90,19 @@ pub fn failure_hint(output: &str) -> Option<&'static str> {
     )
 }
 
+/// Whether Windows commands also get the Low-integrity write limit.
+pub fn write_limit() -> bool {
+    !std::env::var("NERU_SANDBOX_WRITES").is_ok_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "off" | "0" | "false" | "no"))
+}
+
 /// An agent command, ready to configure (folder, pipes) and start with [`Prepared::start`].
 pub struct Prepared {
     pub process: tokio::process::Command,
     #[cfg_attr(not(windows), allow(dead_code))]
     job: bool,
+    /// Folders a write-limited command may write to (Windows); empty without the limit.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    writable: Vec<std::path::PathBuf>,
 }
 
 /// Holds what keeps a started command confined. On Windows, dropping it ends every process the
@@ -108,7 +121,17 @@ pub fn prepare(command: &str, root: &Path, sandboxed: bool) -> Prepared {
         let mut process = crate::shells::command(command);
         // Suspended until it is in the job, so not even its first instruction runs outside it.
         process.creation_flags(CREATE_NO_WINDOW | if kind == Kind::JobObject { CREATE_SUSPENDED } else { 0 });
-        Prepared { process, job: kind == Kind::JobObject }
+        let mut writable = Vec::new();
+        if kind == Kind::JobObject && write_limit() && job::shell_runs_low() {
+            // Temporary files go to a folder the Low-integrity command may write.
+            let temp = std::env::temp_dir().join("neru-low");
+            let _ = std::fs::create_dir_all(&temp);
+            process.env("TEMP", &temp).env("TMP", &temp);
+            writable.push(root.to_path_buf());
+            writable.push(temp);
+            writable.extend(crate::run_options::get().add_dirs);
+        }
+        Prepared { process, job: kind == Kind::JobObject, writable }
     }
     #[cfg(target_os = "macos")]
     {
@@ -120,7 +143,7 @@ pub fn prepare(command: &str, root: &Path, sandboxed: bool) -> Prepared {
         } else {
             crate::shells::command(command)
         };
-        Prepared { process, job: false }
+        Prepared { process, job: false, writable: Vec::new() }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -132,7 +155,7 @@ pub fn prepare(command: &str, root: &Path, sandboxed: bool) -> Prepared {
             }
             _ => crate::shells::command(command),
         };
-        Prepared { process, job: false }
+        Prepared { process, job: false, writable: Vec::new() }
     }
 }
 
@@ -148,6 +171,14 @@ impl Prepared {
                     (Some(job), Some(handle)) => job.assign(handle),
                     _ => false,
                 };
+                // Still suspended: drop to Low integrity before its first instruction, once every
+                // folder it may write carries the Low label.
+                if joined && !self.writable.is_empty() {
+                    let limited = self.writable.iter().all(|folder| job::allow_low_writes(folder)) && child.raw_handle().is_some_and(job::lower_integrity);
+                    if !limited {
+                        log::warn!("could not limit a command's writes; it runs in the job object alone");
+                    }
+                }
                 // Resume whatever happens: a process left suspended would hang the session.
                 if let Some(pid) = child.id() {
                     job::resume(pid);
@@ -363,6 +394,152 @@ mod job {
         fn OpenThread(access: u32, inherit: i32, thread_id: u32) -> Handle;
         fn ResumeThread(thread: Handle) -> u32;
         fn GlobalMemoryStatusEx(status: *mut MemoryStatus) -> i32;
+        fn LocalFree(memory: *mut c_void) -> *mut c_void;
+        fn GetVolumePathNameW(path: *const u16, volume: *mut u16, length: u32) -> i32;
+        fn GetVolumeInformationW(root: *const u16, name: *mut u16, name_len: u32, serial: *mut u32, max_component: *mut u32, flags: *mut u32, fs_name: *mut u16, fs_name_len: u32) -> i32;
+    }
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn OpenProcessToken(process: Handle, access: u32, token: *mut Handle) -> i32;
+        fn SetTokenInformation(token: Handle, class: i32, info: *const c_void, length: u32) -> i32;
+        fn ConvertStringSidToSidW(sid: *const u16, out: *mut *mut c_void) -> i32;
+        fn GetLengthSid(sid: *mut c_void) -> u32;
+        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl: *const u16, revision: u32, descriptor: *mut *mut c_void, size: *mut u32) -> i32;
+        fn GetSecurityDescriptorSacl(descriptor: *mut c_void, present: *mut i32, sacl: *mut *mut c_void, defaulted: *mut i32) -> i32;
+        fn SetNamedSecurityInfoW(name: *const u16, kind: u32, info: u32, owner: *mut c_void, group: *mut c_void, dacl: *mut c_void, sacl: *mut c_void) -> u32;
+    }
+
+    const TOKEN_QUERY: u32 = 0x8;
+    const TOKEN_ADJUST_DEFAULT: u32 = 0x80;
+    const TOKEN_INTEGRITY_LEVEL: i32 = 25;
+    const SE_GROUP_INTEGRITY: u32 = 0x20;
+    const SE_FILE_OBJECT: u32 = 1;
+    const LABEL_SECURITY_INFORMATION: u32 = 0x10;
+    const FILE_PERSISTENT_ACLS: u32 = 0x8;
+
+    fn wide(text: &std::ffi::OsStr) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        text.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    #[repr(C)]
+    struct MandatoryLabel {
+        sid: *mut c_void,
+        attributes: u32,
+    }
+
+    /// Lowers a (suspended) process's token to Low integrity, so it cannot write to anything with
+    /// the default Medium label. Lowering needs no privilege; raising back is impossible.
+    pub fn lower_integrity(process: std::os::windows::io::RawHandle) -> bool {
+        // SAFETY: handles and the SID are checked and released; the label struct is sized.
+        unsafe {
+            let mut token: Handle = std::ptr::null_mut();
+            if OpenProcessToken(process as Handle, TOKEN_ADJUST_DEFAULT | TOKEN_QUERY, &mut token) == 0 {
+                return false;
+            }
+            let mut sid: *mut c_void = std::ptr::null_mut();
+            let low = wide(std::ffi::OsStr::new("S-1-16-4096"));
+            let done = if ConvertStringSidToSidW(low.as_ptr(), &mut sid) != 0 {
+                let label = MandatoryLabel { sid, attributes: SE_GROUP_INTEGRITY };
+                let ok = SetTokenInformation(token, TOKEN_INTEGRITY_LEVEL, (&raw const label).cast(), (size_of::<MandatoryLabel>() as u32) + GetLengthSid(sid)) != 0;
+                LocalFree(sid);
+                ok
+            } else {
+                false
+            };
+            CloseHandle(token);
+            done
+        }
+    }
+
+    /// Whether the folder's volume keeps security information (NTFS, ReFS). FAT and exFAT keep
+    /// none, so any process may write there and no label is needed (or possible).
+    pub fn keeps_acls(folder: &std::path::Path) -> bool {
+        let path = wide(folder.as_os_str());
+        let mut volume = [0u16; 300];
+        let mut flags = 0u32;
+        // SAFETY: buffers are sized as passed.
+        unsafe {
+            if GetVolumePathNameW(path.as_ptr(), volume.as_mut_ptr(), volume.len() as u32) == 0 {
+                return true;
+            }
+            if GetVolumeInformationW(volume.as_ptr(), std::ptr::null_mut(), 0, std::ptr::null_mut(), std::ptr::null_mut(), &mut flags, std::ptr::null_mut(), 0) == 0 {
+                return true;
+            }
+        }
+        flags & FILE_PERSISTENT_ACLS != 0
+    }
+
+    /// Whether the agent's shell (Windows PowerShell) starts at Low integrity here. Checked once.
+    pub fn shell_runs_low() -> bool {
+        static WORKS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *WORKS.get_or_init(|| {
+            use std::os::windows::{io::AsRawHandle, process::CommandExt};
+            let Ok(mut child) = std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command", "exit 7"])
+                .creation_flags(super::CREATE_NO_WINDOW | super::CREATE_SUSPENDED)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            else {
+                return false;
+            };
+            let lowered = lower_integrity(child.as_raw_handle());
+            resume(child.id());
+            let started = std::time::Instant::now();
+            let code = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status.code(),
+                    Ok(None) if started.elapsed() < std::time::Duration::from_secs(20) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                    _ => {
+                        let _ = child.kill();
+                        break None;
+                    }
+                }
+            };
+            let works = lowered && code == Some(7);
+            if !works {
+                log::warn!("PowerShell does not start at Low integrity here; agent commands run in the job object without the write limit");
+            }
+            works
+        })
+    }
+
+    /// Folders already labelled in this run.
+    static LABELLED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>> = std::sync::LazyLock::new(Default::default);
+
+    /// Gives a folder (and, by inheritance, everything in it) the Low mandatory label, so Low
+    /// integrity commands may write there. Medium processes are unaffected.
+    pub fn allow_low_writes(folder: &std::path::Path) -> bool {
+        if LABELLED.lock().is_ok_and(|done| done.contains(folder)) {
+            return true;
+        }
+        if !folder.is_dir() {
+            return false;
+        }
+        let labelled = !keeps_acls(folder) || {
+            // SAFETY: the descriptor is freed; the SACL points into it while it lives.
+            unsafe {
+                let sddl = wide(std::ffi::OsStr::new("S:(ML;OICI;NW;;;LW)"));
+                let mut descriptor: *mut c_void = std::ptr::null_mut();
+                if ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), 1, &mut descriptor, std::ptr::null_mut()) == 0 {
+                    return false;
+                }
+                let (mut present, mut defaulted, mut sacl) = (0, 0, std::ptr::null_mut());
+                let ok = GetSecurityDescriptorSacl(descriptor, &mut present, &mut sacl, &mut defaulted) != 0
+                    && SetNamedSecurityInfoW(wide(folder.as_os_str()).as_ptr(), SE_FILE_OBJECT, LABEL_SECURITY_INFORMATION, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), sacl) == 0;
+                LocalFree(descriptor);
+                ok
+            }
+        };
+        if labelled {
+            if let Ok(mut done) = LABELLED.lock() {
+                done.insert(folder.to_path_buf());
+            }
+        }
+        labelled
     }
 
     /// A job whose processes all end when it is dropped.
@@ -499,5 +676,52 @@ mod tests {
         drop(guard);
         std::thread::sleep(std::time::Duration::from_millis(800));
         assert_eq!(count(), 0, "dropping the guard ends the detached process");
+    }
+
+    /// A folder for the write-limit test on a volume that keeps security information: the temp
+    /// folder, or the user's own temp folder when that one is FAT/exFAT (nothing to refuse there).
+    /// The test removes it again.
+    #[cfg(windows)]
+    fn acl_scratch(name: &str) -> std::path::PathBuf {
+        let candidates = [std::env::temp_dir(), dirs::data_local_dir().unwrap_or_default().join("Temp")];
+        let base = candidates.iter().find(|dir| dir.is_dir() && job::keeps_acls(dir)).cloned().unwrap_or_else(std::env::temp_dir);
+        let dir = base.join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Writes inside the project work; writes to another folder the user owns are refused. Driven
+    /// with cmd.exe, which starts at Low integrity everywhere, through the same start path.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_commands_cannot_write_outside_the_project() {
+        let project = acl_scratch("neru-sbx-project");
+        let outside = acl_scratch("neru-sbx-outside");
+        let inside_file = project.join("inside.txt");
+        let outside_file = outside.join("outside.txt");
+        let mut process = tokio::process::Command::new("cmd.exe");
+        process.raw_arg(format!("/d /c \"echo ok> \"{}\" & echo leaked> \"{}\" & whoami /groups\"", inside_file.display(), outside_file.display()));
+        process.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED).current_dir(&project).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        let prepared = Prepared { process, job: true, writable: vec![project.clone()] };
+        let (child, _guard) = prepared.start().expect("starts");
+        let output = tokio::time::timeout(std::time::Duration::from_secs(60), child.wait_with_output()).await.expect("finishes").expect("output");
+        let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        let result = (inside_file.is_file(), outside_file.exists(), text.contains("Low Mandatory Level"));
+        let _ = std::fs::remove_dir_all(&project);
+        let _ = std::fs::remove_dir_all(&outside);
+        assert!(result.2, "the command runs at Low integrity: {text}");
+        assert!(result.0, "writes inside the project work: {text}");
+        assert!(!result.1, "writes outside the project are refused: {text}");
+    }
+
+    /// The agent's own commands keep working: with the write limit when PowerShell starts at Low
+    /// integrity, in the job object alone when it cannot.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_shell_falls_back_when_it_cannot_run_low() {
+        let root = std::env::temp_dir();
+        let prepared = prepare("Write-Output 'fine'", &root, true);
+        assert_eq!(prepared.writable.is_empty(), !(write_limit() && job::shell_runs_low()));
     }
 }

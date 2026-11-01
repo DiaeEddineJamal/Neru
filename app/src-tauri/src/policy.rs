@@ -657,7 +657,7 @@ fn path_matches(root: &Path, spec: &str, path: &str) -> bool {
 }
 
 /// The pattern matches `path` or one of the folders above it.
-fn glob_covers(pattern: &str, path: &str) -> bool {
+pub(crate) fn glob_covers(pattern: &str, path: &str) -> bool {
     if glob(pattern.as_bytes(), path.as_bytes()) {
         return true;
     }

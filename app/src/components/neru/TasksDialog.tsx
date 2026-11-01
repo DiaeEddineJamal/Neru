@@ -42,6 +42,8 @@ export function TasksDialog({ open, view, projects, onClose, onOpenSession, onEr
   const [project, setProject] = useState('')
   const [mode, setMode] = useState<AgentMode>('accept_edits')
   const [when, setWhen] = useState<'tonight' | 'hour' | 'now'>('tonight')
+  const [offline, setOffline] = useState(false)
+  const [repeat, setRepeat] = useState<'' | 'daily' | 'weekly'>('')
   const [adding, setAdding] = useState(false)
 
   useEffect(() => {
@@ -65,7 +67,7 @@ export function TasksDialog({ open, view, projects, onClose, onOpenSession, onEr
     setAdding(true)
     try {
       const at = when === 'now' ? 0 : when === 'tonight' ? tonight : Date.now() + 3600_000
-      await api.queueAdd(project, prompt.trim(), at, mode)
+      await api.queueAdd(project, prompt.trim(), at, mode, undefined, offline, repeat || undefined)
       setPrompt('')
     } catch (cause) { onError(String(cause)) } finally { setAdding(false) }
   }
@@ -86,7 +88,7 @@ export function TasksDialog({ open, view, projects, onClose, onOpenSession, onEr
     const label = { queued: t('Queued'), running: t('Running'), waiting: t('Needs you'), done: t('Done'), failed: t('Failed'), canceled: t('Canceled') }[task.status]
     return <div key={task.id} className={cn('task-card', task.status)}>
       <span className="task-card-head"><strong>{task.title}</strong><span className={cn('task-badge', task.status)}>{task.status === 'running' && <LoaderCircle size={11} className="animate-spin" aria-hidden />}{label}</span></span>
-      <span className="task-meta">{baseName(task.projectPath)} · {task.status === 'queued' ? t('starts {time}', { time: time(task.at) }) : time(task.at)}{task.images ? ` · ${task.images === 1 ? t('1 photo') : t('{n} photos', { n: task.images })}` : ''}</span>
+      <span className="task-meta">{baseName(task.projectPath)} · {task.status === 'queued' ? t('starts {time}', { time: time(task.at) }) : time(task.at)}{task.repeat ? ` · ${task.repeat === 'daily' ? t('every day') : t('every week')}` : ''}{task.offline ? ` · ${t('even when Neru is closed')}` : ''}{task.images ? ` · ${task.images === 1 ? t('1 photo') : t('{n} photos', { n: task.images })}` : ''}</span>
       {task.error && <span className="task-meta danger">{task.error}</span>}
       <span className="task-actions">
         {task.status === 'queued' && <button type="button" className="button subtle small" onClick={() => void api.queueCancel(task.id).catch(cause => onError(String(cause)))}>{t('Cancel')}</button>}
@@ -123,6 +125,15 @@ export function TasksDialog({ open, view, projects, onClose, onOpenSession, onEr
               </select>
               <button type="submit" className="button primary" disabled={adding || !prompt.trim() || !project}>{adding ? t('Adding…') : t('Queue')}</button>
             </div>
+            <div className="task-form-row">
+              <select className="settings-select" value={repeat} onChange={event => setRepeat(event.target.value as typeof repeat)} aria-label={t('Repeat')}>
+                <option value="">{t('Once')}</option>
+                <option value="daily">{t('Every day')}</option>
+                <option value="weekly">{t('Every week')}</option>
+              </select>
+              <label className="task-meta"><input type="checkbox" checked={offline} onChange={event => setOffline(event.target.checked)} /> {t('Run even when Neru is closed')}</label>
+            </div>
+            {offline && <p className="task-meta">{t('Neru adds an entry to the system scheduler (Task Scheduler, launchd or cron) that runs neru -p with this task. Commands that need approval are skipped.')}</p>}
             {mode === 'manual' && when !== 'now' && <p className="task-meta">{t('Ask before every step stops at the first change. Approve it from your phone, or pick Edit files.')}</p>}
           </form>
         </div>

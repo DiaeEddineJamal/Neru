@@ -1,6 +1,9 @@
 //! Tasks queued for later, from the window or the phone: each runs when its time comes, one at a time, in a
 //! new session of its project, while Neru is open. "Tonight" is just after most free plans reset their daily
 //! quota, so big jobs start with full allowances and switch models when one runs out (fallback.rs).
+//!
+//! A task marked `offline` is handed to the operating system's scheduler instead (automations.rs), so it
+//! runs even when Neru is closed; `repeat` runs it again every day or week.
 
 use std::{
     fs,
@@ -34,6 +37,12 @@ pub struct QueuedTask {
     /// How many photos go with it; the images themselves wait in queue-images/<id>.json.
     #[serde(default)]
     pub images: usize,
+    /// Runs from the operating system's scheduler, even when Neru is closed.
+    #[serde(default)]
+    pub offline: bool,
+    /// "daily" or "weekly"; None runs once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<String>,
 }
 
 const KEEP_MS: u64 = 7 * 24 * 3600 * 1000;
@@ -58,7 +67,8 @@ fn load() -> Vec<QueuedTask> {
 fn update<T>(f: impl FnOnce(&mut Vec<QueuedTask>) -> T) -> Result<T, String> {
     let (result, list, changed) = {
         let mut guard = QUEUE.lock().map_err(|e| e.to_string())?;
-        let queue = guard.get_or_insert_with(load);
+        // A scheduled run (`neru -p --queue-task`) writes the same file from another process.
+        let queue = guard.insert(load());
         let before = queue.clone();
         let result = f(queue);
         let cutoff = now().saturating_sub(KEEP_MS);
@@ -84,7 +94,7 @@ pub fn list() -> Vec<QueuedTask> {
     list
 }
 
-pub fn add(project_path: String, prompt: String, images: Vec<ImageInput>, at: u64, mode: String) -> Result<QueuedTask, String> {
+pub fn add(project_path: String, prompt: String, images: Vec<ImageInput>, at: u64, mode: String, offline: bool, repeat: Option<String>) -> Result<QueuedTask, String> {
     let prompt = prompt.trim().to_string();
     if prompt.is_empty() && images.is_empty() {
         return Err("Say what the task is".into());
@@ -96,6 +106,10 @@ pub fn add(project_path: String, prompt: String, images: Vec<ImageInput>, at: u6
     if !matches!(mode.as_str(), "manual" | "accept_edits" | "auto" | "plan") {
         return Err("Unknown mode".into());
     }
+    let repeat = repeat.filter(|repeat| !repeat.is_empty() && repeat != "once");
+    if repeat.as_deref().is_some_and(|repeat| !matches!(repeat, "daily" | "weekly")) {
+        return Err("Repeat is daily or weekly".into());
+    }
     let id = uuid::Uuid::new_v4().to_string();
     if !images.is_empty() {
         let saved: Vec<serde_json::Value> = images.iter().map(|image| json!({"name": image.name, "dataUrl": image.data_url})).collect();
@@ -106,15 +120,21 @@ pub fn add(project_path: String, prompt: String, images: Vec<ImageInput>, at: u6
         id,
         prompt,
         project_path,
-        // "Now" (0 or a past time) runs at once; keep a real time so the week-long history keeps it.
-        at: at.max(now()),
+        // "Now" (0 or a past time) runs at once; keep a real time so the week-long history keeps it. The
+        // operating system's scheduler only fires times still ahead, so an offline "now" is in a minute.
+        at: at.max(now() + if offline { 60_000 } else { 0 }),
         created_at: now(),
         mode,
         status: "queued".into(),
         session_id: None,
         error: None,
         images: images.len(),
+        offline,
+        repeat,
     };
+    if offline {
+        crate::automations::schedule(&task)?;
+    }
     update(|queue| queue.push(task.clone()))?;
     wake();
     Ok(task)
@@ -122,7 +142,10 @@ pub fn add(project_path: String, prompt: String, images: Vec<ImageInput>, at: u6
 
 pub fn cancel(id: &str) -> Result<(), String> {
     update(|queue| match queue.iter_mut().find(|task| task.id == id) {
-        Some(task) if task.status == "queued" => {
+        Some(task) if task.status == "queued" || task.repeat.is_some() && task.status != "running" => {
+            if task.offline {
+                crate::automations::unschedule(id);
+            }
             task.status = "canceled".into();
             Ok(())
         }
@@ -150,7 +173,8 @@ pub fn init(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            let due = update(|queue| queue.iter().filter(|task| task.status == "queued" && task.at <= now()).min_by_key(|task| task.at).cloned()).ok().flatten();
+            // Offline tasks belong to the operating system's scheduler.
+            let due = update(|queue| queue.iter().filter(|task| task.status == "queued" && !task.offline && task.at <= now()).min_by_key(|task| task.at).cloned()).ok().flatten();
             match due {
                 Some(task) => run(&app, task).await,
                 None => {
@@ -195,6 +219,53 @@ async fn run(app: &AppHandle, task: QueuedTask) {
         Ok(false) => set("done", None, None),
         Err(error) => set("failed", None, Some(error)),
     }
+    requeue(&task.id);
+}
+
+/// When a repeating task runs next after `at`: a day or a week later, past `now`.
+pub fn next_run(at: u64, repeat: Option<&str>, now: u64) -> Option<u64> {
+    let step = match repeat? {
+        "daily" => 24 * 3600 * 1000,
+        "weekly" => 7 * 24 * 3600 * 1000,
+        _ => return None,
+    };
+    let mut next = at + step;
+    while next <= now {
+        next += step;
+    }
+    Some(next)
+}
+
+/// A repeating task goes back in the queue for its next time; its last outcome stays in `error`.
+fn requeue(id: &str) {
+    let _ = update(|queue| {
+        if let Some(task) = queue.iter_mut().find(|task| task.id == id) {
+            if let Some(next) = next_run(task.at, task.repeat.as_deref(), now()) {
+                task.at = next;
+                task.status = "queued".into();
+            }
+        }
+    });
+}
+
+/// Records a scheduled run's progress (from the CLI's `--queue-task`).
+pub fn set_status(id: &str, status: &str, session: Option<String>, error: Option<String>) -> Result<(), String> {
+    update(|queue| {
+        if let Some(task) = queue.iter_mut().find(|task| task.id == id) {
+            task.status = status.into();
+            if session.is_some() {
+                task.session_id = session;
+            }
+            task.error = error;
+        }
+    })?;
+    if matches!(status, "done" | "failed" | "waiting") {
+        requeue(id);
+        if list().iter().any(|task| task.id == id && task.repeat.is_none()) {
+            crate::automations::unschedule(id);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -203,8 +274,8 @@ pub fn queue_list() -> Vec<QueuedTask> {
 }
 
 #[tauri::command]
-pub fn queue_add(project_path: String, prompt: String, images: Option<Vec<ImageInput>>, at: u64, mode: String) -> Result<QueuedTask, String> {
-    add(project_path, prompt, images.unwrap_or_default(), at, mode)
+pub fn queue_add(project_path: String, prompt: String, images: Option<Vec<ImageInput>>, at: u64, mode: String, offline: Option<bool>, repeat: Option<String>) -> Result<QueuedTask, String> {
+    add(project_path, prompt, images.unwrap_or_default(), at, mode, offline.unwrap_or(false), repeat)
 }
 
 #[tauri::command]
@@ -235,5 +306,20 @@ mod tests {
         assert_eq!(next_quota_reset(midnight), midnight + 900_000);
         assert_eq!(next_quota_reset(midnight + 900_000), midnight + 86_400_000 + 900_000);
         assert_eq!(next_quota_reset(midnight + 3_600_000), midnight + 86_400_000 + 900_000);
+    }
+
+    #[test]
+    fn repeating_tasks_move_to_their_next_time() {
+        let day = 86_400_000;
+        assert_eq!(next_run(1_000, Some("daily"), 1_000), Some(1_000 + day));
+        assert_eq!(next_run(1_000, Some("daily"), 1_000 + 3 * day), Some(1_000 + 4 * day));
+        assert_eq!(next_run(1_000, Some("weekly"), 0), Some(1_000 + 7 * day));
+        assert_eq!(next_run(1_000, None, 0), None);
+    }
+
+    #[test]
+    fn old_queue_files_still_load() {
+        let task: QueuedTask = serde_json::from_str(r#"{"id":"a","title":"t","prompt":"p","projectPath":"/x","at":1,"createdAt":1,"mode":"auto","status":"queued"}"#).unwrap();
+        assert!(!task.offline && task.repeat.is_none());
     }
 }

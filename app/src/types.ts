@@ -56,6 +56,8 @@ export interface PendingView {
   feedback?: string
   /** A second model's review of an edit, from a different model family. */
   review?: Review
+  /** Auto mode's risk verdict on a command it did not run on its own. */
+  risk?: { risk: 'low' | 'medium' | 'high'; reason: string }
 }
 
 /**
@@ -97,6 +99,17 @@ export interface QueuedTask {
   error?: string
   /** Photos sent with it. */
   images: number
+  /** Runs from the operating system's scheduler, even when Neru is closed. */
+  offline?: boolean
+  repeat?: 'daily' | 'weekly'
+}
+
+/** One `.neru/checks` file's outcome. */
+export interface CheckResult {
+  name: string
+  description: string
+  status: 'pass' | 'fail' | 'skipped' | 'error' | 'idle'
+  findings: string[]
 }
 
 /** One session's work while you were away, for the morning summary. */

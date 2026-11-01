@@ -516,7 +516,7 @@ export function ApprovalCard({ pending, status, projectPath, onApprove, onAlways
     </div>
   }
   const task = /^npm run (build|test|lint)$/.test(pending.label)
-  return <ToolApproval tool={task ? 'project.task' : 'terminal.run'} title={task ? t('Allow this project task to run?') : t('Allow this command to run?')} description={t('Neru wants to run this in the project folder. Output returns to the agent.')}
+  return <ToolApproval tool={task ? 'project.task' : 'terminal.run'} title={task ? t('Allow this project task to run?') : t('Allow this command to run?')} description={pending.risk ? t('Auto mode rated this {risk} risk: {reason}', { risk: t(pending.risk.risk), reason: pending.risk.reason }) : t('Neru wants to run this in the project folder. Output returns to the agent.')}
     status={status} defaultOpen={status === 'pending'} onApprove={onApprove} onAlwaysAllow={onAlwaysAllow} onDeny={onDeny}
     parameters={[{ id: 'command', label: t('Command'), value: <ToolApprovalCode code={pending.label} language={task ? 'bash' : 'powershell'} /> }, ...(projectPath ? [{ id: 'cwd', label: t('Directory'), value: projectPath }] : [])]} />
 }

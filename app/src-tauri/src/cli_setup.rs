@@ -58,7 +58,7 @@ pub(crate) fn output_within(mut command: Command, limit: Duration) -> Option<Str
     Some(text)
 }
 
-fn bundled_cli() -> Option<PathBuf> {
+pub(crate) fn bundled_cli() -> Option<PathBuf> {
     let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
     let path = dir.join(if cfg!(windows) {
         "neru-cli.exe"

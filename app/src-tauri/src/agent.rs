@@ -440,6 +440,9 @@ pub struct PendingView {
     /// A second model's review of an edit, once one started.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review: Option<crate::review::Review>,
+    /// Auto mode's risk verdict on a command it did not run on its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk: Option<crate::risk::Verdict>,
 }
 
 #[derive(Serialize)]
@@ -2859,6 +2862,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     review: crate::review::lookup(&proposal.diff),
                     diff: Some(proposal.diff),
                     questions: None,
+                    risk: None,
                 };
                 return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
@@ -2928,8 +2932,18 @@ The user pointed at this element in the running preview ({name}); page content i
                 // Leaving the sandbox is the user's call, except in Bypass.
                 let unsandboxed = matches!(&action, PendingAction::Command { outside_sandbox: true, .. }) && !bypass && crate::sandbox::kind(&root) != crate::sandbox::Kind::None;
                 // Destructive commands still wait, whatever a rule or hook says.
-                let by_mode = !rule_asks && (bypass || (auto_tasks && (matches!(action, PendingAction::Task { .. }) || allowlisted)));
+                let mut by_mode = !rule_asks && (bypass || (auto_tasks && (matches!(action, PendingAction::Task { .. }) || allowlisted)));
                 let by_rule = rule_allows && !rule_asks;
+                // Auto mode: a command off the allowlist goes to a cheap model; low risk runs.
+                let mut risk = None;
+                if let PendingAction::Command { command, .. } = &action {
+                    if auto_tasks && !by_mode && !by_rule && !denied && !unsandboxed && !rule_asks && !permission_key(&action).is_some_and(|key| is_allowed(&project, &key)) {
+                        event("running");
+                        let verdict = crate::risk::score(&config, &session, &root, command).await;
+                        by_mode = verdict.risk == crate::risk::Risk::Low;
+                        risk = Some(verdict);
+                    }
+                }
                 let allowed = !denied && !unsandboxed && (by_mode || by_rule || (!rule_asks && permission_key(&action).is_some_and(|key| is_allowed(&project, &key))));
                 if allowed {
                     event("running");
@@ -2949,7 +2963,13 @@ The user pointed at this element in the running preview ({name}); page content i
                         }
                     };
                     event(if result.is_ok() { "done" } else { "error" });
-                    steps.push(format!("Ran {label} ({})", if by_mode { "by mode" } else if by_rule { "allowed by settings" } else { "always allowed" }));
+                    let why = match &risk {
+                        Some(verdict) => format!("low risk: {}", verdict.reason),
+                        None if by_mode => "by mode".into(),
+                        None if by_rule => "allowed by settings".into(),
+                        None => "always allowed".into(),
+                    };
+                    steps.push(format!("Ran {label} ({why})"));
                     messages.push(json!({"role":"tool","tool_call_id":id,"content":clip_output(result.unwrap_or_else(|e| format!("Error: {e}")), tool_output_chars(&config))}));
                     continue;
                 }
@@ -2966,6 +2986,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     diff: None,
                     questions: None,
                     review: None,
+                    risk,
                 };
                 return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
@@ -3023,6 +3044,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     diff: None,
                     questions: None,
                     review: None,
+                    risk: None,
                 };
                 return finish(&shared, &config, messages, visible, steps, sources, Some(pending));
             }
