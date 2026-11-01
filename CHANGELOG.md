@@ -2,6 +2,16 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.12.2 · Settings and status polish
+*2026-11-01*
+
+Fixes the dictation language setting and brings back the thinking orbs outside Research mode.
+
+### Fixes
+
+- In Settings → Voice, the description under Dictation language was squeezed into a column one letter wide. It reads normally again beside the language menu.
+- The quill could stay in place of the thinking orbs after a document was written, even with Research mode off. The quill now appears only while Research mode writes a paper, and the orbs come back otherwise.
+
 ## 0.12.1 · Steadier under load
 *2026-11-01*
 

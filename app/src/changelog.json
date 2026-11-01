@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.12.2",
+    "date": "2026-11-01",
+    "title": "Settings and status polish",
+    "summary": "Fixes the dictation language setting and brings back the thinking orbs outside Research mode.",
+    "sections": [
+      {
+        "title": "Fixes",
+        "items": [
+          "In Settings → Voice, the description under Dictation language was squeezed into a column one letter wide. It reads normally again beside the language menu.",
+          "The quill could stay in place of the thinking orbs after a document was written, even with Research mode off. The quill now appears only while Research mode writes a paper, and the orbs come back otherwise."
+        ]
+      }
+    ]
+  },{
     "version": "0.12.1",
     "date": "2026-11-01",
     "title": "Steadier under load",
