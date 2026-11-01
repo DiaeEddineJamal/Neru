@@ -365,7 +365,8 @@ pub fn extraction_messages(memories: &[Memory], user: &str, reply: &str) -> Vec<
     let saved = if sorted.is_empty() { "(none)".to_string() } else { sorted.iter().take(60).map(|memory| format!("- [{}] {}", memory.id, memory.text)).collect::<Vec<_>>().join("\n") };
     let clip = |text: &str, max: usize| text.chars().take(max).collect::<String>();
     json!([
-        {"role":"system","content":EXTRACT_PROMPT},
+        // On Ollama the reply is held to this shape, so a small local model cannot break the JSON.
+        {"role":"system","content":EXTRACT_PROMPT,"_format":{"type":"object","properties":{"memories":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"fact":{"type":"string"},"category":{"type":"string","enum":["about","preferences","work","projects","other"]},"replaces":{"type":["string","null"]}},"required":["fact","category"]}}},"required":["memories"]}},
         {"role":"user","content":format!("Saved memories:\n{saved}\n\nThe exchange:\n<user>\n{}\n</user>\n<assistant>\n{}\n</assistant>", clip(user.trim(), 4_000), clip(reply.trim(), 2_000))}
     ])
     .as_array()

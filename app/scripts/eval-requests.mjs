@@ -45,12 +45,14 @@ const SCENARIOS = {
   // A model calling a parameter by another name: `pattern` for search_text's `query`.
   'alias-args': { steps: [{ tool: 'search_text', args: { pattern: 'beta' } }, answer] },
   // bad-json with Ollama running beside the cloud model: the repair goes to its small local model.
-  'local-helper': { ollama: true, expectLocal: 1, steps: [{ tool: 'read_file', rawArgs: '{"path": "a.txt"' }, answer] },
+  'local-helper': { ollama: true, expectLocal: 1, expectSchema: true, steps: [{ tool: 'read_file', rawArgs: '{"path": "a.txt"' }, answer] },
 }
 
 // A scripted Ollama (native API), for scenarios with `ollama: true`. The others point OLLAMA_HOST at a
 // closed port, so an Ollama running on the machine cannot change their counts.
 let local = []
+// Whether each repair Ollama received came with a JSON schema to hold the reply to.
+let schemas = []
 const ollama = createServer((request, response) => {
   let body = ''
   request.on('data', part => { body += part })
@@ -61,7 +63,9 @@ const ollama = createServer((request, response) => {
     if (request.method !== 'POST' || !request.url.startsWith('/api/chat')) return response.writeHead(404).end()
     const payload = JSON.parse(body || '{}')
     const system = (payload.messages ?? []).find(message => message.role === 'system')?.content ?? ''
-    const reply = system.startsWith('You repair tool-call arguments') ? '{"path": "a.txt"}' : 'Eval'
+    const repair = system.startsWith('You repair tool-call arguments')
+    const reply = repair ? '{"path": "a.txt"}' : 'Eval'
+    if (repair) schemas.push(typeof payload.format === 'object' && payload.format !== null)
     local.push(payload.model)
     response.writeHead(200, { 'content-type': 'application/x-ndjson' })
     response.write(`${JSON.stringify({ model: payload.model, message: { role: 'assistant', content: reply }, done: false })}\n`)
@@ -206,6 +210,7 @@ try {
       failed = false
       seen = []
       local = []
+      schemas = []
       offered = 0
       // A fresh project and data folder each time, so no health, quota or session carries over.
       const project = join(scratch, `${profile}-${name}`, 'project')
@@ -238,6 +243,7 @@ try {
       // The servers' counts are the ground truth for what Neru's own counter reports.
       if (seen.length + local.length !== task.requests) problems.push(`${key}: Neru counted ${task.requests} requests but the models received ${seen.length + local.length} (${[...seen, ...local.map(model => `ollama ${model}`)].join(', ')})`)
       if (local.length !== onDevice) problems.push(`${key}: Neru counted ${onDevice} local requests but Ollama received ${local.length}`)
+      if (SCENARIOS[name].expectSchema && (!schemas.length || schemas.includes(false))) problems.push(`${key}: the repair reached Ollama without a JSON schema (format)`)
       if ((SCENARIOS[name].expectLocal ?? 0) > onDevice) problems.push(`${key}: expected ${SCENARIOS[name].expectLocal} request(s) on the local model, got ${onDevice}\n${log}`)
       const before = baseline[key]?.requests
       if (before === undefined) continue

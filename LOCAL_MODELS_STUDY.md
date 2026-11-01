@@ -69,7 +69,14 @@ Original plan:
 - When Ollama runs and has a suitable small model, the helper lane uses it first, before any cloud model, for titles, summaries, commit messages and repairs. It stays within the privacy rule, which local always satisfies.
 - Eval: a scenario with a local helper available shows its chore requests leaving the cloud count.
 
-### L3. Constrained repair and JSON chores on Ollama (S)
+### L3. Constrained repair and JSON chores on Ollama (S) ✅ done
+
+- A chore that must answer in JSON puts the schema on its leading system message (`_format`), the same way `_cache_break` works. `chat_request` reads it and strips it; on Ollama it becomes the request's `format`, so the model can only write JSON of that shape. It is never sent to other providers, and never with tools, since a constrained reply could not hold a tool call.
+- Used by the tool-call repair (the tool's parameter schema, without `required` so `{}` stays possible, as the prompt allows) and by memory extraction (`{"memories": [...]}` with up to 3 items and a fixed set of categories).
+- Checked: a provider test (the schema reaches Ollama as `format`, the marker is not sent, nothing reaches a cloud provider, nothing when tools are present), and the eval's scripted Ollama now fails `local-helper` if the repair arrives without a schema.
+- Not checked against a real Ollama.
+
+Original plan:
 - The repair request sends the tool's parameter schema as `format`, so the answer always parses.
 
 ### L4. Speed check (S)

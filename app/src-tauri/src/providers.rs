@@ -165,6 +165,9 @@ pub fn chat_request(
         .filter(|message| message["role"] == "system" && message["_cache_break"] == true)
         .and_then(|message| message["content"].as_str())
         .map(str::to_string);
+    // A chore that must answer in JSON can put the schema on its leading system message (`_format`);
+    // Ollama then constrains the reply to it, so a small local model cannot write broken JSON.
+    let format = messages.first().filter(|message| message["role"] == "system").map(|message| message["_format"].clone()).filter(Value::is_object);
     let messages = without_images_for_text_models(config, public_messages(messages));
     // A model without native tool calls gets the tools in its prompt instead (toolproto.rs).
     let text_protocol = tools.as_array().is_some_and(|list| !list.is_empty()) && crate::toolproto::uses_text(config);
@@ -176,7 +179,7 @@ pub fn chat_request(
     };
     let session = session_key(&messages);
     if let Some(root) = ollama_root(config) {
-        let payload = ollama_payload(config, &messages, tools);
+        let payload = ollama_payload(config, &messages, tools, format.as_ref());
         crate::fallback::note_sent(config);
         return client.post(format!("{root}/api/chat")).json(&payload);
     }
@@ -265,7 +268,7 @@ pub fn ollama_num_ctx(model: &str, prompt_tokens: usize) -> usize {
     wanted.min(cap)
 }
 
-fn ollama_payload(config: &ProviderConfig, messages: &[Value], tools: &Value) -> Value {
+fn ollama_payload(config: &ProviderConfig, messages: &[Value], tools: &Value, format: Option<&Value>) -> Value {
     let converted: Vec<Value> = messages
         .iter()
         .map(|message| {
@@ -305,6 +308,9 @@ fn ollama_payload(config: &ProviderConfig, messages: &[Value], tools: &Value) ->
     });
     if tools.as_array().is_some_and(|list| !list.is_empty()) {
         payload["tools"] = tools.clone();
+    } else if let Some(format) = format {
+        // Only without tools: a constrained reply could not hold a tool call.
+        payload["format"] = format.clone();
     }
     payload
 }
@@ -448,6 +454,7 @@ fn public_messages(messages: &[Value]) -> Vec<Value> {
                 object.remove("_map");
                 object.remove("_map_noted");
                 object.remove("_cache_break");
+                object.remove("_format");
             }
             copy
         })
@@ -1011,6 +1018,25 @@ mod tests {
         crate::limits::record_windows(&json!({"data":[{"id":"test-ollama:7b","context_length":40_960}]}), "ollama");
         assert_eq!(ollama_num_ctx("test-ollama:7b", 30_000), 40_960, "capped by what the model supports");
         assert_eq!(ollama_num_ctx("test-ollama:7b", 9_000), 16_384, "sized in steps so the model is not reloaded every round");
+    }
+
+    #[test]
+    fn a_json_chore_is_held_to_its_schema_on_ollama_only() {
+        let schema = json!({"type":"object","properties":{"path":{"type":"string"}}});
+        let messages = vec![json!({"role":"system","content":"Repair.","_format":schema}), json!({"role":"user","content":"{\"path\": \"a"})];
+        let body = |config: &ProviderConfig, tools: &Value| -> Value {
+            let request = chat_request(&Client::new(), config, &messages, tools, None).build().unwrap();
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap()
+        };
+        let ollama = ProviderConfig { provider_id: "ollama".into(), api_format: CHAT.into(), base_url: "http://localhost:11434/v1".into(), model: "gemma3:4b".into(), api_key: String::new() };
+        let local = body(&ollama, &json!([]));
+        assert_eq!(local["format"], schema);
+        assert!(local["messages"][0].get("_format").is_none(), "the marker itself is not sent");
+        let tool = json!([{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}]);
+        assert!(body(&ollama, &tool).get("format").is_none(), "a reply that may call a tool is not constrained");
+        let cloud = ProviderConfig { provider_id: "groq".into(), api_format: CHAT.into(), base_url: "https://api.groq.com/openai/v1".into(), model: "llama-3.1-8b-instant".into(), api_key: "k".into() };
+        let sent = body(&cloud, &json!([])).to_string();
+        assert!(!sent.contains("_format") && !sent.contains("\"format\""), "other providers never see it: {sent}");
     }
 
     #[test]

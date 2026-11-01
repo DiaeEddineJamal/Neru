@@ -898,8 +898,13 @@ async fn repair_arguments(state: &AppState, config: &ProviderConfig, rule: &str,
         if raw.len() > 20_000 {
             continue;
         }
+        // On Ollama the reply is held to the tool's parameters (without `required`, so {} stays possible).
+        let mut schema = spec["function"]["parameters"].clone();
+        if let Some(object) = schema.as_object_mut() {
+            object.remove("required");
+        }
         let request = vec![
-            json!({"role":"system","content":"You repair tool-call arguments. Reply with only the corrected JSON object for the tool, nothing else. Keep every value the model wrote; fix only the syntax or fill a missing field from what the arguments clearly mean. If a required value cannot be known, reply with {}."}),
+            json!({"role":"system","content":"You repair tool-call arguments. Reply with only the corrected JSON object for the tool, nothing else. Keep every value the model wrote; fix only the syntax or fill a missing field from what the arguments clearly mean. If a required value cannot be known, reply with {}.","_format":schema}),
             json!({"role":"user","content":format!("Tool:\n{}\n\nArguments as written:\n{raw}\n\nProblem: {problem}", spec["function"])}),
         ];
         let Ok(text) = small_round(state, config, rule, cancel, &request, 4_000).await else { continue };
