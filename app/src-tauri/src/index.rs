@@ -109,6 +109,9 @@ pub struct Symbol {
     pub line: u32,
     /// 0 at the top level of the file, 1 when indented (methods, nested items).
     pub depth: u8,
+    /// The declaration's head (`pub fn run(&self) -> bool`) when tree-sitter parsed the file;
+    /// empty from the regex outline.
+    pub signature: String,
 }
 
 #[derive(Clone, Debug)]
@@ -200,7 +203,7 @@ pub fn extract_symbols(lang: &str, text: &str) -> Vec<Symbol> {
     let mut css_seen: HashSet<String> = HashSet::new();
     let push = |out: &mut Vec<Symbol>, name: &str, kind: &'static str, line: usize, depth: u8| {
         if out.len() < MAX_SYMBOLS_PER_FILE {
-            out.push(Symbol { name: name.to_string(), kind, line: line as u32 + 1, depth });
+            out.push(Symbol { name: name.to_string(), kind, line: line as u32 + 1, depth, signature: String::new() });
         }
     };
     for (i, line) in text.lines().enumerate() {
@@ -882,7 +885,8 @@ fn analyze(root: &Path, stat: &Stat, budget: Option<&AtomicU64>) -> FileRec {
     }
     if !rec.lang.is_empty() {
         let text = String::from_utf8_lossy(&bytes);
-        rec.symbols = extract_symbols(rec.lang, &text);
+        // Real declarations from tree-sitter where Neru has the grammar; the regex outline elsewhere.
+        rec.symbols = crate::repomap::symbols(&stat.path, &text).unwrap_or_else(|| extract_symbols(rec.lang, &text));
     }
     rec
 }
@@ -949,6 +953,11 @@ pub struct Status {
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
 /// Lets the index tell the window about progress and external changes. Called once at startup.
+/// The app, for modules that talk to the window outside a command (semantic.rs).
+pub fn app() -> Option<&'static AppHandle> {
+    APP.get()
+}
+
 pub fn set_app(app: AppHandle) {
     let _ = APP.set(app);
 }
@@ -1242,13 +1251,45 @@ impl Handle {
                 return text.clone();
             }
         }
-        let text = index.render_map(prefix, budget);
+        let text = if prefix.is_empty() && budget >= 3_000 {
+            // A folder overview in a third, the definitions that matter most in the rest.
+            let overview = index.render_map(prefix, budget / 3);
+            let records: Vec<&FileRec> = index.records().collect();
+            let ranked = crate::repomap::render(&self.root, &records, &[], budget.saturating_sub(overview.len()));
+            if ranked.is_empty() { index.render_map(prefix, budget) } else { format!("{overview}
+{ranked}") }
+        } else {
+            index.render_map(prefix, budget)
+        };
         let mut cache = lock(&self.map_cache);
         if cache.len() > 16 {
             cache.clear();
         }
         cache.insert(key, (index.generation(), text.clone()));
         text
+    }
+
+    /// The folder tree alone (`render_map`), uncached.
+    pub fn overview(&self, prefix: &str, budget: usize) -> String {
+        self.touch();
+        self.refresh_if_stale();
+        self.read().render_map(prefix, budget)
+    }
+
+    /// The project's best-ranked definitions (repomap.rs) within `budget` characters, leaning
+    /// toward the files the agent touched lately and `focus`.
+    pub fn ranked(&self, focus: &[String], budget: usize) -> String {
+        self.touch();
+        self.refresh_if_stale();
+        let index = self.read();
+        let records: Vec<&FileRec> = index.records().collect();
+        crate::repomap::render(&self.root, &records, focus, budget)
+    }
+
+    /// Text files with their modification time, language and symbol lines, for the semantic index.
+    pub fn sources(&self) -> Vec<(String, i64, &'static str, Vec<u32>)> {
+        self.refresh_if_stale();
+        self.read().records().filter(|r| r.text && r.size <= 300_000 && !r.lang.is_empty() && !is_lock_path(&r.path)).map(|r| (r.path.clone(), r.mtime, r.lang, r.symbols.iter().filter(|s| s.depth == 0).map(|s| s.line).collect())).collect()
     }
 
     /// Every text file of the project, when there are at most `max_files` of them and they add up
@@ -1345,6 +1386,7 @@ pub fn note_changed(root: &Path, rels: &[String]) {
     if let Some(handle) = existing(root) {
         handle.note_changed(&rels);
     }
+    crate::semantic::note_changed(root);
     queue_change(rels, false);
 }
 

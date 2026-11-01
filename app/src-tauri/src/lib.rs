@@ -5,6 +5,7 @@ mod cli;
 mod cli_ui;
 mod cli_setup;
 mod commands;
+mod diagnostics;
 mod documents;
 mod engine;
 mod extras;
@@ -14,6 +15,7 @@ mod hooks;
 mod imports;
 mod index;
 mod limits;
+mod lsp;
 mod mcp;
 mod models;
 mod oauth;
@@ -24,11 +26,13 @@ mod preview_proxy;
 mod providers;
 mod queue;
 mod remote;
+mod repomap;
 mod remote_tunnel;
 mod replay;
 mod review;
 mod run_options;
 mod sandbox;
+mod semantic;
 mod sessions;
 mod settings;
 mod shells;
@@ -322,6 +326,9 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             index::index_status,
             index::index_refresh,
             index::search_files,
+            semantic::semantic_chunks,
+            semantic::semantic_store,
+            semantic::semantic_reply,
             workspace::propose_file,
             workspace::apply_pending,
             workspace::reject_pending,

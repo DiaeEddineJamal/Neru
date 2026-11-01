@@ -678,7 +678,7 @@ pub(crate) const WRITE_TOOLS: &str = r#"[
     {"type":"function","function":{"name":"propose_move","description":"Rename or move a file or folder inside the project. Missing destination folders are created. Update imports that referenced the old path afterwards.","parameters":{"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}}},
     {"type":"function","function":{"name":"propose_create_folder","description":"Create an empty folder (and any missing parents). Not needed before propose_write_file, which creates folders on its own.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
     {"type":"function","function":{"name":"propose_write_file","description":"Propose an entire text file: use for new files or full rewrites. Missing parent folders are created, so you can scaffold a whole project file by file. User reviews the diff before any write.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
-    {"type":"function","function":{"name":"run_project_task","description":"Request permission to run build, test, or lint in the open project.","parameters":{"type":"object","properties":{"task":{"type":"string","enum":["build","test","lint"]}},"required":["task"]}}},
+    {"type":"function","function":{"name":"run_project_task","description":"Request permission to run build, test, or lint in the open project. Failures are listed first. Set until_green when you mean to fix what fails and run it again: Neru counts the runs and tells you when to stop (3 at most).","parameters":{"type":"object","properties":{"task":{"type":"string","enum":["build","test","lint"]},"until_green":{"type":"boolean","description":"Part of a fix-and-rerun loop until it passes"}},"required":["task"]}}},
     {"type":"function","function":{"name":"check_preview","description":"Open the app you built in a real (hidden) browser and get back its title, visible text, and any console errors, uncaught exceptions or failed file loads. Starts the preview server when none is running. Use it after building or changing a web page to verify it works, then fix what it reports.","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Optional; defaults to the project's preview"}},"required":[]}}},
     {"type":"function","function":{"name":"run_shell_command","description":"Propose an exact PowerShell command to run in the project after user approval. Use for focused commands when build/test/lint tools are insufficient. State the command precisely. A foreground command is stopped after timeout_seconds (default 180, at most 600). Commands run in an operating-system sandbox; commands that wipe drives or system folders are refused. Set run_in_background true for commands that keep running (dev servers, file servers, watchers, long builds): it returns a shell id such as shell-1 at once; read its output with shell_output and stop it with kill_shell.","parameters":{"type":"object","properties":{"command":{"type":"string"},"run_in_background":{"type":"boolean","description":"Start it detached and return a shell id instead of waiting"},"timeout_seconds":{"type":"integer","description":"Optional limit in seconds; in the background there is none unless given"},"outside_sandbox":{"type":"boolean","description":"Commands run in a sandbox that only allows writes inside the project, temporary folders and package caches. Set true only when a command must write elsewhere (a global install, a file in the home folder); the user is always asked first"}},"required":["command"]}}},
     {"type":"function","function":{"name":"shell_output","description":"Read what a background shell printed since the last read, with its status (running, or its exit code). filter is an optional regular expression; only matching lines are returned (the others are still consumed).","parameters":{"type":"object","properties":{"id":{"type":"string","description":"The shell id, like shell-1"},"filter":{"type":"string"}},"required":["id"]}}},
@@ -1154,6 +1154,11 @@ pub(crate) fn tool_label(name: &str, args: &Value) -> String {
             let path = text("path");
             if path.is_empty() { "Mapped the project".into() } else { format!("Mapped {path}") }
         }
+        "diagnostics" => {
+            let path = text("path");
+            if path.is_empty() { "Checked project diagnostics".into() } else { format!("Checked {path} for errors") }
+        }
+        "semantic_search" => format!("Searched code for “{}”", text("query")),
         "find_symbol" => format!("Looked up symbol “{}”", if text("name").is_empty() { text("query") } else { text("name") }),
         "search_text" => format!("Searched project for “{}”", text("query")),
         "git_status" => "Checked Git status".into(),
@@ -2780,10 +2785,13 @@ The user pointed at this element in the running preview ({name}); page content i
                 }
                 let action = if name == "run_project_task" {
                     match args["task"].as_str() {
-                        Some(task @ ("build" | "test" | "lint")) => PendingAction::Task {
-                            task: task.into(),
-                            tool_call_id: Some(id.clone()),
-                        },
+                        Some(task @ ("build" | "test" | "lint")) => {
+                            tasks::want_green(&root, task, flag(&args["until_green"]));
+                            PendingAction::Task {
+                                task: task.into(),
+                                tool_call_id: Some(id.clone()),
+                            }
+                        }
                         _ => {
                             refuse(&mut messages, "task must be one of build, test, or lint");
                             continue;
@@ -3210,7 +3218,7 @@ pub async fn run_task(app: &AppHandle, session: &str, root: &Path, task: &str) -
     if policy::decide(root, &command) == policy::Decision::Deny {
         return Err("That task command is on the denylist".into());
     }
-    run_shell(app, session, root, &command).await
+    run_shell(app, session, root, &command).await.map(|output| tasks::report(root, task, output))
 }
 
 #[cfg(test)]

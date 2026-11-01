@@ -539,7 +539,15 @@ async fn run_command(job: &Job, progress: &mut Progress<'_>, name: &str, args: &
             return format!("The user declined running `{command}`. Do not retry it; mention it in your report.");
         }
     }
-    agent::run_requested(&job.app, &job.session, root, &command, false, args["timeout_seconds"].as_u64(), !outside).await.unwrap_or_else(|error| format!("Error: {error}"))
+    let output = agent::run_requested(&job.app, &job.session, root, &command, false, args["timeout_seconds"].as_u64(), !outside).await;
+    match (output, args["task"].as_str().filter(|_| task)) {
+        (Ok(output), Some(name)) => {
+            crate::tasks::want_green(root, name, args["until_green"].as_bool() == Some(true));
+            crate::tasks::report(root, name, output)
+        }
+        (Ok(output), None) => output,
+        (Err(error), _) => format!("Error: {error}"),
+    }
 }
 
 /// Runs one sub-agent to completion. It never touches the parent's conversation; a writing agent

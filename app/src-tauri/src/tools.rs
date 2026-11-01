@@ -22,7 +22,9 @@ const READ_FILES_MAX: usize = 20;
 const READ_FILES_CHARS: usize = 36_000;
 
 pub(crate) const READ_TOOLS: &str = r#"[
-    {"type":"function","function":{"name":"project_map","description":"Compact map of the project or one folder: folders, file names and the top-level symbols (functions, classes, types) of each file. Call it first on an unfamiliar codebase instead of listing folders one by one. Pass path for a folder's detail, or a file for its outline with line numbers.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"Optional folder or file"}},"required":[]}}},
+    {"type":"function","function":{"name":"project_map","description":"Compact map of the project or one folder. For the whole project: a folder overview, then the most important definitions with their signatures, ranked by how much the code uses them and how close they are to the files you are working on (pass focus to lean toward other files). Call it first on an unfamiliar codebase instead of listing folders one by one. Pass path for a folder's detail, or a file for its outline with line numbers.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"Optional folder or file"},"focus":{"type":"array","items":{"type":"string"},"description":"Optional files to rank around"}},"required":[]}}},
+    {"type":"function","function":{"name":"diagnostics","description":"Problems in a file: syntax errors, plus type and other errors from the project's language server (TypeScript, Python, Rust, Go) when one is installed. Without path, every problem the language servers reported so far. Edits already report the errors they introduce; use this to check a file before or after a change.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"Optional file"}},"required":[]}}},
+    {"type":"function","function":{"name":"semantic_search","description":"Find code by meaning rather than exact words (e.g. 'where are retries with backoff handled'), using a local embedding index of the project. Returns the best-matching code regions with path and line range. Use search_text for exact names or strings.","parameters":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"]}}},
     {"type":"function","function":{"name":"list_directory","description":"List one project directory: folders first with file counts, files with line counts. Ignored files and build folders are hidden. Use a relative path, empty for the project root.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
     {"type":"function","function":{"name":"read_file","description":"Read a project text file. Files over 1000 lines come back in windows: pass start_line and end_line (1-based) to read a specific range. Search first and read only the parts you need in large files.","parameters":{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path"]}}},
     {"type":"function","function":{"name":"read_files","description":"Read several project files in one call, each optionally limited to a line range. Use this instead of many read_file calls whenever you need more than one file.","parameters":{"type":"object","properties":{"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path"]}}},"required":["files"]}}},
@@ -40,7 +42,7 @@ pub(crate) const READ_TOOLS: &str = r#"[
 pub(crate) fn is_parallel_read(name: &str) -> bool {
     matches!(
         name,
-        "list_directory" | "read_file" | "read_files" | "search_text" | "find_files" | "project_map" | "find_symbol" | "git_status" | "git_diff" | "read_skill" | "web_search" | "fetch_url"
+        "list_directory" | "read_file" | "read_files" | "search_text" | "find_files" | "project_map" | "find_symbol" | "git_status" | "git_diff" | "read_skill" | "web_search" | "fetch_url" | "diagnostics" | "semantic_search"
     )
 }
 
@@ -95,6 +97,7 @@ fn read_large_range(path: &Path, size: u64, start: usize, end: Option<usize>) ->
 
 fn read_one(root: &Path, path: &str, start: usize, end: Option<usize>) -> Result<String, String> {
     let full = resolve_existing(root, path)?;
+    crate::repomap::note_focus(root, &[path]);
     let size = fs::metadata(&full).map(|m| m.len()).map_err(|e| e.to_string())?;
     if size > 1_000_000 && full.is_file() && size < 200_000_000 {
         return read_large_range(&full, size, start, end);
@@ -258,6 +261,16 @@ fn project_map(root: &Path, args: &Value) -> Result<String, String> {
         }
     }
     let budget = args["max_chars"].as_u64().map_or(if path.is_empty() { 9_000 } else { 14_000 }, |n| n.clamp(1_500, 30_000) as usize);
+    if path.is_empty() {
+        // The folder overview in a third, the ranked definitions (about 1.5K tokens) in the rest.
+        let focus: Vec<String> = args["focus"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+        let overview = handle.overview("", budget / 3);
+        let ranked = handle.ranked(&focus, budget.saturating_sub(overview.len()).min(6_500));
+        if !overview.is_empty() {
+            return Ok(if ranked.is_empty() { handle.map("", budget) } else { format!("{overview}
+{ranked}") });
+        }
+    }
     let map = handle.map(&path, budget);
     if map.is_empty() {
         return Err(format!("Nothing indexed under “{path}”. Check the path with list_directory."));
@@ -290,6 +303,8 @@ pub(crate) fn execute_read_tool(root: &Path, name: &str, args: &Value) -> Result
         "find_files" => find_files(root, args),
         "project_map" => project_map(root, args),
         "find_symbol" => find_symbol(root, args),
+        "diagnostics" => crate::diagnostics::tool(root, args),
+        "semantic_search" => crate::semantic::search(root, args["query"].as_str().unwrap_or(""), args["max_results"].as_u64().map_or(8, |n| n.clamp(1, 25) as usize)),
         "git_status" => serde_json::to_string(&git::status(root)?).map_err(|e| e.to_string()),
         "git_diff" => {
             let path = args["path"].as_str().unwrap_or("");

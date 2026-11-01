@@ -802,8 +802,14 @@ pub fn restore_checkpoint_file(root: &Path, id: &str) -> Result<String, String> 
 }
 
 /// Writes an approved (or auto-accepted) proposal after checking the file did not change since.
-/// Returns the checkpoint id that can put the file back.
+/// Returns the checkpoint id that can put the file back, and notes for the model: syntax and
+/// language-server errors the edit introduced (diagnostics.rs), then postEdit hook output.
 pub fn apply_edit(root: &Path, proposal: &EditProposal) -> Result<(String, String), String> {
+    apply_edit_checked(root, proposal, true)
+}
+
+/// `apply_edit`, with the edit-time checks only when `check` (the user's own saves skip them).
+fn apply_edit_checked(root: &Path, proposal: &EditProposal, check: bool) -> Result<(String, String), String> {
     if !proposal.op.is_empty() {
         let applied = apply_op(root, proposal)?;
         crate::index::note_changed(root, &[proposal.path.clone(), proposal.to.clone()]);
@@ -841,8 +847,10 @@ pub fn apply_edit(root: &Path, proposal: &EditProposal) -> Result<(String, Strin
     let checkpoint = write_checkpoint(root, &proposal.path, &proposal.original, target.exists())?;
     write_atomic(&target, proposal.content.as_bytes())?;
     crate::index::note_changed(root, &[proposal.path.clone()]);
+    crate::repomap::note_focus(root, &[&proposal.path]);
+    let checks = if check { crate::diagnostics::after_edit(root, &proposal.path, &proposal.original, &proposal.content) } else { String::new() };
     let hooks = crate::hooks::after_edit(root, &proposal.path);
-    Ok((checkpoint, hooks))
+    Ok((checkpoint, format!("{checks}{hooks}")))
 }
 
 /// What a checkpoint recorded: (relative path, original text, whether the file existed).
@@ -929,7 +937,7 @@ pub fn apply_pending_in(shared: &sessions::Shared, root: &Path) -> Result<String
             proposal,
             tool_call_id,
         } => {
-            let (checkpoint_id, _) = apply_edit(root, &proposal)?;
+            let (checkpoint_id, notes) = apply_edit(root, &proposal)?;
             crate::activity::note(&runtime.summary.id, crate::activity::Kind::Edit, &proposal.path);
             runtime.pending = None;
             let transcript_len = runtime.transcript.len();
@@ -938,7 +946,7 @@ pub fn apply_pending_in(shared: &sessions::Shared, root: &Path) -> Result<String
                 transcript_len,
             });
             if let Some(id) = tool_call_id {
-                runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":format!("Applied {}{}.", if proposal.delete { "deletion of " } else { "" }, proposal.path)}));
+                runtime.conversation.push(serde_json::json!({"role":"tool","tool_call_id":id,"content":format!("Applied {}{}.{notes}", if proposal.delete { "deletion of " } else { "" }, proposal.path)}));
             }
             runtime.save()?;
             Ok(checkpoint_id)
@@ -1022,7 +1030,7 @@ pub fn restore_checkpoint(id: String, state: State<'_, AppState>) -> Result<(), 
 pub fn save_file(path: String, content: String, state: State<'_, AppState>) -> Result<String, String> {
     let root = project_root(&state)?;
     let proposal = make_proposal(&root, &path, content)?;
-    let (checkpoint, _) = apply_edit(&root, &proposal)?;
+    let (checkpoint, _) = apply_edit_checked(&root, &proposal, false)?;
     Ok(checkpoint)
 }
 
@@ -1209,6 +1217,6 @@ pub fn file_action(action: String, path: String, to: Option<String>, state: Stat
         }
         _ => return Err("Unknown file action".into()),
     };
-    let (checkpoint, _) = apply_edit(&root, &proposal)?;
+    let (checkpoint, _) = apply_edit_checked(&root, &proposal, false)?;
     Ok(checkpoint)
 }
