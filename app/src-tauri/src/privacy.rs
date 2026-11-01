@@ -25,7 +25,7 @@ pub fn privacy_of(config: &ProviderConfig) -> &'static str {
     }
     match config.provider_id.as_str() {
         "gemini" | "mistral" | "openrouter" | "deepseek" => "may-train",
-        "groq" | "openai" | "anthropic" => "no-training",
+        "groq" | "openai" | "anthropic" | "cloudflare" => "no-training",
         _ => "unknown",
     }
 }
@@ -150,6 +150,9 @@ pub fn provider_name(provider_id: &str) -> &str {
         "openrouter" => "OpenRouter",
         "groq" => "Groq",
         "huggingface" => "Hugging Face",
+        "cloudflare" => "Cloudflare Workers AI",
+        "sambanova" => "SambaNova",
+        "zai" => "Z.AI",
         "ollama" => "Ollama",
         "local" => "Your local gateway",
         "openai" => "OpenAI",

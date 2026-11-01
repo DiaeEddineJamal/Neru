@@ -12,14 +12,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AppState, ProviderConfig, providers};
 
-/// Providers with a free plan that Neru may fall back to, best for coding first. Groq comes last:
-/// its free per-minute token cap is too small for most coding requests.
-pub const FREE_PROVIDERS: &[&str] = &["nvidia", "modelscope", "gemini", "cerebras", "mistral", "openrouter", "huggingface", "groq"];
+/// Providers with a free plan that Neru may fall back to, best for coding first. Groq comes late: its
+/// free per-minute token cap is too small for most coding requests. SambaNova's free plan allows too few
+/// requests a day to work on, so it is only a last fallback. Hugging Face is not here: its free credit is
+/// a few cents a month, so it is billed like a paid key.
+pub const FREE_PROVIDERS: &[&str] = &["nvidia", "modelscope", "gemini", "cerebras", "mistral", "openrouter", "cloudflare", "zai", "groq", "sambanova"];
+
+/// Whether a model is on a free provider's free plan. Z.ai serves its GLM Flash models free and bills
+/// the others.
+fn free_on(provider_id: &str, model: &str) -> bool {
+    match provider_id {
+        "zai" => model.is_empty() || model.to_lowercase().contains("flash"),
+        _ => true,
+    }
+}
 
 /// A request on a free plan: a free provider, or a provider's free model. These get the economy
 /// treatment (smaller context, paced requests) so their quotas last.
 pub fn is_free_plan(config: &ProviderConfig) -> bool {
-    FREE_PROVIDERS.contains(&config.provider_id.as_str()) || is_free_model(&config.model)
+    (FREE_PROVIDERS.contains(&config.provider_id.as_str()) && free_on(&config.provider_id, &config.model)) || is_free_model(&config.model)
 }
 
 /// What Neru remembers about each model between requests, kept on disk so a model that ran out of
@@ -365,7 +376,15 @@ fn switch_score(current: &ProviderConfig, candidate: &ProviderConfig, model: &st
     if candidate.provider_id == current.provider_id {
         score += 6;
     }
-    for quota in crate::limits::quotas(model) {
+    // A prompt cache that is still warm makes the next request cheaper and faster.
+    if crate::usage::cache_warm(&candidate.provider_id, model) {
+        score += 5;
+    }
+    // Models without native tool calls work on the text protocol, which is less reliable.
+    if crate::models::supports_tools(&candidate.provider_id, model) == Some(false) {
+        score -= 15;
+    }
+    for quota in crate::limits::quotas(&ProviderConfig { model: model.to_string(), ..candidate.clone() }) {
         if let (Some(limit), Some(remaining)) = (quota.limit, quota.remaining) {
             if remaining == 0 {
                 score -= if quota.label.contains("per day") { 200 } else { 30 };
@@ -382,6 +401,7 @@ fn switch_score(current: &ProviderConfig, candidate: &ProviderConfig, model: &st
 fn allowed(current: &ProviderConfig, candidate: &ProviderConfig, model: &str) -> bool {
     let paid_ok = candidate.provider_id != "openrouter" || (current.provider_id == "openrouter" && !is_free_model(&current.model) && current.model != "openrouter/free");
     (paid_ok || is_free_model(model) || model == "openrouter/free")
+        && free_on(&candidate.provider_id, model)
         && !(candidate.provider_id == current.provider_id && model == current.model)
         && !resting(&candidate.provider_id, model)
         && !blocked(&candidate.provider_id, model)
@@ -396,7 +416,13 @@ pub async fn next_model(state: &AppState, current: &ProviderConfig, error: &str,
     crate::models::note_failure(current, error);
     let account = is_client_locked(error) || needs_credits(error);
     let count = note_failure(&current.provider_id, &current.model);
-    let pause = rest_for(error, count);
+    let mut pause = rest_for(error, count);
+    if is_daily(error) && is_rate_limited(error) && !account {
+        // A spent daily quota comes back when the provider's day turns over (midnight Pacific for
+        // Gemini, UTC for the others), not after a fixed rest.
+        crate::limits::note_daily_exhausted(current);
+        pause = crate::limits::until_daily_reset(&current.provider_id);
+    }
     rest(&current.provider_id, &current.model, pause);
     if account {
         // A locked tier fails every free model alike; an empty account every paid one.
@@ -503,9 +529,78 @@ pub async fn helper_model(config: &ProviderConfig) -> Option<String> {
     models.into_iter().next()
 }
 
+/// The small models chosen lately, by main key, model and privacy rule.
+static SMALL: LazyLock<Mutex<HashMap<String, (Instant, Option<ProviderConfig>)>>> = LazyLock::new(Default::default);
+
+/// The fastest capable model across the saved free keys and the main key, for chores: session titles,
+/// conversation summaries, commit messages, repairing tool calls, planning research queries. Groq,
+/// Cerebras, Flash-class and local models come first; providers the privacy `rule` blocks are skipped.
+/// None when nothing suitable is saved: callers use the main model then. Chosen lists are cached for ten
+/// minutes.
+pub async fn small_model(state: &AppState, main: &ProviderConfig, rule: &str) -> Option<ProviderConfig> {
+    let id = format!("{}\n{}\n{}\n{rule}", main.provider_id, main.base_url, main.model);
+    if let Some((at, chosen)) = SMALL.lock().ok().and_then(|small| small.get(&id).cloned()) {
+        if at.elapsed() < LIST_TTL && chosen.as_ref().is_none_or(|chosen| !resting(&chosen.provider_id, &chosen.model)) {
+            return chosen;
+        }
+    }
+    let mut candidates = vec![main.clone()];
+    if let Ok(keys) = state.provider_keys.lock() {
+        for (key_id, key) in keys.iter() {
+            let Some((provider_id, base_url)) = key_id.split_once('\n') else { continue };
+            if !FREE_PROVIDERS.contains(&provider_id) || provider_id == "sambanova" || (provider_id == main.provider_id && base_url == main.base_url) {
+                continue;
+            }
+            candidates.push(ProviderConfig { provider_id: provider_id.into(), api_format: "openai-chat".into(), base_url: base_url.into(), api_key: key.clone(), model: String::new() });
+        }
+    }
+    candidates.retain(|candidate| crate::privacy::allows(rule, candidate));
+    let mut lists = tokio::task::JoinSet::new();
+    for (index, candidate) in candidates.iter().cloned().enumerate() {
+        lists.spawn(async move { (index, listed_models(&candidate).await) });
+    }
+    let mut best: Option<(i64, ProviderConfig)> = None;
+    while let Some(Ok((index, models))) = lists.join_next().await {
+        let candidate = &candidates[index];
+        for model in models {
+            if !allowed(main, candidate, &model) {
+                continue;
+            }
+            let Some(score) = small_score(&candidate.provider_id, &model) else { continue };
+            if best.as_ref().is_none_or(|(top, _)| score > *top) {
+                best = Some((score, ProviderConfig { model, api_format: if index == 0 { candidate.api_format.clone() } else { "openai-chat".into() }, ..candidate.clone() }));
+            }
+        }
+    }
+    let chosen = best.map(|(_, config)| config);
+    if let Ok(mut small) = SMALL.lock() {
+        small.insert(id, (Instant::now(), chosen.clone()));
+    }
+    chosen
+}
+
+/// How well a model suits quick chores: fast hosts and fast variants first, enough skill to follow a
+/// format. None for models too weak, too slow (long thinkers) or not meant for chat.
+fn small_score(provider_id: &str, model: &str) -> Option<i64> {
+    let strength = coding_score(model);
+    let speed = helper_speed(model);
+    let name = model.to_lowercase();
+    if strength < 45 || speed < 0 || ["guard", "embed", "vision", "audio", "tts", "whisper"].iter().any(|part| name.contains(part)) {
+        return None;
+    }
+    let host = match provider_id {
+        "groq" | "cerebras" => 30,
+        "ollama" | "local" => 20,
+        "gemini" | "mistral" => 10,
+        _ => 0,
+    };
+    Some(host + speed * 2 + strength / 3)
+}
+
 /// A bonus for models built to answer fast, a penalty for long-thinking ones.
 fn helper_speed(model: &str) -> i64 {
-    let name = model.to_lowercase();
+    // "gemini" contains "mini", which says nothing about speed.
+    let name = model.to_lowercase().replace("gemini", "gem");
     let fast = ["flash", "haiku", "fast", "turbo", "instant", "mini", "lite", "highspeed"].iter().any(|part| name.contains(part));
     let slow = ["reasoning", "thinking", "-r1", "deepseek-r", "qwq", "o1", "o3"].iter().any(|part| name.contains(part));
     if fast { 15 } else if slow { -15 } else { 0 }
@@ -613,12 +708,45 @@ mod tests {
         note_failure("test-other", "kimi-k2-test");
         assert!(switch_score(&current, &other, "kimi-k2-test") < before);
         // A spent daily quota rules a model out in practice.
-        crate::limits::set_quotas("deepseek-v3-test", vec![crate::limits::Quota { label: "Requests per day".into(), limit: Some(50), remaining: Some(0), resets_in: None }]);
+        crate::limits::set_quotas(&ProviderConfig { model: "deepseek-v3-test".into(), ..current.clone() }, vec![crate::limits::Quota { label: "Requests per day".into(), limit: Some(50), remaining: Some(0), resets_in: None }]);
         assert!(switch_score(&current, &current, "deepseek-v3-test") < switch_score(&current, &current, "llama-3.1-8b"));
         // OpenRouter's paid models stay out unless the user was already on one.
         let router = ProviderConfig { provider_id: "openrouter".into(), model: "qwen/qwen3-coder:free".into(), ..current.clone() };
         assert!(!allowed(&router, &router, "anthropic/claude-sonnet-4"));
         assert!(allowed(&router, &router, "moonshotai/kimi-k2:free"));
+    }
+
+    #[test]
+    fn free_providers_bill_only_what_they_bill() {
+        let zai = ProviderConfig { provider_id: "zai".into(), api_format: "openai-chat".into(), base_url: String::new(), api_key: String::new(), model: "glm-4.7-flash".into() };
+        assert!(is_free_plan(&zai));
+        assert!(!is_free_plan(&ProviderConfig { model: "glm-4.7".into(), ..zai.clone() }), "Z.ai bills its other models");
+        assert!(!allowed(&zai, &zai, "glm-4.7"));
+        assert!(allowed(&zai, &zai, "glm-4.5-flash"));
+        let hf = ProviderConfig { provider_id: "huggingface".into(), model: "openai/gpt-oss-120b".into(), ..zai.clone() };
+        assert!(!is_free_plan(&hf), "Hugging Face's credit is a few cents");
+    }
+
+    #[test]
+    fn small_lane_prefers_fast_capable_models() {
+        let groq = small_score("groq", "llama-3.3-70b-versatile").unwrap();
+        let big = small_score("nvidia", "qwen/qwen3-coder-480b-a35b-instruct").unwrap();
+        assert!(groq > big, "a fast host beats a stronger slow model for chores");
+        assert!(small_score("gemini", "gemini-3.8-flash").unwrap() > small_score("gemini", "gemini-3.8-pro").unwrap());
+        assert!(small_score("groq", "deepseek-r1-distill-llama-70b").is_none(), "long thinkers are too slow");
+        assert!(small_score("groq", "llama-guard-4-12b").is_none());
+        assert!(small_score("groq", "llama-3.2-1b-preview").is_none(), "too weak to follow a format");
+    }
+
+    #[test]
+    fn warm_caches_and_native_tools_win_ties() {
+        let current = ProviderConfig { provider_id: "test-warm".into(), api_format: "openai-chat".into(), base_url: String::new(), api_key: String::new(), model: "qwen3-coder-a".into() };
+        let before = switch_score(&current, &current, "glm-4.6-warm");
+        crate::usage::record_cached(&ProviderConfig { model: "glm-4.6-warm".into(), ..current.clone() }, 2_000, 10, 1_500);
+        assert_eq!(switch_score(&current, &current, "glm-4.6-warm"), before + 5);
+        let list = crate::models::parse_models(&serde_json::json!({"data":[{"id":"glm-4.6-text","supported_parameters":["temperature"]}]}), "test-warm").unwrap();
+        crate::models::remember("test-warm", &list);
+        assert!(switch_score(&current, &current, "glm-4.6-text") < switch_score(&current, &current, "glm-4.6-other"));
     }
 
     #[test]

@@ -44,6 +44,9 @@ pub struct ModelInfo {
     pub modalities: Modalities,
     pub vision: bool,
     pub tools: bool,
+    /// "native" when the model takes a tool list, "text" when Neru describes the tools in the prompt and
+    /// reads `<tool_call>` blocks back (models served without tool calling).
+    pub protocol: String,
     pub reasoning: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_window: Option<usize>,
@@ -395,6 +398,7 @@ fn info_from_item(item: &Value, provider_id: &str) -> Option<ModelInfo> {
         modalities: Modalities { input: modalities_in, output: vec!["text".into()] },
         vision,
         tools,
+        protocol: if tools { "native" } else { "text" }.into(),
         reasoning,
         context_window: item_window(item),
         free,
@@ -438,7 +442,8 @@ pub fn parse_models(body: &Value, provider_id: &str) -> Result<Vec<ModelInfo>, S
 
 // ---------- learned capabilities ----------
 
-static KNOWN: LazyLock<Mutex<HashMap<String, (bool, bool)>>> = LazyLock::new(Default::default);
+/// Per model: (reads images, said by the provider rather than guessed, takes a tool list).
+static KNOWN: LazyLock<Mutex<HashMap<String, (bool, bool, bool)>>> = LazyLock::new(Default::default);
 
 fn known_key(provider_id: &str, model: &str) -> String {
     format!("{provider_id}\n{model}")
@@ -447,7 +452,7 @@ fn known_key(provider_id: &str, model: &str) -> String {
 pub fn remember(provider_id: &str, models: &[ModelInfo]) {
     if let Ok(mut known) = KNOWN.lock() {
         for info in models {
-            known.insert(known_key(provider_id, &info.id), (info.vision, info.source == "metadata"));
+            known.insert(known_key(provider_id, &info.id), (info.vision, info.source == "metadata", info.tools));
         }
     }
 }
@@ -458,7 +463,12 @@ pub fn certainly_text_only(provider_id: &str, model: &str) -> bool {
         .lock()
         .ok()
         .and_then(|known| known.get(&known_key(provider_id, model)).copied())
-        .is_some_and(|(vision, from_provider)| !vision && from_provider)
+        .is_some_and(|(vision, from_provider, _)| !vision && from_provider)
+}
+
+/// Whether a listed model takes a tool list, when Neru has seen it in a model list.
+pub fn supports_tools(provider_id: &str, model: &str) -> Option<bool> {
+    KNOWN.lock().ok().and_then(|known| known.get(&known_key(provider_id, model)).map(|(_, _, tools)| *tools))
 }
 
 // ---------- probe outcome ----------
@@ -497,7 +507,7 @@ const STRONG_UNAVAILABLE: &[&str] = &[
     "no longer supported", "been deprecated", "has been retired", "has been shut down", "not found for account", "function not found",
     "is not supported by the provider", "model is not supported", "unsupported model", "not available for this account",
     "not enabled for this account", "degraded function", "do not have access to", "don't have access to", "not authorized to access",
-    "not deployed", "model access denied", "no endpoints found",
+    "not deployed", "model access denied", "no endpoints found", "only supports interactions api", "no longer available to new users",
 ];
 
 /// A test parameter Neru sent was refused; the model itself exists.
@@ -603,7 +613,15 @@ pub fn classify_error_text(error: &str) -> Option<Verdict> {
 
 // ---------- cache of probe results ----------
 
-const TTL_SECONDS: u64 = 24 * 3600;
+/// Verdicts last until the weekly re-check (`sweep`) renews them, with a day to spare.
+const TTL_SECONDS: u64 = 8 * 24 * 3600;
+/// How often every listed model is checked again.
+const SWEEP_SECONDS: u64 = 7 * 24 * 3600;
+/// The entry in a scope that records the last sweep.
+const SWEEP_KEY: &str = "\u{0}sweep";
+/// "Not found" or "not supported" failures within a day that hide a model even when the provider's
+/// wording was not clear enough to say so the first time.
+const STRIKES: u32 = 3;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Entry {
@@ -639,6 +657,10 @@ fn load_cache() -> Scopes {
 }
 
 fn save_cache(scopes: &Scopes) {
+    // Tests must not touch the user's data folder.
+    if cfg!(test) {
+        return;
+    }
     if let (Some(path), Ok(text)) = (cache_path(), serde_json::to_string(scopes)) {
         let _ = std::fs::write(path, text);
     }
@@ -678,19 +700,53 @@ fn known_unavailable(config: &ProviderConfig, model: &str) -> bool {
     cached(config, model).is_some_and(|entry| entry.status == "unavailable")
 }
 
-/// Records a chat request that failed with "this model does not exist / is not supported".
+/// Records a chat request that failed with "this model does not exist / is not supported". Clear answers
+/// hide the model at once; vaguer "not found" or "unsupported" failures hide it after three in a day.
 pub fn note_failure(config: &ProviderConfig, error: &str) {
     if let Some(verdict @ Verdict::Unavailable(_)) = classify_error_text(error) {
         store(config, &config.model, &verdict);
+        return;
     }
+    let lower = error.to_lowercase();
+    let vague = ["not found", "not supported", "unsupported", "http 404", "does not support"].iter().any(|marker| lower.contains(marker));
+    if !vague || crate::fallback::is_rate_limited(error) {
+        return;
+    }
+    let Ok(mut cache) = CACHE.lock() else { return };
+    let entries = cache.entry(scope(config)).or_default();
+    let strikes = entries
+        .get(&config.model)
+        .filter(|entry| entry.at + 24 * 3600 > now())
+        .and_then(|entry| entry.status.strip_prefix("strike:").and_then(|count| count.parse::<u32>().ok()))
+        .unwrap_or(0)
+        + 1;
+    let entry = if strikes >= STRIKES {
+        Entry { status: "unavailable".into(), reason: format!("Failed {STRIKES} times in a day: {}", excerpt(error)), at: now() }
+    } else {
+        Entry { status: format!("strike:{strikes}"), reason: excerpt(error), at: now() }
+    };
+    entries.insert(config.model.clone(), entry);
+    save_cache(&cache);
 }
 
 fn apply_cache(config: &ProviderConfig, models: &mut [ModelInfo]) {
     for info in models {
-        if let Some(entry) = cached(config, &info.id) {
+        if let Some(entry) = cached(config, &info.id).filter(|entry| matches!(entry.status.as_str(), "ok" | "unavailable")) {
             info.verified = entry.status;
             info.verified_reason = Some(entry.reason);
         }
+    }
+}
+
+/// When every model on this key was last checked (Unix seconds), 0 when never.
+fn last_sweep(config: &ProviderConfig) -> u64 {
+    CACHE.lock().ok().and_then(|cache| cache.get(&scope(config)).and_then(|entries| entries.get(SWEEP_KEY)).map(|entry| entry.at)).unwrap_or(0)
+}
+
+fn mark_sweep(config: &ProviderConfig) {
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.entry(scope(config)).or_default().insert(SWEEP_KEY.into(), Entry { status: "sweep".into(), reason: String::new(), at: now() });
+        save_cache(&cache);
     }
 }
 
@@ -702,11 +758,9 @@ pub async fn usable_ids(config: &ProviderConfig) -> Vec<String> {
     let client = Client::new();
     let Ok(mut models) = fetch_list(&client, config).await else { return Vec::new() };
     apply_cache(config, &mut models);
-    models
-        .into_iter()
-        .filter(|info| info.verified != "unavailable" && info.tools)
-        .map(|info| info.id)
-        .collect()
+    remember(&config.provider_id, &models);
+    // Models without tool calling run on the text protocol (toolproto.rs); the switch ranks them lower.
+    models.into_iter().filter(|info| info.verified != "unavailable").map(|info| info.id).collect()
 }
 
 /// Models MiniMax documents; its API has no reliable model list.
@@ -773,10 +827,37 @@ async fn ollama_details(client: &Client, config: &ProviderConfig, body: &mut Val
     }
 }
 
+/// Cloudflare Workers AI lists its models on the account (`/ai/models/search`), not on the
+/// OpenAI-compatible path; text-generation models are turned into a `/models`-shaped list.
+async fn cloudflare_models(client: &Client, config: &ProviderConfig) -> Option<Value> {
+    let root = provider_root(&config.base_url, "/ai/v1")?;
+    let request = providers::authorize(client.get(format!("{root}/ai/models/search?task=Text%20Generation&per_page=200")), config);
+    let body = json_ok(request).await?;
+    Some(cloudflare_list(&body))
+}
+
+fn cloudflare_list(body: &Value) -> Value {
+    let data: Vec<Value> = body["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let name = item["name"].as_str()?;
+            let property = |id: &str| item["properties"].as_array().into_iter().flatten().find(|p| p["property_id"] == id).map(|p| p["value"].clone());
+            let mut entry = json!({"id": name, "capabilities": {"function_calling": property("function_calling").is_some_and(|v| v == true || v == "true")}});
+            if let Some(window) = property("context_window").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))) {
+                entry["context_window"] = json!(window);
+            }
+            Some(entry)
+        })
+        .collect();
+    json!({"data": data})
+}
+
 /// OpenRouter's list for this key: `/models/user` leaves out models the account's privacy settings,
-/// provider preferences or guardrails block (the ones that fail with "No endpoints found"). Models
-/// without tool calling cannot run Neru's agent, and a key on the free tier cannot call paid models,
-/// so both are left out too.
+/// provider preferences or guardrails block (the ones that fail with "No endpoints found"). A key on the
+/// free tier cannot call paid models, so those are left out too; models without tool calling stay, on
+/// the text protocol.
 async fn openrouter_for_key(client: &Client, config: &ProviderConfig) -> Option<Vec<ModelInfo>> {
     let request = providers::authorize(client.get(format!("{}/models/user", config.base_url)), config);
     let body = json_ok(request).await.filter(|body| body["data"].is_array())?;
@@ -784,7 +865,7 @@ async fn openrouter_for_key(client: &Client, config: &ProviderConfig) -> Option<
     let free_tier = key.as_ref().is_some_and(|key| key["data"]["is_free_tier"].as_bool() == Some(true));
     crate::limits::record_windows(&body, &config.provider_id);
     let mut models = parse_models(&body, &config.provider_id).ok()?;
-    models.retain(|info| info.tools && (!free_tier || info.free));
+    models.retain(|info| !free_tier || info.free);
     Some(models)
 }
 
@@ -805,6 +886,12 @@ async fn fetch_list(client: &Client, config: &ProviderConfig) -> Result<Vec<Mode
     if provider_id == "openrouter" && !config.api_key.is_empty() {
         if let Some(models) = openrouter_for_key(client, config).await {
             return Ok(models);
+        }
+    }
+    if provider_id == "cloudflare" {
+        if let Some(body) = cloudflare_models(client, config).await {
+            crate::limits::record_windows(&body, provider_id);
+            return parse_models(&body, provider_id);
         }
     }
     let request = providers::models_request(client, config).timeout(Duration::from_secs(15));
@@ -868,15 +955,27 @@ const NVIDIA_NOT_SERVED: &[&str] = &[
 
 static VERIFYING: AtomicBool = AtomicBool::new(false);
 
-/// Checks, one at a time and within the free plan's pace, the models nobody has checked yet, so the
-/// next listing drops the ones the provider refuses. Runs once at a time; at most 25 per run.
+/// Checks, one at a time and within the free plan's pace, the models that need it, so the next listing
+/// hides the ones the provider refuses: on NVIDIA (whose catalog lists far more than a free key can call)
+/// the ones nobody has checked yet, at most 25 per run; on every provider with a test request, all of
+/// them once a week (the weekly re-probe). Runs once at a time.
 fn verify_new(config: &ProviderConfig, models: &[ModelInfo]) {
-    if config.provider_id != "nvidia" || config.api_key.is_empty() {
+    if config.api_key.is_empty() || probe_skip(&config.provider_id).is_some() {
         return;
     }
-    let unchecked: Vec<String> = models.iter().filter(|info| info.verified == "unknown").map(|info| info.id.clone()).take(25).collect();
+    let weekly = now().saturating_sub(last_sweep(config)) > SWEEP_SECONDS;
+    let unchecked: Vec<String> = if weekly {
+        models.iter().map(|info| info.id.clone()).take(probe_budget(&config.provider_id)).collect()
+    } else if config.provider_id == "nvidia" {
+        models.iter().filter(|info| info.verified == "unknown").map(|info| info.id.clone()).take(25).collect()
+    } else {
+        Vec::new()
+    };
     if unchecked.is_empty() || VERIFYING.swap(true, Ordering::SeqCst) {
         return;
+    }
+    if weekly {
+        mark_sweep(config);
     }
     let template = config.clone();
     tauri::async_runtime::spawn(async move {
@@ -927,8 +1026,7 @@ pub async fn list_models(provider_id: String, api_format: String, base_url: Stri
     let mut models = fetch_list(&Client::new(), &config).await?;
     apply_cache(&config, &mut models);
     verify_new(&config, &models);
-    // A model this key's provider refused is not offered at all.
-    models.retain(|info| info.verified != "unavailable" || info.id == config.model);
+    // Models this key's provider refused stay in the list, marked: the picker hides them behind "Show hidden".
     remember(&config.provider_id, &models);
     sort_for_coding(&mut models);
     Ok(models)
@@ -1483,6 +1581,8 @@ mod tests {
         let nvidia = r#"{"status":404,"title":"Not Found","detail":"Function '0f8f6b2e-1234': Not found for account 'abcd'"}"#;
         assert!(matches!(classify_probe(404, nvidia), Verdict::Unavailable(_)));
         assert!(matches!(classify_probe(404, "404 page not found"), Verdict::Unknown(_)));
+        // Gemini's agent previews answer only on another API (checked 2026-11-01).
+        assert!(matches!(classify_probe(400, r#"{"error":{"message":"This model only supports Interactions API."}}"#), Verdict::Unavailable(_)));
         let nvidia_400 = r#"{"error":{"message":"The model `foo/bar` is not supported by the provider."}}"#;
         assert!(matches!(classify_probe(400, nvidia_400), Verdict::Unavailable(_)));
         assert!(matches!(classify_probe(400, r#"{"error":{"message":"The model gpt-9 does not exist or you do not have access to it."}}"#), Verdict::Unavailable(_)));
@@ -1539,6 +1639,19 @@ mod tests {
     }
 
     #[test]
+    fn cloudflare_lists_become_models_with_tools_and_windows() {
+        let body = json!({"result":[
+            {"name":"@cf/openai/gpt-oss-120b","properties":[{"property_id":"context_window","value":"128000"},{"property_id":"function_calling","value":"true"}]},
+            {"name":"@cf/meta/llama-3.2-3b-instruct","properties":[{"property_id":"context_window","value":128000}]},
+        ]});
+        let models = parse_models(&cloudflare_list(&body), "cloudflare").unwrap();
+        assert_eq!(models.len(), 2);
+        assert!(models[0].tools && models[0].protocol == "native");
+        assert_eq!(models[0].context_window, Some(128_000));
+        assert!(!models[1].tools && models[1].protocol == "text", "no function calling: the text protocol");
+    }
+
+    #[test]
     fn unavailable_answers_are_remembered_and_expire_by_scope() {
         let config = ProviderConfig {
             provider_id: "test-provider-cache".into(),
@@ -1558,6 +1671,21 @@ mod tests {
         // Rate limits are not stored.
         note_failure(&other_key, "Provider HTTP 429 Too Many Requests");
         assert!(cached(&other_key, "acme/gone").is_none());
+        // A vague "not supported" hides a model only the third time in a day.
+        let vague = ProviderConfig { model: "acme/flaky".into(), ..other_key.clone() };
+        let mut flaky = vec![info_from_item(&json!({"id":"acme/flaky"}), "nvidia").unwrap()];
+        for _ in 0..2 {
+            note_failure(&vague, "Provider stream error: this endpoint is not supported for the request");
+            apply_cache(&vague, &mut flaky);
+            assert_eq!(flaky[0].verified, "unknown", "strikes are not verdicts");
+        }
+        note_failure(&vague, "Provider stream error: this endpoint is not supported for the request");
+        apply_cache(&vague, &mut flaky);
+        assert_eq!(flaky[0].verified, "unavailable");
+        assert!(flaky[0].verified_reason.as_deref().unwrap().starts_with("Failed 3 times"));
+        if let Ok(mut cache) = CACHE.lock() {
+            cache.remove(&scope(&vague));
+        }
         if let Ok(mut cache) = CACHE.lock() {
             cache.remove(&scope(&config));
             save_cache(&cache);
@@ -1604,6 +1732,41 @@ mod live_probe {
             std::fs::write(&out, serde_json::to_string_pretty(&results).unwrap()).unwrap();
         });
     }
+    /// Whether each saved key's provider accepts `stream_options.include_usage` on a streaming request, and
+    /// whether usage then arrives. Prints provider, status and usage only, never a key.
+    /// Run: cargo test --lib live_probe::stream_options -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn stream_options_saved_keys() {
+        let mut current = ProviderConfig { provider_id: String::new(), api_format: String::new(), base_url: String::new(), api_key: String::new(), model: String::new() };
+        let mut keys = HashMap::new();
+        crate::settings::load(&mut current, &mut keys, &mut Default::default());
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let client = Client::new();
+            for (id, key) in &keys {
+                let Some((provider, base_url)) = id.split_once('\n') else { continue };
+                let config = ProviderConfig { provider_id: provider.into(), api_format: "openai-chat".into(), base_url: base_url.into(), api_key: key.clone(), model: String::new() };
+                let model = std::env::var("NERU_PROBE_MODEL").ok().or_else(|| (provider == current.provider_id).then(|| current.model.clone()).filter(|model| !model.is_empty()));
+                let model = match model {
+                    Some(model) => model,
+                    None => fetch_list(&client, &config).await.ok().and_then(|list| list.into_iter().next()).map(|info| info.id).unwrap_or_default(),
+                };
+                let body = json!({"model": model.trim_start_matches("models/"), "messages":[{"role":"user","content":"Say hi"}], "max_tokens": 16, "stream": true, "stream_options": {"include_usage": true}});
+                let request = providers::authorize(client.post(format!("{base_url}/chat/completions")).json(&body), &config);
+                match request.send().await {
+                    Ok(response) => {
+                        let status = response.status().as_u16();
+                        let text = response.text().await.unwrap_or_default();
+                        let usage = text.lines().any(|line| line.contains("\"usage\"") && !line.contains("\"usage\":null"));
+                        eprintln!("{provider:<12} {model:<40} HTTP {status} usage={usage} {}", if status >= 400 { excerpt(&text) } else { String::new() });
+                    }
+                    Err(error) => eprintln!("{provider:<12} {model:<40} request failed: {}", error.to_string().chars().take(80).collect::<String>()),
+                }
+            }
+        });
+    }
+
     /// Compares OpenRouter's public list with the per-account one. NERU_PROBE_OUT gets the ids.
     #[test]
     #[ignore]

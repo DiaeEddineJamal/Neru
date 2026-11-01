@@ -577,6 +577,17 @@ pub async fn doctor(app: AppHandle) -> Result<Vec<Check>, String> {
             checks.push(Check { name: "Model answers".into(), ok: fine, detail, fix: "Pick another model (/model), add credits, or add a key for another provider.".into() });
         }
     }
+    if config.provider_id == "ollama" {
+        // Read from Neru's environment, which on Windows and macOS usually matches what the Ollama app sees.
+        let flash = std::env::var("OLLAMA_FLASH_ATTENTION").is_ok_and(|value| value.trim() == "1");
+        let cache = std::env::var("OLLAMA_KV_CACHE_TYPE").ok().filter(|value| matches!(value.trim(), "q8_0" | "q4_0"));
+        let detail = match (flash, &cache) {
+            (true, Some(kind)) => format!("Flash attention on, KV cache {kind}"),
+            (true, None) => "Flash attention on; the KV cache is full size".into(),
+            (false, _) => "Flash attention is off".into(),
+        };
+        checks.push(Check { name: "Ollama speed".into(), ok: flash && cache.is_some(), detail, fix: "Set OLLAMA_FLASH_ATTENTION=1 and OLLAMA_KV_CACHE_TYPE=q8_0 for Ollama (on Windows: setx OLLAMA_FLASH_ATTENTION 1 and setx OLLAMA_KV_CACHE_TYPE q8_0), then restart Ollama. Long contexts then use about half the memory and prompts read faster.".into() });
+    }
     let root = state.root.lock().map_err(|e| e.to_string())?.clone().unwrap_or_else(|| std::path::PathBuf::from("."));
     checks.push(Check {
         name: "Sandbox".into(),

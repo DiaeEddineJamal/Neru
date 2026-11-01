@@ -6,6 +6,7 @@ mod cli_ui;
 mod cli_setup;
 mod commands;
 mod documents;
+mod engine;
 mod extras;
 mod fallback;
 mod git;
@@ -43,6 +44,7 @@ mod team_more;
 mod team_tools;
 mod terminal;
 mod tools;
+mod toolproto;
 mod trust;
 mod usage;
 mod voice;
@@ -333,6 +335,9 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             privacy::set_project_privacy,
             usage::usage_totals,
             usage::reset_usage,
+            engine::engine_settings,
+            engine::set_engine_settings,
+            engine::generate_commit_message,
             queue::queue_list,
             queue::queue_add,
             queue::queue_cancel,

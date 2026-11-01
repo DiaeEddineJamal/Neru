@@ -372,7 +372,7 @@ async fn ask(job: &Job, progress: &Progress<'_>, config: &mut ProviderConfig, me
     let mut attempt = 0;
     let mut switches = 0;
     loop {
-        if let Some(wait) = crate::limits::wait_before(&config.model, agent::estimate_tokens(messages)) {
+        if let Some(wait) = crate::limits::wait_before(config, agent::estimate_tokens_for(messages, &config.model)) {
             progress.emit("running", &format!("Pacing to the per-minute limit, {}s", wait.as_secs().max(1)));
             tokio::select! {
                 _ = tokio::time::sleep(wait) => {}
@@ -575,14 +575,18 @@ pub async fn run(job: Job) -> Result<Outcome, String> {
     let mut report = String::new();
     while rounds_left > 0 && progress.busy() < deadline {
         rounds_left -= 1;
-        // Earlier rounds' results shrink once read: the report needs the findings, not every file.
-        agent::age_tool_outputs(&mut messages, 4, if economy { 800 } else { 2_000 });
+        // Earlier rounds' results shrink once read: the report needs the findings, not every file. Every
+        // third round, so the rounds between reuse the provider's prompt cache.
+        if progress.rounds % 3 == 2 {
+            agent::age_tool_outputs(&mut messages, 4, if economy { 800 } else { 2_000 });
+        }
         let mut message = match ask(&job, &progress, &mut config, &messages, &tools).await? {
             Round::Message(message) => message,
             Round::Cancelled => return Err("stopped".into()),
         };
         progress.rounds += 1;
         crate::stream::recover_text_tool_calls(&mut message);
+        crate::toolproto::repair_names(&mut message, &offered);
         messages.push(message.clone());
         let calls = message["tool_calls"].as_array().cloned().unwrap_or_default();
         if calls.is_empty() {

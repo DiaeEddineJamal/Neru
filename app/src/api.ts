@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
-import type { Digest, Profile, QueuedTask, UsageTotals } from './types'
+import type { Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
 import type { Route } from './lib/browser'
 
 export const api = {
@@ -152,6 +152,10 @@ export const api = {
   setProjectPrivacy: (rule: PrivacyRule | null) => invoke<{ rule: PrivacyRule | null; global: PrivacyRule }>('set_project_privacy', { rule }),
   usageTotals: () => invoke<UsageTotals>('usage_totals'),
   resetUsage: () => invoke<UsageTotals>('reset_usage'),
+  engineSettings: () => invoke<EngineSettings>('engine_settings'),
+  setEngineSettings: (settings: EngineSettings) => invoke<EngineSettings>('set_engine_settings', { settings }),
+  /** A commit message for the staged changes, written on the small-model lane. */
+  generateCommitMessage: () => invoke<string>('generate_commit_message'),
   queueList: () => invoke<QueuedTask[]>('queue_list'),
   queueAdd: (projectPath: string, prompt: string, at: number, mode: AgentMode, images?: { name: string; dataUrl: string }[]) => invoke<QueuedTask>('queue_add', { projectPath, prompt, at, mode, images: images ?? null }),
   queueCancel: (id: string) => invoke<void>('queue_cancel', { id }),

@@ -122,6 +122,19 @@ pub fn chat_request(
     effort: Option<&str>,
 ) -> RequestBuilder {
     let messages = without_images_for_text_models(config, public_messages(messages));
+    // A model without native tool calls gets the tools in its prompt instead (toolproto.rs).
+    let text_protocol = tools.as_array().is_some_and(|list| !list.is_empty()) && crate::toolproto::uses_text(config);
+    let no_tools = json!([]);
+    let (messages, tools) = if text_protocol {
+        (crate::toolproto::to_text_protocol(&messages, tools.as_array().map_or(&[][..], Vec::as_slice)), &no_tools)
+    } else {
+        (messages, tools)
+    };
+    let session = session_key(&messages);
+    if let Some(root) = ollama_root(config) {
+        let payload = ollama_payload(config, &messages, tools);
+        return client.post(format!("{root}/api/chat")).json(&payload);
+    }
     let (path, mut payload) = match config.api_format.as_str() {
         ANTHROPIC => (
             "/messages",
@@ -133,16 +146,117 @@ pub fn chat_request(
         ),
         _ => ("/chat/completions", openai_chat_payload(config, &messages, tools)),
     };
+    if text_protocol {
+        if let Some(object) = payload.as_object_mut() {
+            object.remove("tools");
+            object.remove("tool_choice");
+        }
+    }
     if let Some(effort) = effort {
         apply_effort(&mut payload, config, effort);
     }
+    apply_sticky_routing(&mut payload, config, &session);
     let mut request = client
         .post(format!("{}{}", config.base_url, path))
         .json(&payload);
     if config.api_format == ANTHROPIC {
         request = request.header("anthropic-version", "2023-06-01");
     }
+    if config.provider_id == "openrouter" && !session.is_empty() {
+        request = request.header("x-session-id", &session);
+    }
     authorized(request, config)
+}
+
+/// A stable id for one conversation: its system prompt and first request, which stay byte-for-byte the
+/// same for a session (agent.rs keeps them so). Empty for a conversation without either.
+pub fn session_key(messages: &[Value]) -> String {
+    use std::hash::{Hash, Hasher};
+    let system = messages.iter().find(|message| message["role"] == "system").map(|message| message["content"].to_string());
+    let first = messages.iter().find(|message| message["role"] == "user").map(|message| message["content"].to_string());
+    if system.is_none() && first.is_none() {
+        return String::new();
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    system.hash(&mut hasher);
+    first.hash(&mut hasher);
+    format!("neru-{:016x}", hasher.finish())
+}
+
+/// Keeps a conversation on the same servers so their prompt cache stays warm: OpenRouter routes by
+/// `session_id`, OpenAI (and hosts that mirror it) by `prompt_cache_key`.
+fn apply_sticky_routing(payload: &mut Value, config: &ProviderConfig, session: &str) {
+    if session.is_empty() || !payload.is_object() {
+        return;
+    }
+    match config.provider_id.as_str() {
+        "openrouter" => payload["session_id"] = json!(session),
+        "openai" | "xai" | "deepseek" | "kimi" => payload["prompt_cache_key"] = json!(session),
+        _ => {}
+    }
+}
+
+// ---------- Ollama ----------
+
+/// The Ollama server root for a model on Ollama, whose native API sets the context size and keeps the
+/// model loaded (the OpenAI-compatible endpoint can do neither).
+fn ollama_root(config: &ProviderConfig) -> Option<String> {
+    if config.provider_id != "ollama" {
+        return None;
+    }
+    config.base_url.trim_end_matches('/').strip_suffix("/v1").map(str::to_string)
+}
+
+/// Context size for an Ollama request: room for the prompt, the tools and a reply, in steps (8K, 16K,
+/// 32K…) so it changes rarely (each change reloads the model), at most what the model supports.
+pub fn ollama_num_ctx(model: &str, prompt_tokens: usize) -> usize {
+    let wanted = (prompt_tokens + 4_096).max(8_192).next_power_of_two();
+    let cap = crate::limits::window(model).unwrap_or(32_768).max(2_048);
+    wanted.min(cap)
+}
+
+fn ollama_payload(config: &ProviderConfig, messages: &[Value], tools: &Value) -> Value {
+    let converted: Vec<Value> = messages
+        .iter()
+        .map(|message| {
+            let role = message["role"].as_str().unwrap_or("user");
+            let mut text = Vec::new();
+            let mut images = Vec::new();
+            for (part, image) in content_parts(&message["content"]) {
+                if let Some(part) = part {
+                    text.push(part);
+                } else if let Some((_, data)) = image.as_deref().and_then(data_url) {
+                    images.push(data.to_string());
+                }
+            }
+            let mut out = json!({"role": role, "content": text.join("\n")});
+            if !images.is_empty() {
+                out["images"] = json!(images);
+            }
+            if let Some(calls) = message["tool_calls"].as_array() {
+                out["tool_calls"] = json!(calls
+                    .iter()
+                    .map(|call| {
+                        let arguments = call["function"]["arguments"].as_str().and_then(|raw| serde_json::from_str::<Value>(raw).ok()).unwrap_or_else(|| json!({}));
+                        json!({"function": {"name": call["function"]["name"], "arguments": arguments}})
+                    })
+                    .collect::<Vec<_>>());
+            }
+            out
+        })
+        .collect();
+    let prompt = crate::usage::estimate_messages(messages) as usize + tools.to_string().len() / 4;
+    let mut payload = json!({
+        "model": config.model,
+        "messages": converted,
+        "stream": true,
+        "keep_alive": "30m",
+        "options": {"num_ctx": ollama_num_ctx(&config.model, prompt)},
+    });
+    if tools.as_array().is_some_and(|list| !list.is_empty()) {
+        payload["tools"] = tools.clone();
+    }
+    payload
 }
 
 /// Whether the model takes a reasoning-effort setting without breaking multi-turn tool use.
@@ -183,6 +297,7 @@ fn openai_chat_payload(config: &ProviderConfig, messages: &[Value], tools: &Valu
     if wants_cache_marks(config) {
         mark_cache_points(&mut messages);
     }
+    let spare_usage = !accepts_stream_options(config);
     let mut payload = json!({
         "model": model,
         "messages": messages,
@@ -200,12 +315,8 @@ fn openai_chat_payload(config: &ProviderConfig, messages: &[Value], tools: &Valu
             payload["max_tokens"] = json!(cap.min(wanted));
         }
     }
-    let spare = matches!(
-        config.provider_id.as_str(),
-        "gemini" | "groq" | "cerebras" | "mistral" | "nvidia" | "huggingface" | "xai" | "modelscope"
-    );
     if let Some(object) = payload.as_object_mut() {
-        if spare {
+        if spare_usage {
             object.remove("stream_options");
         }
         if config.provider_id == "gemini" {
@@ -213,6 +324,31 @@ fn openai_chat_payload(config: &ProviderConfig, messages: &[Value], tools: &Valu
         }
     }
     payload
+}
+
+/// Providers that reject `stream_options`, learned from their errors at run time.
+static NO_STREAM_OPTIONS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether to ask for token usage in the stream (`stream_options.include_usage`): it tells Neru the real
+/// prompt and cached tokens. Hosts that reject the field, or answer usage without it (Groq sends
+/// `x_groq.usage`), go without; a host that turns out to reject it is remembered.
+fn accepts_stream_options(config: &ProviderConfig) -> bool {
+    // Gemini takes it and streams usage (checked 2026-11-01); these hosts were seen rejecting it or
+    // answer usage without it.
+    let known_spare = matches!(config.provider_id.as_str(), "groq" | "cerebras" | "mistral" | "nvidia" | "huggingface" | "xai" | "modelscope");
+    !known_spare && !NO_STREAM_OPTIONS.lock().is_ok_and(|list| list.contains(&config.provider_id))
+}
+
+/// Learns from an error that rejected `stream_options`. Returns true when the request should be retried
+/// without it.
+pub fn stream_options_rejected(config: &ProviderConfig, error: &str) -> bool {
+    if !error.to_lowercase().contains("stream_options") || !accepts_stream_options(config) {
+        return false;
+    }
+    if let Ok(mut list) = NO_STREAM_OPTIONS.lock() {
+        list.push(config.provider_id.clone());
+    }
+    true
 }
 
 static OUTPUT_CAPS: std::sync::Mutex<Option<std::collections::HashMap<String, usize>>> = std::sync::Mutex::new(None);
@@ -254,6 +390,9 @@ fn public_messages(messages: &[Value]) -> Vec<Value> {
             if let Some(object) = copy.as_object_mut() {
                 object.remove("_prompt_tokens");
                 object.remove("_completion_tokens");
+                object.remove("_cached_tokens");
+                object.remove("_map");
+                object.remove("_map_noted");
             }
             copy
         })
@@ -437,11 +576,13 @@ fn ephemeral() -> Value {
     json!({"type":"ephemeral"})
 }
 
-/// Claude models reached through OpenRouter cache only what is marked, like the native API.
-/// Other OpenRouter models (OpenAI, DeepSeek, Gemini, Kimi, Qwen) cache a repeated prefix on
-/// their own, which works because Neru only ever appends to the conversation.
+/// Claude models reached through OpenRouter cache only what is marked, like the native API, and so do
+/// Qwen models on Alibaba's DashScope (explicit cache, much cheaper than its implicit one). Other models
+/// cache a repeated prefix on their own, which works because Neru only ever appends to the conversation.
 fn wants_cache_marks(config: &ProviderConfig) -> bool {
-    config.provider_id == "openrouter" && config.model.starts_with("anthropic/")
+    (config.provider_id == "openrouter" && config.model.starts_with("anthropic/"))
+        || config.provider_id == "qwen"
+        || config.base_url.contains("dashscope")
 }
 
 /// Marks the system prompt and the newest user or tool message as cache points.
@@ -670,7 +811,7 @@ mod tests {
         };
         let payload = openai_chat_payload(&config, &exchange(), &json!([]));
         assert_eq!(payload["model"], "gemini-2.5-flash");
-        assert!(payload.get("stream_options").is_none());
+        assert_eq!(payload["stream_options"]["include_usage"], true, "Gemini streams usage when asked");
         assert!(payload.get("parallel_tool_calls").is_none());
         assert_eq!(payload["tools"], json!([]));
     }
@@ -710,6 +851,71 @@ mod tests {
         config.base_url = "https://api.openai.com/v1".into();
         let request = probe_request(&client, &config).build().unwrap();
         assert_eq!(request.url().path(), "/v1/responses");
+    }
+
+    #[test]
+    fn sessions_stick_to_one_route_for_prompt_caching() {
+        let client = Client::new();
+        let mut config = ProviderConfig { provider_id: "openrouter".into(), api_format: CHAT.into(), base_url: "https://openrouter.ai/api/v1".into(), model: "qwen/qwen3-coder:free".into(), api_key: "k".into() };
+        let request = chat_request(&client, &config, &exchange(), &json!([]), None).build().unwrap();
+        let session = request.headers()["x-session-id"].to_str().unwrap().to_string();
+        assert!(session.starts_with("neru-"));
+        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["session_id"], session);
+        // Later rounds of the same conversation keep the id.
+        let mut longer = exchange();
+        longer.push(json!({"role":"assistant","content":"Done"}));
+        assert_eq!(session_key(&longer), session);
+        config.provider_id = "openai".into();
+        config.base_url = "https://api.openai.com/v1".into();
+        let request = chat_request(&client, &config, &exchange(), &json!([]), None).build().unwrap();
+        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["prompt_cache_key"], session);
+        assert!(request.headers().get("x-session-id").is_none());
+        // DashScope caches only marked prefixes.
+        let qwen = ProviderConfig { provider_id: "qwen".into(), base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".into(), model: "qwen3-coder-plus".into(), ..config.clone() };
+        let payload = openai_chat_payload(&qwen, &exchange(), &json!([]));
+        assert_eq!(payload["messages"][0]["content"][0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn text_protocol_models_get_tools_in_the_prompt() {
+        let config = ProviderConfig { provider_id: "test-text-tools".into(), api_format: CHAT.into(), base_url: "https://x.example/v1".into(), model: "no-tools-model".into(), api_key: "k".into() };
+        let list = crate::models::parse_models(&json!({"data":[{"id":"no-tools-model","supported_parameters":["temperature"]}]}), "test-text-tools").unwrap();
+        crate::models::remember("test-text-tools", &list);
+        let tools: Value = serde_json::from_str(crate::tools::READ_TOOLS).unwrap();
+        let request = chat_request(&Client::new(), &config, &exchange(), &tools, None).build().unwrap();
+        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert!(body.get("tools").is_none() && body.get("tool_choice").is_none());
+        assert!(body["messages"][0]["content"].as_str().unwrap().contains("<tool_call>"));
+        assert!(body["messages"].as_array().unwrap().iter().all(|message| message["role"] != "tool"));
+    }
+
+    #[test]
+    fn ollama_uses_its_native_api_with_a_sized_context() {
+        let config = ProviderConfig { provider_id: "ollama".into(), api_format: CHAT.into(), base_url: "http://localhost:11434/v1".into(), model: "test-ollama:7b".into(), api_key: String::new() };
+        let messages = vec![json!({"role":"user","content":[{"type":"text","text":"What is this?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}), exchange()[2].clone()];
+        let request = chat_request(&Client::new(), &config, &messages, &json!([]), None).build().unwrap();
+        assert_eq!(request.url().as_str(), "http://localhost:11434/api/chat");
+        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["keep_alive"], "30m");
+        assert_eq!(body["options"]["num_ctx"], 8_192);
+        assert_eq!(body["messages"][0]["images"][0], "AAAA");
+        assert_eq!(body["messages"][1]["tool_calls"][0]["function"]["arguments"]["path"], "");
+        assert!(body.get("tools").is_none());
+        crate::limits::record_windows(&json!({"data":[{"id":"test-ollama:7b","context_length":40_960}]}), "ollama");
+        assert_eq!(ollama_num_ctx("test-ollama:7b", 30_000), 40_960, "capped by what the model supports");
+        assert_eq!(ollama_num_ctx("test-ollama:7b", 9_000), 16_384, "sized in steps so the model is not reloaded every round");
+    }
+
+    #[test]
+    fn hosts_that_reject_stream_options_are_learned() {
+        let config = ProviderConfig { provider_id: "test-stream-options".into(), api_format: CHAT.into(), base_url: "https://x.example/v1".into(), model: "m".into(), api_key: "k".into() };
+        assert_eq!(openai_chat_payload(&config, &exchange(), &json!([]))["stream_options"]["include_usage"], true);
+        assert!(!stream_options_rejected(&config, "Provider HTTP 400: max_tokens too large"));
+        assert!(stream_options_rejected(&config, "Provider HTTP 400: Unrecognized request argument supplied: stream_options"));
+        assert!(openai_chat_payload(&config, &exchange(), &json!([])).get("stream_options").is_none());
+        assert!(!stream_options_rejected(&config, "stream_options again"), "retried once only");
     }
 
     #[test]

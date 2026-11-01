@@ -73,10 +73,14 @@ export interface Review {
 
 /** Tokens Neru used: on free keys, local and on-device models (`free`) and on paid keys (`paid`), since `since`. */
 export interface UsageTotals {
-  free: { input: number; output: number; replies: number }
-  paid: { input: number; output: number; replies: number }
+  /** `cached`: input tokens the provider served from its prompt cache (part of `input`). */
+  free: { input: number; output: number; replies: number; cached?: number }
+  paid: { input: number; output: number; replies: number; cached?: number }
   since: number
 }
+
+/** How Neru stretches free quotas. `architectEditor`: a strong model plans each change and a faster one writes it. */
+export interface EngineSettings { architectEditor: 'auto' | 'on' | 'off' }
 
 /** A task waiting to run on the desktop, or one that ran. `at` is when it starts (epoch ms). */
 export interface QueuedTask {
@@ -296,6 +300,8 @@ export interface ModelInfo {
   vision: boolean
   /** Takes tool definitions, which Neru needs to edit files and run commands. */
   tools: boolean
+  /** 'text' when the model has no native tool calls and Neru describes the tools in its prompt. */
+  protocol?: 'native' | 'text'
   reasoning: boolean
   contextWindow?: number
   free: boolean

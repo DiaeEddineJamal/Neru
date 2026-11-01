@@ -58,6 +58,7 @@ export function ModelBadges({ info }: { info: ModelInfo }) {
   return <span className="model-badges">
     {info.vision && <span className="model-badge vision" title={info.source === 'name' ? t('Reads images (guessed from the model name)') : t('Reads images')}><Eye size={12} strokeWidth={2} /></span>}
     {info.reasoning && <span className="model-badge reasoning" title={info.source === 'name' ? t('Reasoning model (guessed from the model name)') : t('Reasoning model')}><Brain size={12} strokeWidth={2} /></span>}
+    {info.protocol === 'text' && <span className="model-badge tools text" title={t('No native tool calls: Neru describes its tools in the prompt and reads the calls from the reply')}>{t('txt')}</span>}
     {info.tools && <span className="model-badge tools" title={info.source === 'name' ? t('Can call tools, which Neru needs to edit files and run commands (guessed from the model name)') : t('Can call tools, which Neru needs to edit files and run commands')}><Wrench size={12} strokeWidth={2} /></span>}
     {info.kind === 'code' && <span className="model-badge code" title={t('Tuned for code')}><CodeXml size={12} strokeWidth={2} /></span>}
     {info.free && <span className="model-badge free" title={t('Free to use')}>{t('free')}</span>}
@@ -76,7 +77,7 @@ export function ModelFilters({ models, filter, onFilter, hidden, showUnavailable
       if (item.id !== 'all' && count === 0) return null
       return <button key={item.id} type="button" className={cn('model-chip', filter === item.id && 'on')} aria-pressed={filter === item.id} title={t(item.hint)} onClick={() => onFilter(item.id)}>{t(item.label)}<span>{count}</span></button>
     })}
-    {(hidden > 0 || showUnavailable) && <button type="button" className={cn('model-chip warn', showUnavailable && 'on')} aria-pressed={showUnavailable} title={t('Models this provider refused when checked')} onClick={() => onShowUnavailable(!showUnavailable)}>{showUnavailable ? t('Hide unavailable') : t('Show unavailable')}<span>{hidden}</span></button>}
+    {(hidden > 0 || showUnavailable) && <button type="button" className={cn('model-chip warn', showUnavailable && 'on')} aria-pressed={showUnavailable} title={t('Models this provider refused when checked, or that failed as not found three times in a day. Neru checks them again every week.')} onClick={() => onShowUnavailable(!showUnavailable)}>{showUnavailable ? t('Hide hidden') : t('Show hidden')}<span>{hidden}</span></button>}
   </div>
 }
 

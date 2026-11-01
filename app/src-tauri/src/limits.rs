@@ -33,8 +33,13 @@ struct Store {
 }
 
 static STORE: LazyLock<Mutex<Store>> = LazyLock::new(|| Mutex::new(load()));
-/// The quotas each model's last response reported, and when.
-static QUOTAS: LazyLock<Mutex<HashMap<String, (std::time::Instant, Vec<Quota>)>>> = LazyLock::new(Default::default);
+/// The quotas each (provider, model, key) last reported, and when (see `ledger_key`).
+static QUOTAS: LazyLock<Mutex<HashMap<String, (std::time::Instant, u64, Vec<Quota>)>>> = LazyLock::new(Default::default);
+/// Requests and tokens Neru sent per (provider, model, key) in the current minute, hour and day, for
+/// providers that send no quota headers (Gemini) and for the meter.
+static COUNTS: LazyLock<Mutex<HashMap<String, Counters>>> = LazyLock::new(Default::default);
+/// Keys that must not be sent to before a time (Unix seconds): a Retry-After, or a spent daily quota.
+static BLOCKED: LazyLock<Mutex<HashMap<String, (u64, String)>>> = LazyLock::new(Default::default);
 
 /// Unit tests keep the store in memory: they must neither read what this machine's providers
 /// reported nor overwrite it.
@@ -93,13 +98,225 @@ pub fn set_request_cap(provider_id: &str, model: &str, cap: usize) {
     }
 }
 
-pub fn quotas(model: &str) -> Vec<Quota> {
-    QUOTAS.lock().ok().and_then(|quotas| quotas.get(model).map(|(_, list)| list.clone())).unwrap_or_default()
+/// Quotas belong to one key on one provider: the same model on another key, or on another provider,
+/// has limits of its own. The key itself is never stored, only a fingerprint.
+pub fn ledger_key(config: &ProviderConfig) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    config.api_key.hash(&mut hasher);
+    format!("{}|{}|{:016x}", config.provider_id, config.model, hasher.finish())
 }
 
-pub(crate) fn set_quotas(model: &str, list: Vec<Quota>) {
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// What the key reported (headers, OpenRouter's /key), or else what Neru counted itself.
+pub fn quotas(config: &ProviderConfig) -> Vec<Quota> {
+    let key = ledger_key(config);
+    let list = QUOTAS.lock().ok().and_then(|quotas| quotas.get(&key).map(|(_, _, list)| list.clone())).unwrap_or_default();
+    if !list.is_empty() {
+        return list;
+    }
+    COUNTS.lock().ok().and_then(|counts| counts.get(&key).cloned()).map(|counts| counts.as_quotas(&config.provider_id, unix_now())).unwrap_or_default()
+}
+
+pub(crate) fn set_quotas(config: &ProviderConfig, list: Vec<Quota>) {
     if let Ok(mut quotas) = QUOTAS.lock() {
-        quotas.insert(model.to_string(), (std::time::Instant::now(), list));
+        quotas.insert(ledger_key(config), (std::time::Instant::now(), unix_now(), list));
+    }
+}
+
+// ---------- reset clocks ----------
+
+/// Days since 1970-01-01 for a date in the proleptic Gregorian calendar.
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// The year a day (since 1970-01-01) falls in.
+fn civil_year(days: i64) -> i64 {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month = (5 * doy + 2) / 153;
+    yoe + era * 400 + i64::from(month >= 10)
+}
+
+/// The `nth` Sunday of a month, as days since the epoch.
+fn nth_sunday(year: i64, month: i64, nth: i64) -> i64 {
+    let first = days_from_civil(year, month, 1);
+    // 1970-01-01 was a Thursday, so day 3 was a Sunday.
+    first + (3 - first).rem_euclid(7) + 7 * (nth - 1)
+}
+
+/// Seconds Pacific time is off UTC at `unix`: -7h in daylight saving time (second Sunday of March,
+/// 2:00, to the first Sunday of November, 2:00), else -8h.
+fn pacific_offset(unix: u64) -> i64 {
+    let unix = unix as i64;
+    let year = civil_year(unix.div_euclid(86_400));
+    let starts = nth_sunday(year, 3, 2) * 86_400 + 10 * 3_600;
+    let ends = nth_sunday(year, 11, 1) * 86_400 + 9 * 3_600;
+    if (starts..ends).contains(&unix) { -7 * 3_600 } else { -8 * 3_600 }
+}
+
+/// When the current day started on the provider's quota clock: Google resets free quotas at midnight
+/// Pacific time, the others (OpenRouter, Cerebras, Groq…) at midnight UTC.
+pub fn day_start(provider_id: &str, unix: u64) -> u64 {
+    let offset = if provider_id == "gemini" { pacific_offset(unix) } else { 0 };
+    let local = unix as i64 + offset;
+    (local - local.rem_euclid(86_400) - offset).max(0) as u64
+}
+
+/// How long until the provider's daily quotas reset.
+pub fn until_daily_reset(provider_id: &str) -> std::time::Duration {
+    let now = unix_now();
+    std::time::Duration::from_secs(next_day(provider_id, now).saturating_sub(now).max(60))
+}
+
+/// The start of the provider's next quota day, right across daylight-saving changes.
+fn next_day(provider_id: &str, unix: u64) -> u64 {
+    day_start(provider_id, day_start(provider_id, unix) + 26 * 3_600)
+}
+
+// ---------- Neru's own counts ----------
+
+#[derive(Clone, Default, Debug)]
+struct Window {
+    start: u64,
+    requests: u64,
+    tokens: u64,
+}
+
+impl Window {
+    fn add(&mut self, start: u64, tokens: u64) {
+        if self.start != start {
+            *self = Window { start, requests: 0, tokens: 0 };
+        }
+        self.requests += 1;
+        self.tokens += tokens;
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+struct Counters {
+    minute: Window,
+    hour: Window,
+    day: Window,
+}
+
+impl Counters {
+    fn as_quotas(&self, provider_id: &str, now: u64) -> Vec<Quota> {
+        if self.day.start != day_start(provider_id, now) || self.day.requests == 0 {
+            return Vec::new();
+        }
+        let resets = Some(human(next_day(provider_id, now).saturating_sub(now)));
+        vec![
+            Quota { label: format!("Requests today: {} (counted by Neru)", self.day.requests), limit: None, remaining: None, resets_in: resets.clone() },
+            Quota { label: format!("Tokens today: {} (counted by Neru)", self.day.tokens), limit: None, remaining: None, resets_in: resets },
+        ]
+    }
+}
+
+/// Counts one request Neru sent and the tokens it used, on the provider's own clocks.
+pub fn note_request(config: &ProviderConfig, tokens: u64) {
+    let now = unix_now();
+    if let Ok(mut counts) = COUNTS.lock() {
+        let entry = counts.entry(ledger_key(config)).or_default();
+        entry.minute.add(now - now % 60, tokens);
+        entry.hour.add(now - now % 3_600, tokens);
+        entry.day.add(day_start(&config.provider_id, now), tokens);
+    }
+}
+
+// ---------- blocks: Retry-After and spent quotas ----------
+
+/// The provider asked to wait (Retry-After): nothing goes to this key before then.
+pub fn note_retry_after(config: &ProviderConfig, wait: std::time::Duration) {
+    let seconds = wait.as_secs().max(1);
+    block_until(config, unix_now() + seconds, format!("the provider asked to wait {}", human(seconds)));
+}
+
+/// A daily quota is spent: nothing goes to this key until the provider's day turns over.
+pub fn note_daily_exhausted(config: &ProviderConfig) {
+    block_until(config, next_day(&config.provider_id, unix_now()), "its quota per day is used up".into());
+}
+
+fn block_until(config: &ProviderConfig, until: u64, reason: String) {
+    if let Ok(mut blocked) = BLOCKED.lock() {
+        let entry = blocked.entry(ledger_key(config)).or_insert((0, String::new()));
+        // A longer block already in place wins: Retry-After is a minimum, never a shortcut.
+        if until > entry.0 {
+            *entry = (until, reason);
+        }
+    }
+}
+
+/// What to do before sending a request to a key.
+#[derive(Debug, PartialEq)]
+pub enum Preflight {
+    Send,
+    /// A per-minute limit or a short Retry-After clears soon: wait, then send.
+    Wait(std::time::Duration),
+    /// The key cannot take this request for a while: switch models now instead of spending a request
+    /// on a 429. The text reads like a provider's rate-limit error, so the usual model switch handles it.
+    Switch(String),
+}
+
+fn human(seconds: u64) -> String {
+    if seconds >= 3_600 {
+        format!("{}h{}m", seconds / 3_600, seconds % 3_600 / 60)
+    } else if seconds >= 60 {
+        format!("{}m{}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+/// Checks the ledger before sending `tokens` to this key: a block (Retry-After, a spent day), an hourly or
+/// daily quota the last response said is spent, or a per-minute budget this request would overrun.
+pub fn preflight(config: &ProviderConfig, tokens: usize) -> Preflight {
+    let now = unix_now();
+    let key = ledger_key(config);
+    if let Some((until, reason)) = BLOCKED.lock().ok().and_then(|blocked| blocked.get(&key).cloned()).filter(|(until, _)| *until > now) {
+        let left = until - now;
+        if left <= 60 {
+            return Preflight::Wait(std::time::Duration::from_secs(left) + std::time::Duration::from_millis(300));
+        }
+        let daily = if reason.contains("per day") { "" } else { " (rate limit)" };
+        return Preflight::Switch(format!("Provider HTTP 429 Too Many Requests: {} on this key: {reason}{daily}; resets in {}. Neru switched before sending.", config.model, human(left)));
+    }
+    if let Some((at, at_unix, list)) = QUOTAS.lock().ok().and_then(|quotas| quotas.get(&key).cloned()) {
+        for quota in list.iter().filter(|quota| quota.label.ends_with("per day") || quota.label.ends_with("per hour")) {
+            let spent = match quota.remaining {
+                Some(0) => true,
+                Some(left) => quota.label.starts_with("Tokens") && (left as usize) < tokens,
+                None => false,
+            };
+            if !spent {
+                continue;
+            }
+            // How long the report holds: its reset time, else until the provider's day (or hour) turns.
+            let left = match quota.resets_in.as_deref().and_then(parse_reset) {
+                Some(reset) => reset.saturating_sub(at.elapsed()).as_secs(),
+                None if quota.label.ends_with("per day") => next_day(&config.provider_id, at_unix).saturating_sub(now),
+                None => (at_unix - at_unix % 3_600 + 3_600).saturating_sub(now),
+            };
+            if left > 60 {
+                return Preflight::Switch(format!("Provider HTTP 429 Too Many Requests: {} used up on this key for {}; resets in {}. Neru switched before sending.", quota.label.to_lowercase(), config.model, human(left)));
+            }
+        }
+    }
+    match wait_before(config, tokens) {
+        Some(wait) => Preflight::Wait(wait),
+        None => Preflight::Send,
     }
 }
 
@@ -128,8 +345,8 @@ pub fn parse_reset(text: &str) -> Option<std::time::Duration> {
 /// How long to wait before sending `tokens` more to `model` so a per-minute limit has reset: the
 /// last response said no requests are left, or fewer tokens than this request needs. None to send
 /// now; waits longer than a minute are left to the model switch.
-pub fn wait_before(model: &str, tokens: usize) -> Option<std::time::Duration> {
-    let (at, list) = QUOTAS.lock().ok()?.get(model).cloned()?;
+pub fn wait_before(config: &ProviderConfig, tokens: usize) -> Option<std::time::Duration> {
+    let (at, _, list) = QUOTAS.lock().ok()?.get(&ledger_key(config)).cloned()?;
     let elapsed = at.elapsed();
     let wait = list
         .iter()
@@ -268,7 +485,7 @@ pub fn record_headers(config: &ProviderConfig, headers: &HeaderMap) {
             set_request_cap(&config.provider_id, &config.model, cap as usize);
         }
     }
-    set_quotas(&config.model, quotas);
+    set_quotas(config, quotas);
 }
 
 /// OpenRouter reports free-model requests and credit left on `GET /key` rather than in headers.
@@ -312,7 +529,7 @@ pub async fn refresh(config: &ProviderConfig) {
     }
     if config.provider_id == "openrouter" {
         if let Ok(list) = openrouter_quotas(&client, config).await {
-            set_quotas(&config.model, list);
+            set_quotas(config, list);
         }
     }
 }
@@ -333,18 +550,76 @@ mod tests {
         assert_eq!(parse_reset("soon"), None);
     }
 
+    fn config(provider_id: &str, model: &str, key: &str) -> ProviderConfig {
+        ProviderConfig { provider_id: provider_id.into(), api_format: "openai-chat".into(), base_url: String::new(), api_key: key.into(), model: model.into() }
+    }
+
     #[test]
     fn requests_wait_for_a_spent_minute_but_not_a_spent_day() {
         let quota = |label: &str, remaining, reset: &str| Quota { label: label.into(), limit: Some(30), remaining: Some(remaining), resets_in: Some(reset.into()) };
-        set_quotas("pace/minute", vec![quota("Requests per minute", 0, "12s")]);
-        let wait = wait_before("pace/minute", 1_000).unwrap();
+        let minute = config("test-pace", "pace/minute", "k");
+        set_quotas(&minute, vec![quota("Requests per minute", 0, "12s")]);
+        let wait = wait_before(&minute, 1_000).unwrap();
         assert!(wait > std::time::Duration::from_secs(11) && wait <= std::time::Duration::from_secs(13));
-        set_quotas("pace/tokens", vec![Quota { label: "Tokens per minute".into(), limit: Some(6_000), remaining: Some(500), resets_in: Some("5s".into()) }]);
-        assert!(wait_before("pace/tokens", 2_000).is_some(), "not enough tokens left this minute");
-        assert!(wait_before("pace/tokens", 400).is_none(), "enough left");
-        set_quotas("pace/day", vec![quota("Requests per day", 0, "5h")]);
-        assert!(wait_before("pace/day", 10).is_none(), "a daily cap is the model switch's job");
-        assert!(wait_before("pace/unknown", 10).is_none());
+        let tokens = config("test-pace", "pace/tokens", "k");
+        set_quotas(&tokens, vec![Quota { label: "Tokens per minute".into(), limit: Some(6_000), remaining: Some(500), resets_in: Some("5s".into()) }]);
+        assert!(wait_before(&tokens, 2_000).is_some(), "not enough tokens left this minute");
+        assert!(wait_before(&tokens, 400).is_none(), "enough left");
+        let day = config("test-pace", "pace/day", "k");
+        set_quotas(&day, vec![quota("Requests per day", 0, "5h")]);
+        assert!(wait_before(&day, 10).is_none(), "a daily cap is the model switch's job");
+        assert!(matches!(preflight(&day, 10), Preflight::Switch(text) if text.contains("per day")), "…which preflight hands it");
+        assert_eq!(preflight(&config("test-pace", "pace/unknown", "k"), 10), Preflight::Send);
+    }
+
+    #[test]
+    fn quotas_are_kept_per_key_and_provider() {
+        let first = config("test-ledger", "shared-model", "key-one");
+        set_quotas(&first, vec![Quota { label: "Requests per day".into(), limit: Some(50), remaining: Some(0), resets_in: Some("3h".into()) }]);
+        assert_eq!(quotas(&first).len(), 1);
+        assert!(quotas(&config("test-ledger", "shared-model", "key-two")).is_empty(), "another key has its own quota");
+        assert!(quotas(&config("test-other", "shared-model", "key-one")).is_empty(), "so does another provider");
+        assert!(!ledger_key(&first).contains("key-one"), "the key itself is never part of the ledger");
+    }
+
+    #[test]
+    fn retry_after_is_a_minimum_and_long_blocks_switch() {
+        let short = config("test-block", "short", "k");
+        note_retry_after(&short, std::time::Duration::from_secs(20));
+        assert!(matches!(preflight(&short, 10), Preflight::Wait(wait) if wait >= std::time::Duration::from_secs(19)));
+        // A later, shorter Retry-After does not shorten the wait.
+        note_retry_after(&short, std::time::Duration::from_secs(2));
+        assert!(matches!(preflight(&short, 10), Preflight::Wait(wait) if wait >= std::time::Duration::from_secs(19)));
+        let long = config("test-block", "long", "k");
+        note_retry_after(&long, std::time::Duration::from_secs(600));
+        assert!(matches!(preflight(&long, 10), Preflight::Switch(text) if crate::fallback::is_rate_limited(&text) && !crate::fallback::is_daily(&text)));
+        let day = config("gemini", "test-day", "k");
+        note_daily_exhausted(&day);
+        assert!(matches!(preflight(&day, 10), Preflight::Switch(text) if crate::fallback::is_daily(&text)));
+    }
+
+    #[test]
+    fn days_reset_on_each_providers_clock() {
+        // 2026-11-01 08:30 UTC is 01:30 PDT on the day daylight saving ends.
+        let unix = days_from_civil(2026, 11, 1) as u64 * 86_400 + 8 * 3_600 + 30 * 60;
+        assert_eq!(day_start("openrouter", unix), days_from_civil(2026, 11, 1) as u64 * 86_400);
+        assert_eq!(day_start("gemini", unix), days_from_civil(2026, 11, 1) as u64 * 86_400 + 7 * 3_600, "midnight PDT");
+        // In January Pacific time is UTC-8.
+        let winter = days_from_civil(2027, 1, 15) as u64 * 86_400 + 3 * 3_600;
+        assert_eq!(day_start("gemini", winter), days_from_civil(2027, 1, 14) as u64 * 86_400 + 8 * 3_600);
+        assert_eq!(next_day("gemini", unix), days_from_civil(2026, 11, 2) as u64 * 86_400 + 8 * 3_600, "the next day starts in PST");
+        assert_eq!(civil_year(days_from_civil(2024, 2, 29)), 2024);
+        assert_eq!(nth_sunday(2026, 3, 2), days_from_civil(2026, 3, 8));
+    }
+
+    #[test]
+    fn neru_counts_what_providers_do_not_report() {
+        let gemini = config("gemini", "test-count", "k");
+        note_request(&gemini, 1_200);
+        note_request(&gemini, 800);
+        let list = quotas(&gemini);
+        assert!(list[0].label.starts_with("Requests today: 2"));
+        assert!(list[1].label.starts_with("Tokens today: 2000"));
     }
     use serde_json::json;
 
