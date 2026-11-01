@@ -1,5 +1,51 @@
 [
   {
+    "version": "0.13.0",
+    "date": "2026-11-02",
+    "title": "Free models that go further, and local models",
+    "summary": "Neru answers before you add a key, connects a free key in one paste, spends fewer free requests per task and shows how many you have left. Local models join in: Neru tells you what your computer can run, downloads models from Settings, measures their speed, and hands its chores to a small local model so your free requests last longer.",
+    "sections": [
+      {
+        "title": "Free models",
+        "items": [
+          "Works before you add a key: with no model connected, Neru answers with a free OVHcloud model that needs no key (about 2 requests a minute) and tells you how to go faster.",
+          "Setup in one paste: onboarding starts on a recommended free provider. Open its key page, come back, paste the key, and Neru connects, picks the best coding model the key can use, and switches to the right provider if the key belongs to another one.",
+          "Fewer requests per task. In larger projects the first request carries the files and definitions you name, so the model starts working instead of searching. A tool call with a misnamed argument is fixed without asking a model, and a failed edit shows the model the closest block of the file so it can retry without reading the file again.",
+          "See what is left: the panel on the context ring lists every free plan with requests used and left today, models resting after a limit and when they are back. The counts survive a restart.",
+          "Task cost in the Session panel: requests, tool rounds, failed edits, waits and tokens for the task running now and the last one, next to what a typical task costs.",
+          "When every free model is spent, Neru says when the allowance starts over instead of “try again in a minute”.",
+          "Model rankings, free-plan allowances and the keyless starter now update between releases, signed with the same key as app updates.",
+          "The project map shows what each file is for, from the first sentence of its own header comment, and files that matched a request but did not fit are named so the model can pick one."
+        ]
+      },
+      {
+        "title": "Local models",
+        "items": [
+          "Settings → Model provider → Ollama shows what your computer can run (memory, graphics card, free disk) and which models fit, and downloads them with progress, cancel and remove. It can also start Ollama when it is installed but stopped.",
+          "Every downloaded model gets a speed check on your computer with a plain verdict: fast enough for Code, works for Code slowly, good for chores, or too slow.",
+          "With Ollama running beside a cloud model, a small local model takes session titles, summaries, commit messages and tool-call repairs automatically. They cost no free requests and stay on your computer.",
+          "Chores that must answer in JSON are held to a schema on Ollama, so a small model cannot break them.",
+          "neru doctor shows what this computer can run locally."
+        ]
+      },
+      {
+        "title": "Command line",
+        "items": [
+          "neru -p --output-format json reports what the task cost, as task."
+        ]
+      },
+      {
+        "title": "Fixes",
+        "items": [
+          "On a fresh install, skipping the Model step made the first message fail with “connection refused”, and onboarding showed “Connected to Local gateway” though nothing was connected.",
+          "NVIDIA, the first recommended free provider, could not connect from onboarding (“Enter a model name”).",
+          "Model ranking read sizes inside other numbers (27B as 7B, 671B as 1B), which skewed automatic switching.",
+          "The hint to add another free key no longer lists Cerebras, whose free plan has ended."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.12.2",
     "date": "2026-11-01",
     "title": "Settings and status polish",
