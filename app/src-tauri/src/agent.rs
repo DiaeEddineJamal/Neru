@@ -1394,7 +1394,8 @@ fn rate_limit_wait(error: &str) -> Option<Duration> {
 
 /// What the user can do when no other model could take over from one that failed with `error`.
 fn no_fallback_hint(error: &str) -> String {
-    const MORE_KEYS: &str = "add a key for another provider in Settings → Model (Gemini, Cerebras, Mistral, NVIDIA and OpenRouter have free plans) so Neru can switch automatically.";
+    // Cerebras left this list when its free plan ended; each provider below has its own free daily allowance.
+    const MORE_KEYS: &str = "add a free key from another provider in Settings → Model provider (Gemini, NVIDIA, Mistral, OpenRouter and Groq each have their own daily allowance) and Neru switches to it when this one runs out.";
     if crate::fallback::is_client_locked(error) {
         format!("{}. You can also {MORE_KEYS}", crate::models::client_locked_reason(error))
     } else if crate::fallback::needs_credits(error) {
@@ -2205,13 +2206,25 @@ async fn run_chat(
     if !matches!(mode.as_str(), "manual" | "plan" | "spec" | "accept_edits" | "auto" | "bypass") {
         return Err("Unsupported agent mode".into());
     }
+    let chat = surface.as_deref() == Some("chat");
+    // No model connected yet: a keyless free model answers, so the first message works before any key.
+    if crate::fallback::needs_starter(&config).await {
+        if let Some(starter) = crate::fallback::starter_model(&crate::privacy::rule_for((!chat).then_some(root.as_path()))).await {
+            notice(
+                &app,
+                &session,
+                &shared,
+                format!("No model is connected yet, so Neru is answering with {} on OVHcloud, which needs no key but allows about 2 requests a minute. Add a free key in Settings → Model provider (Gemini, NVIDIA, Mistral or OpenRouter) to work much faster.", short_model(&starter.model)),
+            );
+            config = starter;
+        }
+    }
     if !provider_view(&config).configured {
         return Err("Configure an API key in Settings".into());
     }
     if config.model.is_empty() {
         return Err("Configure a provider and model in Settings".into());
     }
-    let chat = surface.as_deref() == Some("chat");
     if !chat && project.as_os_str().is_empty() {
         return Err("Open a project before using Code.".into());
     }

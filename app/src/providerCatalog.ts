@@ -158,6 +158,20 @@ function customFormat(baseUrl: string, model: string, current: ApiFormat): ApiFo
 }
 
 /** Protocol for this key's selected model: Chat Completions, Responses, or Anthropic Messages. */
+/** Prefixes providers give their keys, to recognise which provider a pasted key belongs to. Providers
+ * without a fixed prefix are left out. */
+const keyPrefixes: [prefix: string, providerId: string][] = [['nvapi-', 'nvidia'], ['AIza', 'gemini'], ['sk-or-', 'openrouter'], ['gsk_', 'groq'], ['sk-ant-', 'anthropic'], ['hf_', 'huggingface'], ['xai-', 'xai']]
+
+/** The provider a key belongs to, when its prefix says so. */
+export function providerForKey(key: string): string | undefined {
+  const trimmed = key.trim()
+  return keyPrefixes.find(([prefix]) => trimmed.startsWith(prefix))?.[1]
+}
+
+/** The default local gateway a fresh install points at before any model is connected. */
+export const untouchedDefault = (provider: { providerId: string; baseUrl: string; model: string; hasKey: boolean }) =>
+  provider.providerId === 'local' && provider.baseUrl.replace(/\/$/, '') === 'http://localhost:3001/v1' && provider.model === 'auto' && !provider.hasKey
+
 export function formatForModel(providerId: string, model: string, current: ApiFormat = 'openai-chat', baseUrl = ''): ApiFormat {
   if (providerId === 'anthropic') return 'anthropic'
   if (providerId === 'openai') return openAiFormat(model)

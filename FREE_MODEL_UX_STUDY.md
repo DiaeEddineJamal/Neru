@@ -52,7 +52,16 @@ Original plan:
 - Add a developer eval: about 10 scripted tasks run against a recorded or fake provider in tests, failing if the request count regresses.
 - **Done when:** every later item can say "saves N requests on the eval set".
 
-### P1. A first answer in under a minute (M)
+### P1. A first answer in under a minute (M) ✅ done
+
+- **Starter model.** `fallback::needs_starter` and `starter_model`: when nothing is really connected (a provider without its key, or the fresh install's default local gateway with nothing listening on port 3001), Neru answers with the best keyless OVHcloud model and says so: about 2 requests a minute, plus how to add a free key. Checked for real: a fresh data folder answered in 2.4 s with `gpt-oss-120b`. It falls back to the old error when the privacy rule keeps work off cloud models.
+- **Found on the way:** a fresh install's default (local gateway, `localhost:3001`) counted as "connected". Skipping the Model step meant the first message failed with "connection refused", and onboarding showed "Connected to Local gateway". Onboarding now starts from the first recommended free provider.
+- **NVIDIA (the first recommended provider) has no default model,** so connecting failed with "Enter a model name". Onboarding now picks the best coding model the key can call from the provider's list.
+- **Key paste** instead of reading the clipboard (no permission needed, nothing read in the background). Opening a provider's key page and returning to the window puts the cursor in the key field. Pasting connects at once, and a key with a known prefix (`nvapi-`, `AIza`, `sk-or-`, `gsk_`, `sk-ant-`, `hf_`, `xai-`) switches to its provider first.
+- **More keys hint:** when a model runs out with nothing to switch to, the error now lists the providers that really are free (Cerebras had moved to paid) and explains that each has its own daily allowance.
+- **Also fixed:** `coding_score` matched sizes as substrings, so Qwen3.8-27B ranked as a 7B model and DeepSeek 671B as a 1B one. Sizes now match as whole words.
+
+Original plan:
 - If the Model step is skipped, OVHcloud keyless answers Chat right away, labelled honestly as slow.
 - Make the Model step one recommended path (Gemini or NVIDIA): one button opens the key page. When the window regains focus, Neru checks the clipboard **once** for a known key prefix (`AIza`, `nvapi-`, `sk-or-`, …), offers to use it, probes it and moves on. Never silent, never in the background.
 - At the first daily limit, show: "Add a second free key to roughly double your daily work". The nudge comes when the user feels the limit, with a real number from P0.

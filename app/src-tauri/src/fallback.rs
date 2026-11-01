@@ -615,8 +615,15 @@ pub fn coding_score(id: &str) -> i64 {
         .map_or(30, |(_, score)| *score);
     // Small or cut-down variants code worse; "coder" and "pro" variants better.
     let mut score = family;
-    for (part, delta) in [("coder", 6), ("pro", 4), ("-lite", -12), ("mini", -10), ("nano", -15), ("small", -8), ("8b", -20), ("7b", -20), ("3b", -30), ("1b", -40), ("vision", -10), ("guard", -100)] {
+    for (part, delta) in [("coder", 6), ("pro", 4), ("-lite", -12), ("mini", -10), ("nano", -15), ("small", -8), ("vision", -10), ("guard", -100)] {
         if name.contains(part) {
+            score += delta;
+        }
+    }
+    // Sizes as whole words, so 27b is not taken for 7b, nor 671b for 1b.
+    let words: Vec<&str> = name.split(|c: char| !c.is_ascii_alphanumeric() && c != '.').collect();
+    for (size, delta) in [("8b", -20), ("7b", -20), ("3b", -30), ("1b", -40)] {
+        if words.contains(&size) {
             score += delta;
         }
     }
@@ -885,6 +892,39 @@ pub async fn helper_model(config: &ProviderConfig) -> Option<String> {
 /// The small models chosen lately, by main key, model and privacy rule.
 static SMALL: LazyLock<Mutex<HashMap<String, (Instant, Option<ProviderConfig>)>>> = LazyLock::new(Default::default);
 
+// ---------- starter model ----------
+
+/// OVHcloud AI Endpoints answers without a key (about 2 requests a minute per model), so a first message
+/// works before any key is added.
+const STARTER_BASE_URL: &str = "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1";
+/// Where a fresh install points before a model is connected: a local gateway few people run.
+const DEFAULT_LOCAL_URL: &str = "http://localhost:3001/v1";
+
+/// Whether `config` cannot answer because no model was really connected: a provider that needs a key
+/// has none, or the install's default local gateway, untouched, has nothing listening.
+pub async fn needs_starter(config: &ProviderConfig) -> bool {
+    if config.provider_id == "local" && config.base_url == DEFAULT_LOCAL_URL && config.model == "auto" {
+        let connect = tokio::net::TcpStream::connect("127.0.0.1:3001");
+        return !matches!(tokio::time::timeout(Duration::from_millis(400), connect).await, Ok(Ok(_)));
+    }
+    config.api_key.is_empty() && !crate::privacy::is_local(config) && !providers::keyless(&config.provider_id)
+}
+
+/// The best keyless model to answer with until a key is added, or None when the privacy `rule` keeps
+/// work off cloud models or the list cannot be read.
+pub async fn starter_model(rule: &str) -> Option<ProviderConfig> {
+    let mut config = ProviderConfig { provider_id: "ovhcloud".into(), api_format: "openai-chat".into(), base_url: STARTER_BASE_URL.into(), model: String::new(), api_key: String::new() };
+    if crate::privacy::blocked_reason(rule, &config).is_some() {
+        return None;
+    }
+    config.model = best_starter(&listed_models(&config).await)?;
+    Some(config)
+}
+
+fn best_starter(models: &[String]) -> Option<String> {
+    models.iter().filter(|model| coding_score(model) > 0).max_by_key(|model| coding_score(model)).cloned()
+}
+
 /// The fastest capable model across the saved free keys and the main key, for chores: session titles,
 /// conversation summaries, commit messages, repairing tool calls, planning research queries. Groq,
 /// Cerebras, Flash-class and local models come first; providers the privacy `rule` blocks are skipped.
@@ -981,6 +1021,28 @@ async fn fallback_choice(current: &ProviderConfig, wanted: &str) -> Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_starter_is_the_best_coder_on_the_keyless_list() {
+        let listed: Vec<String> = ["gpt-oss-20b", "Meta-Llama-3_3-70B-Instruct", "Mistral-Nemo-Instruct-2407", "Qwen3Guard-Gen-8B", "Qwen3.8-27B"].map(String::from).to_vec();
+        assert_eq!(best_starter(&listed).as_deref(), Some("Qwen3.8-27B"));
+        // Sizes are whole words: a 27B model is not a 7B one, nor a 671B one a 1B one.
+        assert!(coding_score("Qwen3.8-27B") > coding_score("Qwen3-8B"));
+        assert!(coding_score("deepseek-v3-671b") >= coding_score("deepseek-v3"));
+        assert!(coding_score("qwen2.5-coder:7b") < coding_score("qwen2.5-coder:32b"));
+        assert_eq!(best_starter(&["Qwen3Guard-Gen-8B".to_string()]), None, "never a guard model");
+        assert_eq!(best_starter(&[]), None);
+    }
+
+    #[test]
+    fn only_an_unconnected_model_needs_the_starter() {
+        let config = |provider_id: &str, base_url: &str, key: &str| ProviderConfig { provider_id: provider_id.into(), api_format: "openai-chat".into(), base_url: base_url.into(), model: "m".into(), api_key: key.into() };
+        let needs = |config: ProviderConfig| tauri::async_runtime::block_on(async move { needs_starter(&config).await });
+        assert!(needs(config("gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "")));
+        assert!(!needs(config("gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "AIza-test")));
+        assert!(!needs(config("ovhcloud", STARTER_BASE_URL, "")), "keyless already");
+        assert!(!needs(config("ollama", "http://localhost:11434/v1", "")), "a local server the user chose");
+    }
 
     fn config(provider_id: &str, model: &str) -> ProviderConfig {
         ProviderConfig { provider_id: provider_id.into(), api_format: "openai-chat".into(), base_url: format!("https://{provider_id}.test/v1"), api_key: String::new(), model: model.into() }

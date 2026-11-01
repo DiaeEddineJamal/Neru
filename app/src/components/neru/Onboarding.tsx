@@ -9,7 +9,7 @@ import { SoundBars } from './SoundBars'
 import { cn } from '@/lib/utils'
 import { api } from '../../api'
 import { author } from '../../credits'
-import { formatForModel, providerPresets, type ApiFormat } from '../../providerCatalog'
+import { formatForModel, providerForKey, providerPresets, untouchedDefault, type ApiFormat } from '../../providerCatalog'
 import type { ProjectInfo, ProviderView, TeamAgent } from '../../types'
 import { Mascot } from './Mascot'
 import { WindowControls } from './TitleBar'
@@ -140,14 +140,20 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
   const reduce = useReducedMotion() ?? false
   const [step, setStep] = useState(0)
   const [direction, setDirection] = useState(1)
-  const [providerId, setProviderId] = useState(provider.providerId)
-  const [apiFormat, setApiFormat] = useState<ApiFormat>(provider.apiFormat)
-  const [baseUrl, setBaseUrl] = useState(provider.baseUrl)
-  const [model, setModel] = useState(provider.model)
+  // A fresh install points at a local gateway few people run: start from a recommended free provider instead.
+  const [start] = useState(() => untouchedDefault(provider) ? providerPresets.find(item => item.recommended) : undefined)
+  const [providerId, setProviderId] = useState(start?.id ?? provider.providerId)
+  const [apiFormat, setApiFormat] = useState<ApiFormat>(start ? formatForModel(start.id, start.model, start.format, start.baseUrl) : provider.apiFormat)
+  const [baseUrl, setBaseUrl] = useState(start?.baseUrl ?? provider.baseUrl)
+  const [model, setModel] = useState(start ? start.model : provider.model)
   const [apiKey, setApiKey] = useState('')
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(provider.configured)
+  const [saved, setSaved] = useState(provider.configured && !start)
+  // Set when the user opens the provider's key page: coming back to the window puts the cursor in the key field.
+  const [awaitingKey, setAwaitingKey] = useState(false)
+  const [pasteHint, setPasteHint] = useState(false)
+  const keyInputRef = useRef<HTMLInputElement>(null)
   const [problem, setProblem] = useState<Problem | null>(null)
   const [opening, setOpening] = useState(false)
   const [folderNote, setFolderNote] = useState<Problem | null>(null)
@@ -210,26 +216,62 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
     const next = providerPresets.find(item => item.id === id)
     if (!next) return
     setTouched(true); setProviderId(next.id); setApiFormat(formatForModel(next.id, next.model, next.format, next.baseUrl)); setBaseUrl(next.baseUrl); setModel(next.model); setApiKey(''); setSaved(false); setProblem(null)
-    if (!next.model) setDetailsOpen(true)
   }
 
-  const saveProvider = async (): Promise<boolean> => {
+  useEffect(() => {
+    if (!awaitingKey) return
+    const back = () => { setAwaitingKey(false); setPasteHint(true); keyInputRef.current?.focus() }
+    window.addEventListener('focus', back)
+    return () => window.removeEventListener('focus', back)
+  }, [awaitingKey])
+
+  // `presetId` and `key` come from a pasted key, before the state they set has rendered.
+  const saveProvider = async (override: { presetId?: string; key?: string } = {}): Promise<boolean> => {
+    const target = override.presetId ? providerPresets.find(item => item.id === override.presetId) : undefined
+    const id = target?.id ?? providerId
+    const base = target?.baseUrl ?? baseUrl
+    const name = (target ?? preset)?.name ?? 'The provider'
+    const isLocal = /localhost|127\.0\.0\.1/.test(base)
+    const key = (override.key ?? apiKey).trim()
+    let chosen = target ? target.model : model
+    let format = target ? formatForModel(target.id, target.model, target.format, target.baseUrl) : apiFormat
     if (!isDesktop) { setProblem({ title: 'Connecting a model needs the desktop app.', help: 'Open the Neru desktop window to save a provider. You can skip this step for now.' }); return false }
-    if (!local && !hasKeyInput && !(saved || keySaved)) { setProblem({ title: 'Paste an API key first.', help: `Get a free key from ${preset?.name ?? 'your provider'} with the link below, paste it here, then connect.` }); return false }
+    if (!isLocal && !key && !(saved || savedKeys.includes(id) || (provider.hasKey && provider.providerId === id))) { setProblem({ title: 'Paste an API key first.', help: `Get a free key from ${name} with the link below, paste it here, then connect.` }); return false }
     setSaving(true); setProblem(null)
     try {
-      if (model && !LISTING_IS_AUTHORITATIVE.has(providerId)) {
+      if (!chosen.trim()) {
+        // No suggested model (NVIDIA, ModelScope, OVHcloud…): take the best coding model this key can call.
+        const models = await api.listModels(id, format, base, key).catch(() => [])
+        const usable = models.filter(item => item.verified !== 'unavailable')
+        const best = usable.find(item => item.tools) ?? usable[0]
+        if (!best) { setProblem({ title: `Neru could not find a model for this ${name} key.`, help: 'Check that the key is complete, or open Connection details and enter a model ID.' }); setDetailsOpen(true); return false }
+        chosen = best.id
+        format = formatForModel(id, chosen, format, base)
+        setModel(chosen); setApiFormat(format)
+      } else if (!LISTING_IS_AUTHORITATIVE.has(id)) {
         // The suggested model may have been retired or not be served to this key; find out now, not on the first message.
-        const check = await api.probeModel(providerId, apiFormat, baseUrl, apiKey, model).catch(() => null)
-        if (check?.status === 'unavailable') { setProblem({ title: `${model} is not available with this key.`, help: `${check.reason}. Open the details and pick another model.` }); setDetailsOpen(true); return false }
+        const check = await api.probeModel(id, format, base, key, chosen).catch(() => null)
+        if (check?.status === 'unavailable') { setProblem({ title: `${chosen} is not available with this key.`, help: `${check.reason}. Open the details and pick another model.` }); setDetailsOpen(true); return false }
       }
-      onProviderSaved(await api.configureProvider(providerId, apiFormat, baseUrl, apiKey, model))
-      setApiKey(''); setSaved(true); setSavedKeys(current => current.includes(providerId) ? current : [...current, providerId])
+      onProviderSaved(await api.configureProvider(id, format, base, key, chosen))
+      setApiKey(''); setSaved(true); setPasteHint(false); setSavedKeys(current => current.includes(id) ? current : [...current, id])
       return true
     } catch (cause) {
-      setProblem(explainProviderError(cause, preset?.name ?? 'The provider', local)); setDetailsOpen(true)
+      setProblem(explainProviderError(cause, name, isLocal)); setDetailsOpen(true)
       return false
     } finally { setSaving(false) }
+  }
+
+  // A pasted key connects at once, on the provider its prefix names when that is a different one.
+  const onKeyPaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = event.clipboardData.getData('text').trim()
+    if (!pasted || /\s/.test(pasted) || saving) return
+    event.preventDefault()
+    const owner = providerForKey(pasted)
+    const presetId = owner && owner !== providerId && providerPresets.some(item => item.id === owner) ? owner : undefined
+    if (presetId) choosePreset(presetId)
+    setApiKey(pasted); setSaved(false); setProblem(null)
+    void saveProvider({ presetId, key: pasted })
   }
 
   // Each step has one primary action; skippable steps also get a quiet secondary one.
@@ -366,8 +408,8 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
               </div>
               <button type="button" className="ob-link" onClick={() => setAllProviders(value => !value)}>{allProviders ? 'Show only free coding providers' : `More providers (${providerPresets.length - freePresets.length}): local models, OpenAI, Anthropic, DeepSeek…`}</button>
               <form className="ob-connection" onSubmit={event => { event.preventDefault(); void (async () => { if (await saveProvider()) moveTo(step + 1) })() }}>
-                {!local && <label className="ob-field"><span><KeyRound size={13} /> API key <small>encrypted on this PC</small></span><input type="password" value={apiKey} onChange={event => { setApiKey(event.target.value); setSaved(false); setProblem(null) }} placeholder={keySaved ? 'Key saved on this PC. Paste a new one to replace it.' : `Paste your ${preset?.name ?? ''} key`} autoComplete="off" spellCheck={false} aria-invalid={problem ? true : undefined} /></label>}
-                {preset?.keyUrl && !local && <p className="ob-key-link">{preset.freeLimit && <span>Free: {preset.freeLimit}. </span>}<a href={preset.keyUrl} target="_blank" rel="noreferrer">Get a {preset.name} API key ↗</a></p>}
+                {!local && <label className="ob-field"><span><KeyRound size={13} /> API key <small>encrypted on this PC</small></span><input ref={keyInputRef} type="password" value={apiKey} onChange={event => { setApiKey(event.target.value); setSaved(false); setProblem(null) }} onPaste={onKeyPaste} placeholder={keySaved ? 'Key saved on this PC. Paste a new one to replace it.' : pasteHint ? 'Paste the key you copied; Neru connects right away' : `Paste your ${preset?.name ?? ''} key`} autoComplete="off" spellCheck={false} aria-invalid={problem ? true : undefined} /></label>}
+                {preset?.keyUrl && !local && <p className="ob-key-link">{preset.freeLimit && <span>Free: {preset.freeLimit}. </span>}<a href={preset.keyUrl} target="_blank" rel="noreferrer" onClick={() => setAwaitingKey(true)}>Get a {preset.name} API key ↗</a></p>}
                 <button type="button" className="ob-disclosure" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(value => !value)}>Connection details <motion.span animate={{ rotate: detailsOpen ? 180 : 0 }} transition={{ duration: reduce ? 0 : 0.2 }}><ChevronDown size={14} /></motion.span></button>
                 <AnimatePresence initial={false}>{detailsOpen && <motion.div className="ob-details" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: reduce ? 0 : 0.25, ease: EASE_OUT }}>
                   <div className="ob-field-row">
