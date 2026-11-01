@@ -1,4 +1,4 @@
-import { CircleCheck, CircleDashed, CircleMinus, CircleX, ExternalLink, LoaderCircle, RefreshCw, Wrench } from 'lucide-react'
+import { CircleCheck, CircleDashed, CircleMinus, CircleX, ExternalLink, LoaderCircle, RefreshCw, Wrench } from '@/components/icons'
 import type { PrStatus } from '../../types'
 import { t } from '../../i18n'
 

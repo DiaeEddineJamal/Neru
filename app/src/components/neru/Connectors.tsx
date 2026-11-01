@@ -1,68 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { BookOpen, Brain, Bug, Cloud, Search, Download, FolderOpen, Globe, LoaderCircle, LogIn, LogOut, Monitor, Plus, RotateCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Cloud, ExternalLink, KeyRound, LoaderCircle, LogIn, LogOut, Monitor, Plus, RotateCw, Search, ShieldCheck, Trash2 } from '@/components/icons'
 import { api } from '../../api'
 import type { McpServer } from '../../types'
 import { t } from '../../i18n'
 import { cn } from '@/lib/utils'
-
-type Auth = 'oauth' | 'token' | 'none'
-interface CatalogEntry {
-  id: string; name: string; description: string
-  /** Hosted connectors: their Streamable HTTP endpoint and how they authenticate. */
-  url?: string; auth?: Auth
-  /** Local connectors: the command that starts them and the keys they need. */
-  command?: string; args?: string; env?: string[]
-  logo?: string; logoUrl?: string; glyph?: ReactNode
-}
-
-/**
- * Well-known MCP servers. Hosted ones connect over HTTPS and sign in in the browser; local ones run on
- * this PC. Logos come from Simple Icons' official CDN, or the brand's own site / Wikimedia Commons for
- * brands Simple Icons does not carry.
- */
-const HOSTED: CatalogEntry[] = [
-  { id: 'atlassian', name: 'Atlassian', description: 'Jira issues and Confluence pages', url: 'https://mcp.atlassian.com/v1/mcp', auth: 'oauth', logo: 'atlassian' },
-  { id: 'gitlab', name: 'GitLab', description: 'Projects, issues and merge requests', url: 'https://gitlab.com/api/v4/mcp', auth: 'oauth', logo: 'gitlab' },
-  { id: 'asana', name: 'Asana', description: 'Tasks, projects and goals', url: 'https://mcp.asana.com/v2/mcp', auth: 'oauth', logo: 'asana' },
-  { id: 'canva', name: 'Canva', description: 'Search, create and edit designs', url: 'https://mcp.canva.com/mcp', auth: 'oauth', logo: 'canva' },
-  { id: 'intercom', name: 'Intercom', description: 'Conversations, contacts and help articles', url: 'https://mcp.intercom.com/mcp', auth: 'oauth', logo: 'intercom' },
-  { id: 'paypal', name: 'PayPal', description: 'Invoices, orders and transactions', url: 'https://mcp.paypal.com/mcp', auth: 'oauth', logo: 'paypal' },
-  { id: 'square', name: 'Square', description: 'Payments, catalog and customers', url: 'https://mcp.squareup.com/sse', auth: 'oauth', logo: 'square' },
-  { id: 'webflow', name: 'Webflow', description: 'Sites, CMS collections and pages', url: 'https://mcp.webflow.com/mcp', auth: 'oauth', logo: 'webflow' },
-  { id: 'wix', name: 'Wix', description: 'Sites, stores and bookings', url: 'https://mcp.wix.com/mcp', auth: 'oauth', logo: 'wix' },
-  { id: 'neon', name: 'Neon', description: 'Postgres projects, branches and SQL', url: 'https://mcp.neon.tech/mcp', auth: 'oauth', logo: 'neon' },
-  { id: 'netlify', name: 'Netlify', description: 'Sites, deploys and environment variables', url: 'https://netlify-mcp.netlify.app/mcp', auth: 'oauth', logo: 'netlify' },
-  { id: 'cloudflare', name: 'Cloudflare', description: 'Workers, KV, R2 and D1 in your account', url: 'https://bindings.mcp.cloudflare.com/mcp', auth: 'oauth', logo: 'cloudflare' },
-  { id: 'prisma', name: 'Prisma Postgres', description: 'Databases, migrations and queries', url: 'https://mcp.prisma.io/mcp', auth: 'oauth', logo: 'prisma' },
-  { id: 'jam', name: 'Jam', description: 'Bug reports with console logs and repro steps', url: 'https://mcp.jam.dev/mcp', auth: 'oauth', glyph: <Bug size={18} /> },
-  { id: 'zapier', name: 'Zapier', description: 'Thousands of apps through your Zapier actions', url: 'https://mcp.zapier.com/api/mcp/mcp', auth: 'oauth', logo: 'zapier' },
-  { id: 'exa', name: 'Exa', description: 'Web search and code search for agents', url: 'https://mcp.exa.ai/mcp', auth: 'none', glyph: <Search size={18} /> },
-  { id: 'linear', name: 'Linear', description: 'Issues, projects and cycles', url: 'https://mcp.linear.app/mcp', auth: 'oauth', logo: 'linear' },
-  { id: 'notion', name: 'Notion', description: 'Search, read and update pages and databases', url: 'https://mcp.notion.com/mcp', auth: 'oauth', logo: 'notion' },
-  { id: 'figma', name: 'Figma', description: 'Designs, frames and variables for building UI', url: 'https://mcp.figma.com/mcp', auth: 'oauth', logo: 'figma' },
-  { id: 'sentry', name: 'Sentry', description: 'Errors, issues and stack traces', url: 'https://mcp.sentry.dev/mcp', auth: 'oauth', logo: 'sentry' },
-  { id: 'github', name: 'GitHub', description: 'Repos, issues and pull requests (personal access token)', url: 'https://api.githubcopilot.com/mcp/', auth: 'token', logo: 'github' },
-  { id: 'stripe', name: 'Stripe', description: 'Customers, payments and products', url: 'https://mcp.stripe.com', auth: 'oauth', logo: 'stripe' },
-  { id: 'supabase', name: 'Supabase', description: 'Tables, SQL, migrations and edge functions', url: 'https://mcp.supabase.com/mcp', auth: 'oauth', logo: 'supabase' },
-  { id: 'vercel', name: 'Vercel', description: 'Projects, deployments and logs', url: 'https://mcp.vercel.com', auth: 'oauth', logo: 'vercel' },
-  { id: 'cloudflare-docs', name: 'Cloudflare Docs', description: 'Search the Cloudflare developer docs', url: 'https://docs.mcp.cloudflare.com/mcp', auth: 'none', logo: 'cloudflare' },
-  { id: 'huggingface', name: 'Hugging Face', description: 'Models, datasets, papers and Spaces', url: 'https://huggingface.co/mcp', auth: 'none', logo: 'huggingface' },
-  { id: 'context7', name: 'Context7', description: 'Up-to-date library docs and code examples', url: 'https://mcp.context7.com/mcp', auth: 'none', glyph: <BookOpen size={18} /> },
-  { id: 'deepwiki', name: 'DeepWiki', description: 'Ask questions about any public GitHub repository', url: 'https://mcp.deepwiki.com/mcp', auth: 'none', glyph: <Globe size={18} /> },
-]
-
-const LOCAL: CatalogEntry[] = [
-  { id: 'google-workspace', name: 'Google Workspace', description: 'Gmail, Calendar, Drive, Docs and Sheets. Needs a Google OAuth client (Desktop app) and uv', command: 'uvx', args: 'workspace-mcp --tool-tier core', env: ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'], logo: 'gmail' },
-  { id: 'filesystem', name: 'Filesystem', description: 'Read and search files in folders you choose', command: 'npx', args: '-y @modelcontextprotocol/server-filesystem D:\\Neru\\projects', glyph: <FolderOpen size={18} /> },
-  { id: 'playwright', name: 'Playwright', description: 'Drive a real browser: click, type, screenshot', command: 'npx', args: '-y @playwright/mcp@latest', logoUrl: 'https://playwright.dev/img/playwright-logo.svg', glyph: <Globe size={18} /> },
-  { id: 'postgres', name: 'PostgreSQL', description: 'Inspect schemas and run read-only queries', command: 'npx', args: '-y @modelcontextprotocol/server-postgres postgresql://localhost/mydb', logo: 'postgresql' },
-  { id: 'slack', name: 'Slack', description: 'Read channels and threads, post messages', command: 'npx', args: '-y @modelcontextprotocol/server-slack', env: ['SLACK_BOT_TOKEN', 'SLACK_TEAM_ID'], logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/d/d5/Slack_icon_2019.svg' },
-  { id: 'brave', name: 'Brave Search', description: 'Web and local search with the Brave API', command: 'npx', args: '-y @modelcontextprotocol/server-brave-search', env: ['BRAVE_API_KEY'], logo: 'brave' },
-  { id: 'figma-local', name: 'Figma (API key)', description: 'Framelink: layout data from a Figma API key', command: 'npx', args: '-y figma-developer-mcp --stdio', env: ['FIGMA_API_KEY'], logo: 'figma' },
-  { id: 'memory', name: 'Memory', description: 'A small knowledge graph Neru can remember with', command: 'npx', args: '-y @modelcontextprotocol/server-memory', glyph: <Brain size={18} /> },
-  { id: 'git', name: 'Git', description: 'Log, diff, blame and branches for any repository (needs uv)', command: 'uvx', args: 'mcp-server-git', logo: 'git' },
-  { id: 'fetch', name: 'Fetch', description: 'Fetch web pages as Markdown (needs uv)', command: 'uvx', args: 'mcp-server-fetch', glyph: <Download size={18} /> },
-]
+import { Select } from '../ui/Select'
+import { CATALOG, CATEGORIES, RUNTIMES, explainConnectorError, filterCatalog, type CatalogEntry, type ConnectorCategory } from './connectorCatalog'
+import './Connectors.css'
 
 function CatalogLogo({ entry }: { entry: CatalogEntry }) {
   const [failed, setFailed] = useState(false)
@@ -80,13 +24,40 @@ const joinArgs = (args: string[]) => args.map(arg => /\s/.test(arg) ? `"${arg}"`
 const parsePairs = (text: string, separator: string) => Object.fromEntries(text.split('\n').map(line => line.trim()).filter(line => line.includes(separator)).map(line => [line.slice(0, line.indexOf(separator)).trim(), line.slice(line.indexOf(separator) + separator.length).trim()]))
 const formatPairs = (pairs: Record<string, string>, separator: string) => Object.entries(pairs).map(([key, value]) => `${key}${separator}${value}`).join('\n')
 
-interface Draft { previous?: string; kind: 'local' | 'hosted'; name: string; command: string; args: string; env: string; url: string; headers: string; enabled: boolean; transport: 'http' | 'sse' }
+interface Draft { previous?: string; kind: 'local' | 'hosted'; name: string; command: string; args: string; env: string; url: string; headers: string; enabled: boolean; transport: 'http' | 'sse'; entry?: CatalogEntry }
 const blank: Draft = { kind: 'hosted', name: '', command: 'npx', args: '', env: '', url: 'https://', headers: '', enabled: true, transport: 'http' }
 /** Endpoints named …/sse are the older HTTP+SSE transport. */
 const transportFor = (url: string): Draft['transport'] => /\/sse\/?$/.test(url) ? 'sse' : 'http'
+const bearer = (headers: string) => (parsePairs(headers, ':').Authorization ?? '').replace(/^Bearer\s*/i, '')
+/** Required settings of a catalog connector the user has not filled in yet. */
+const missingFields = (draft: Draft) => {
+  if (!draft.entry) return []
+  if (draft.kind === 'hosted') return draft.entry.auth === 'token' && !bearer(draft.headers) ? [t('Access token')] : []
+  const env = parsePairs(draft.env, '=')
+  return (draft.entry.env ?? []).filter(field => !field.optional && !env[field.key]).map(field => t(field.label))
+}
 
 const statusText = (server: McpServer) => server.status === 'connected' ? (server.tools.length === 1 ? t('1 tool') : t('{n} tools', { n: server.tools.length }))
   : server.status === 'starting' ? t('Connecting…') : server.status === 'off' ? t('Off') : server.status === 'needs_auth' ? t('Sign-in needed') : server.status === 'needs_trust' ? t('Waiting for trust') : t('Not running')
+
+const openLink = (url: string) => { void api.openUrl(url).catch(() => window.open(url, '_blank', 'noopener')) }
+
+/** What a catalog card says about setup: sign-in, a key, or a program this PC needs. */
+function entryMeta(entry: CatalogEntry) {
+  if (entry.url) return entry.auth === 'oauth' ? t('Hosted · sign in') : entry.auth === 'token' ? t('Hosted · access token') : t('Hosted · no sign-in')
+  const runtime = entry.command ? RUNTIMES[entry.command].name : ''
+  const needsKey = (entry.env ?? []).some(field => !field.optional && !field.value)
+  return needsKey ? t('This PC · {runtime} · key needed', { runtime }) : t('This PC · {runtime}', { runtime })
+}
+
+/** A connector's error in plain words, with the raw text one click away. */
+function ConnectorError({ error }: { error: string }) {
+  const plain = explainConnectorError(error)
+  return <div className="connector-error-box" role="alert">
+    <p>{t(plain.message)}{plain.link && <> <button type="button" className="button subtle small" onClick={() => openLink(plain.link!.url)}><ExternalLink size={12} /> {t(plain.link.label)}</button></>}</p>
+    <details><summary>{t('Details')}</summary><pre className="connector-error">{error}</pre></details>
+  </div>
+}
 
 /** Settings → Connectors: MCP servers, hosted or local, that Neru offers to the model as tools. */
 export function Connectors({ onError }: { onError: (message: string) => void }) {
@@ -94,7 +65,8 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
   const [working, setWorking] = useState<string | null>(null)
-  const [tab, setTab] = useState<'hosted' | 'local'>('hosted')
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState<ConnectorCategory | 'all'>('all')
   const [trusted, setTrusted] = useState(false)
 
   useEffect(() => {
@@ -124,11 +96,13 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
     setSaving(true)
     try {
       const hosted = draft.kind === 'hosted'
+      // Empty values are optional keys left blank: leave them unset rather than set to "".
+      const env = Object.fromEntries(Object.entries(parsePairs(draft.env, '=')).filter(([, value]) => value !== ''))
       const list = await api.mcpSaveServer({
         name: draft.name,
         command: hosted ? '' : draft.command,
         args: hosted ? [] : splitArgs(draft.args),
-        env: hosted ? {} : parsePairs(draft.env, '='),
+        env: hosted ? {} : env,
         url: hosted ? draft.url.trim() : undefined,
         headers: hosted ? parsePairs(draft.headers, ':') : {},
         enabled: draft.enabled,
@@ -143,9 +117,13 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
   }
   const toggle = (server: McpServer) => act(server.name, () => api.mcpSaveServer({ ...server, enabled: !server.enabled }, server.name))
   const pick = (entry: CatalogEntry) => setDraft(entry.url
-    ? { ...blank, kind: 'hosted', name: entry.id, url: entry.url, headers: entry.auth === 'token' ? 'Authorization: Bearer ' : '', transport: transportFor(entry.url) }
-    : { ...blank, kind: 'local', name: entry.id, command: entry.command ?? 'npx', args: entry.args ?? '', env: (entry.env ?? []).map(key => `${key}=`).join('\n') })
-  const catalog = (tab === 'hosted' ? HOSTED : LOCAL).filter(entry => !servers?.some(server => server.name === entry.id))
+    ? { ...blank, entry, kind: 'hosted', name: entry.id, url: entry.url, headers: entry.auth === 'token' ? 'Authorization: Bearer ' : '', transport: entry.transport ?? transportFor(entry.url) }
+    : { ...blank, entry, kind: 'local', name: entry.id, command: entry.command ?? 'npx', args: entry.args ?? '', env: (entry.env ?? []).map(field => `${field.key}=${field.value ?? ''}`).join('\n') })
+  const available = CATALOG.filter(entry => !servers?.some(server => server.name === entry.id))
+  const catalog = filterCatalog(available, query, category)
+  const missing = draft ? missingFields(draft) : []
+  const setEnv = (key: string, value: string) => draft && setDraft({ ...draft, env: formatPairs({ ...parsePairs(draft.env, '='), [key]: value }, '=') })
+  const setToken = (value: string) => draft && setDraft({ ...draft, headers: formatPairs({ ...parsePairs(draft.headers, ':'), Authorization: `Bearer ${value.trim()}` }, ': ') })
 
   return <section className="settings-section provider-settings"><h2>{t('Connectors')}</h2>
     <p className="settings-lede">{t('Give Neru more tools with Model Context Protocol servers: hosted services you sign in to, or programs that run on this PC. Neru asks before every connector call unless you always allow it or choose a permission mode that does.')}</p>
@@ -165,7 +143,7 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
           <button className="icon-button small" onClick={() => { if (window.confirm(server.signedIn ? t('Remove the {name} connector and its sign-in?', { name: server.name }) : t('Remove the {name} connector?', { name: server.name }))) void act(server.name, () => api.mcpRemoveServer(server.name)) }} title={t('Remove')} aria-label={t('Remove {name}', { name: server.name })}><Trash2 size={14} /></button></>}
         </div>
       </div>
-      {server.status === 'error' && server.error && <pre className="connector-error">{server.error}</pre>}
+      {server.status === 'error' && server.error && <ConnectorError error={server.error} />}
       {server.status === 'needs_trust' && <p className="connector-note">{t("Not started yet: this project's .mcp.json asks for it. Trust the folder if you know where the project came from.")}</p>}
       {server.status === 'connected' && server.tools.length > 0 && <div className="connector-tools">{server.tools.map(tool => <span key={tool.name} title={tool.description}>{tool.name}{tool.readOnly && <small>{t('read-only')}</small>}</span>)}</div>}
       {server.status === 'connected' && (server.resources?.length ?? 0) > 0 && <div className="connector-tools" aria-label={t('Resources')}><small className="connector-kind">{t('Resources, attach with @')}</small>{server.resources!.map(resource => <span key={resource.uri} title={resource.description || resource.uri}>{resource.name}</span>)}</div>}
@@ -173,37 +151,52 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
     </div>)}</div>}
 
     {draft ? <div className="connector-form">
-      <div className="segmented" role="tablist" aria-label={t('Connector type')}>
+      {draft.entry ? <div className="connector-setup">
+        <div className="connector-setup-head"><CatalogLogo entry={draft.entry} /><div><strong>{draft.entry.name}</strong><small>{t(draft.entry.description)}</small></div></div>
+        {draft.entry.command && <p className="connector-requirement"><Monitor size={13} /> {t('Runs on this PC and needs {runtime}. If it is not installed yet, install it, then restart Neru.', { runtime: RUNTIMES[draft.entry.command].name })} <button type="button" className="button subtle small" onClick={() => openLink(RUNTIMES[draft.entry!.command!].url)}><ExternalLink size={12} /> {t('Get {runtime}', { runtime: RUNTIMES[draft.entry.command].name })}</button></p>}
+        {draft.entry.auth === 'oauth' && <p className="connector-requirement"><LogIn size={13} /> {t('Your browser opens to sign in after you add it.')}</p>}
+        {draft.entry.setup && <p className="connector-requirement">{t(draft.entry.setup)}</p>}
+        {draft.entry.setupUrl && <button type="button" className="button subtle small" onClick={() => openLink(draft.entry!.setupUrl!)}><ExternalLink size={12} /> {draft.entry.auth === 'token' || draft.entry.env?.some(field => field.secret) ? t('Where to get the key') : t('Setup guide')}</button>}
+        {draft.kind === 'local' && (draft.entry.env ?? []).filter(field => !field.value).map(field => <label key={field.key}>{t(field.label)}{field.optional && <small className="connector-optional"> {t('(optional)')}</small>}
+          <input type={field.secret ? 'password' : 'text'} autoComplete="off" spellCheck={false} value={parsePairs(draft.env, '=')[field.key] ?? ''} onChange={event => setEnv(field.key, event.target.value)} placeholder={field.key} /></label>)}
+        {draft.kind === 'hosted' && draft.entry.auth === 'token' && <label><span className="connector-label"><KeyRound size={13} /> {t('Access token')}</span><input type="password" autoComplete="off" spellCheck={false} value={bearer(draft.headers)} onChange={event => setToken(event.target.value)} placeholder="github_pat_…" /></label>}
+      </div> : <div className="segmented" role="tablist" aria-label={t('Connector type')}>
         <button role="tab" aria-selected={draft.kind === 'hosted'} className={draft.kind === 'hosted' ? 'active' : ''} onClick={() => setDraft({ ...draft, kind: 'hosted' })}><Cloud size={14} /> {t('Hosted (URL)')}</button>
         <button role="tab" aria-selected={draft.kind === 'local'} className={draft.kind === 'local' ? 'active' : ''} onClick={() => setDraft({ ...draft, kind: 'local' })}><Monitor size={14} /> {t('Runs on this PC')}</button>
-      </div>
-      <label>{t('Name')}<input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="linear" /></label>
-      {draft.kind === 'hosted' ? <>
-        <label>{t('Server URL')}<input value={draft.url} onChange={event => setDraft({ ...draft, url: event.target.value, transport: draft.previous ? draft.transport : transportFor(event.target.value) })} placeholder="https://mcp.example.com/mcp" /></label>
-        <label>{t('Transport')}<select className="settings-select" value={draft.transport} onChange={event => setDraft({ ...draft, transport: event.target.value as Draft['transport'] })}>
-          <option value="http">{t('Streamable HTTP (current)')}</option>
-          <option value="sse">{t('HTTP + SSE (older servers)')}</option>
-        </select></label>
-        <label>{t('Headers (optional, one Name: value per line)')}<textarea rows={2} value={draft.headers} onChange={event => setDraft({ ...draft, headers: event.target.value })} placeholder={t('Authorization: Bearer …   (leave empty to sign in with OAuth)')} spellCheck={false} /></label>
-      </> : <>
-        <div className="settings-grid"><label>{t('Command')}<input value={draft.command} onChange={event => setDraft({ ...draft, command: event.target.value })} placeholder={t('npx, uvx, node, python…')} /></label><label>{t('Arguments')}<input value={draft.args} onChange={event => setDraft({ ...draft, args: event.target.value })} placeholder="-y @modelcontextprotocol/server-filesystem D:\Neru\projects" /></label></div>
-        <label>{t('Environment (one KEY=value per line)')}<textarea rows={3} value={draft.env} onChange={event => setDraft({ ...draft, env: event.target.value })} placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=…" spellCheck={false} /></label>
-      </>}
-      <div className="settings-actions"><button className="button primary" disabled={saving || !draft.name.trim() || (draft.kind === 'hosted' ? !/^https?:\/\/.+/.test(draft.url) : !draft.command.trim())} onClick={() => void save()}>{saving ? <><LoaderCircle size={14} className="animate-spin" /> {t('Connecting…')}</> : draft.previous ? t('Save connector') : t('Add connector')}</button><button className="button subtle" onClick={() => setDraft(null)}>{t('Cancel')}</button></div>
+      </div>}
+      <details className="connector-advanced" open={!draft.entry}>
+        <summary>{draft.entry ? t('Advanced settings') : t('Settings')}</summary>
+        <label>{t('Name')}<input autoFocus={!draft.entry} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="linear" /></label>
+        {draft.kind === 'hosted' ? <>
+          <label>{t('Server URL')}<input value={draft.url} onChange={event => setDraft({ ...draft, url: event.target.value, transport: draft.previous ? draft.transport : transportFor(event.target.value) })} placeholder="https://mcp.example.com/mcp" /></label>
+          <label>{t('Transport')}<Select className="settings-select" value={draft.transport} onChange={event => setDraft({ ...draft, transport: event.target.value as Draft['transport'] })}>
+            <option value="http">{t('Streamable HTTP (current)')}</option>
+            <option value="sse">{t('HTTP + SSE (older servers)')}</option>
+          </Select></label>
+          <label>{t('Headers (optional, one Name: value per line)')}<textarea rows={2} value={draft.headers} onChange={event => setDraft({ ...draft, headers: event.target.value })} placeholder={t('Authorization: Bearer …   (leave empty to sign in with OAuth)')} spellCheck={false} /></label>
+        </> : <>
+          <div className="settings-grid"><label>{t('Command')}<input value={draft.command} onChange={event => setDraft({ ...draft, command: event.target.value })} placeholder={t('npx, uvx, node, python…')} /></label><label>{t('Arguments')}<input value={draft.args} onChange={event => setDraft({ ...draft, args: event.target.value })} placeholder="-y @modelcontextprotocol/server-filesystem D:\Neru\projects" /></label></div>
+          <label>{t('Environment (one KEY=value per line)')}<textarea rows={3} value={draft.env} onChange={event => setDraft({ ...draft, env: event.target.value })} placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=…" spellCheck={false} /></label>
+        </>}
+      </details>
+      {missing.length > 0 && <p className="connector-missing">{t('Fill in: {fields}', { fields: missing.join(', ') })}</p>}
+      <div className="settings-actions"><button className="button primary" disabled={saving || missing.length > 0 || !draft.name.trim() || (draft.kind === 'hosted' ? !/^https?:\/\/.+/.test(draft.url) : !draft.command.trim())} onClick={() => void save()}>{saving ? <><LoaderCircle size={14} className="animate-spin" /> {t('Connecting…')}</> : draft.previous ? t('Save connector') : t('Add connector')}</button><button className="button subtle" onClick={() => setDraft(null)}>{t('Cancel')}</button></div>
     </div> : servers && <div className="catalog">
       <div className="catalog-top">
         <div className="settings-subhead"><strong>{t('Add a connector')}</strong><span>{t('Pick one to fill it in, or add your own.')}</span></div>
-        <button className="button subtle small" onClick={() => setDraft({ ...blank, kind: tab })}><Plus size={13} /> {t('Custom')}</button>
+        <button className="button subtle small" onClick={() => setDraft({ ...blank })}><Plus size={13} /> {t('Custom')}</button>
       </div>
-      <div className="segmented" role="tablist" aria-label={t('Catalog')}>
-        <button role="tab" aria-selected={tab === 'hosted'} className={tab === 'hosted' ? 'active' : ''} onClick={() => setTab('hosted')}><Cloud size={14} /> {t('Hosted, sign in')}</button>
-        <button role="tab" aria-selected={tab === 'local'} className={tab === 'local' ? 'active' : ''} onClick={() => setTab('local')}><Monitor size={14} /> {t('Runs on this PC')}</button>
+      <label className="settings-search catalog-search"><Search size={15} /><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={t('Search connectors: Gmail, arXiv, Notion…')} aria-label={t('Search connectors')} /></label>
+      <div className="catalog-chips" role="group" aria-label={t('Categories')}>
+        <button type="button" className={cn('catalog-chip', category === 'all' && 'active')} aria-pressed={category === 'all'} onClick={() => setCategory('all')}>{t('All')}</button>
+        {CATEGORIES.map(item => <button key={item.id} type="button" className={cn('catalog-chip', category === item.id && 'active')} aria-pressed={category === item.id} onClick={() => setCategory(item.id)}>{t(item.label)}</button>)}
       </div>
-      <div className="catalog-grid">{catalog.map(entry => <button key={entry.id} className="catalog-item" onClick={() => pick(entry)} title={entry.url ?? `${entry.command} ${entry.args}`}>
-        <CatalogLogo entry={entry} />
-        <span className="catalog-text"><strong>{entry.name}</strong><small>{t(entry.description)}</small></span>
-        {entry.auth === 'oauth' ? <LogIn size={14} className="catalog-add" /> : <Plus size={14} className="catalog-add" />}
-      </button>)}</div>
+      {catalog.length === 0 ? <p className="settings-note">{t('No connector matches. Try another word, or add your own with Custom.')}</p>
+        : <div className="catalog-grid">{catalog.map(entry => <button key={entry.id} className="catalog-item" onClick={() => pick(entry)} title={entry.url ?? `${entry.command} ${entry.args}`}>
+          <CatalogLogo entry={entry} />
+          <span className="catalog-text"><strong>{entry.name}</strong><small>{t(entry.description)}</small><span className="catalog-meta">{entry.url ? <Cloud size={11} /> : <Monitor size={11} />} {entryMeta(entry)}</span></span>
+          {entry.auth === 'oauth' ? <LogIn size={14} className="catalog-add" /> : <Plus size={14} className="catalog-add" />}
+        </button>)}</div>}
     </div>}
     {trusted && <p className="settings-note trust-note"><ShieldCheck size={14} /> {t('This project folder is trusted: its .mcp.json connectors, settings hooks and allow rules apply.')} <button className="button subtle small" disabled={working !== null} onClick={() => void untrust()}>{working === 'trust' ? <LoaderCircle size={13} className="animate-spin" /> : null} {t('Stop trusting')}</button></p>}
     <p className="settings-note"><ShieldCheck size={14} /> {t('Hosted sign-ins happen in your browser; Neru stores only the resulting token, encrypted with your system keychain, and refreshes it. Local connectors run with your permissions and keep their package caches in Neru’s storage. Add only servers you trust.')}</p>

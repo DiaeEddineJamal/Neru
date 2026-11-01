@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, FileText, LoaderCircle, MessageSquarePlus, PenLine, Send, Trash2, X } from 'lucide-react'
+import { Check, FileText, LoaderCircle, MessageSquarePlus, PenLine, Send, Trash2, X } from '@/components/icons'
 import { api } from '../../api'
 import { t } from '../../i18n'
 import { cn } from '@/lib/utils'

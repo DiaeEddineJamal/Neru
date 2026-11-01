@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, CircleAlert, X } from 'lucide-react'
+import { ChevronDown, CircleAlert, X } from '@/components/icons'
 import { actionLabels, describeError, type ErrorAction } from '@/lib/friendlyError'
 import { cn } from '@/lib/utils'
 import { t } from '../../i18n'

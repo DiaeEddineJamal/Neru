@@ -1,5 +1,88 @@
 [
   {
+    "version": "0.12.0",
+    "date": "2026-11-01",
+    "title": "Documents, memory and research",
+    "summary": "Neru writes real academic papers and documents you can edit beside the chat, remembers what matters about you across chats, checks every free model before you can pick it, and switches between models more smartly. Code mode gains code intelligence, editor AI, a session panel and a long list of agent features.",
+    "sections": [
+      {
+        "title": "Documents and research",
+        "items": [
+          "Research mode in Chat searches OpenAlex, Semantic Scholar, arXiv, Crossref, PubMed and the web, reads open-access papers, and writes a real academic paper section by section, cited in APA, MLA, Chicago, IEEE or Harvard with a reference list.",
+          "Papers, plans, reports, guides and other documents open in a panel beside the chat and stream in live, with a quill where the writing has reached. The panel follows the writing down the page until you scroll elsewhere.",
+          "Edit a document paragraph by paragraph: click any paragraph and type, in the page's own typeface. It saves when you click away, and the model keeps writing the rest without overwriting your changes.",
+          "Ask for a change in the chat and Neru edits the open document in place, rewriting only the paragraphs you meant instead of starting new research. All the changes in one reply make one new version.",
+          "Select text in a document and press Ask Neru to quote it in the message box.",
+          "Download as Word, PDF, web page, Markdown or plain text, plus LaTeX and BibTeX for papers.",
+          "Study helpers: /summarize, /flashcards (Anki CSV), /quiz and /explain."
+        ]
+      },
+      {
+        "title": "Memory",
+        "items": [
+          "Neru remembers lasting facts about you across chats and in Code, like Claude and ChatGPT: say “remember…” or “forget…”, or let it notice them on its own. Secrets and sensitive topics are never saved unless you ask.",
+          "It can search your earlier chats when you refer to them.",
+          "Settings → Memory lists what Neru knows, with search, edit, delete and three switches: use saved memories, learn from chats, and reference chat history.",
+          "About you: tell Neru your occupation, what it should know about you and how to answer, in Settings → General."
+        ]
+      },
+      {
+        "title": "Models and providers",
+        "items": [
+          "Every model is tested before you can pick it: once with a tiny request, and once to check it can call tools. Models that answer appear under Ready to use. Those that fail the tool test are marked Chat only and stay out of Code.",
+          "Clear verdicts instead of “cannot be tested”: a key with no credit, a plan that does not include the model, or a model the provider no longer serves each get a plain reason.",
+          "Smarter automatic switching. Neru tracks how each model really performs, waits out rate limits and spent quotas until they reset, skips a provider that keeps failing, matches the model to what the conversation needs (tools, images, length), avoids bouncing back to a model that just failed, and never switches a free plan to a model that bills. Each switch says why in one sentence.",
+          "Every free provider was checked against its own terms. Z.AI (GLM) and Cerebras moved to paid, and Hugging Face is billed. New: OVHcloud AI Endpoints (hosted in Europe, works without a key), Kilo Gateway, LLM7 and Ollama Cloud.",
+          "Settings → Model provider is now three plain steps: choose a provider, add your key with step-by-step help, and pick a model. Paid providers and technical fields stay out of the way.",
+          "Prompt caching across Chat and Code, a quota ledger per key, and a small fast model for chores such as titles and summaries."
+        ]
+      },
+      {
+        "title": "Chat",
+        "items": [
+          "Projects, as in Claude: instructions and knowledge files shared by every chat in a project, starred projects, and search through large knowledge.",
+          "A model selector with maker logos and side-by-side comparisons.",
+          "/btw side questions and multi-model compare."
+        ]
+      },
+      {
+        "title": "Code",
+        "items": [
+          "A Session panel next to the terminal shows what fills the context window, the task list, MCP servers and their tools, memory files, skills, the output style and hooks.",
+          "Code intelligence: syntax checks after every edit, language servers (TypeScript, Python, Rust, Go), a ranked repository map and semantic search.",
+          "Ctrl+K to edit a selection with AI and Tab completion in the editor.",
+          "The agent can click, type and take screenshots in the preview. A session board shows running and finished sessions with one-click commit, pull request and merge.",
+          "Risk-scored Auto mode, project checks in .neru/checks, tasks that run when Neru is closed, a Windows write limit outside the project, Spec mode, notebook editing, and `neru acp` for editors that speak the Agent Client Protocol."
+        ]
+      },
+      {
+        "title": "Connectors",
+        "items": [
+          "A bigger, checked catalog with categories and search: Gmail, Calendar and Drive (Google Workspace), Consensus, Scholar Gateway, arXiv, PubMed, Paper Search, Zotero, Wikipedia, Tavily, Firecrawl, Todoist, monday.com, Airtable, Miro, Obsidian and more. Outdated entries were fixed or removed.",
+          "Adding a connector shows what it needs (Node.js or uv, a key or a sign-in) and asks for each value. A missing tool gets a plain message with an install link.",
+          "MCP resources and prompts, and the older SSE transport."
+        ]
+      },
+      {
+        "title": "Look and feel",
+        "items": [
+          "A charcoal dark mode, clearer input borders and Phosphor icons throughout.",
+          "Notifications appear as small toasts in the corner instead of bars across the top.",
+          "Every dropdown uses Neru's own style.",
+          "The sidebar collapses to a slim column of icons, or hides completely when it is set to appear on hover.",
+          "Sound bars like Claude's while you dictate.",
+          "Menus, the command palette and the model list fit any window size."
+        ]
+      },
+      {
+        "title": "Changes",
+        "items": [
+          "Neru's interface comes in English and French. Arabic and Moroccan Darija were removed."
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.11.0",
     "date": "2026-10-05",
     "title": "Images in Team",

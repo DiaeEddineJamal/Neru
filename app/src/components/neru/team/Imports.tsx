@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
-import { Check, Copy, Download, Folder, FolderOpen, LoaderCircle, LogIn, RefreshCw, Settings2, ShieldCheck, TriangleAlert } from 'lucide-react'
+import { Check, Copy, Download, Folder, FolderOpen, LoaderCircle, LogIn, RefreshCw, Settings2, ShieldCheck, TriangleAlert } from '@/components/icons'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { cn } from '@/lib/utils'
 import { api } from '../../../api'
 import type { ImportProgress, ImportScan, ProjectInfo, TeamAgent } from '../../../types'
 import { AgentMark } from './TeamView'
+import { Select } from '../../ui/Select'
 
 const errorText = (value: unknown) => value instanceof Error ? value.message : String(value)
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -219,7 +220,7 @@ export function ImportsSettings({ project, onError, onNotice, onOpenTeam }: { pr
     </div>
     <div className="import-bar">
       <button className="button primary" onClick={() => void importEverything()} disabled={!scan || working || scanning || found.length === 0}><Download size={15} />Import everything</button>
-      <select className="settings-select" value={days} onChange={event => setDays(Number(event.target.value))} aria-label="How far back to look for chats">{RANGES.map(range => <option key={range.days} value={range.days}>{range.label}</option>)}</select>
+      <Select className="settings-select" value={days} onChange={event => setDays(Number(event.target.value))} aria-label="How far back to look for chats">{RANGES.map(range => <option key={range.days} value={range.days}>{range.label}</option>)}</Select>
       <button className="button subtle" onClick={() => rescan(days)} disabled={scanning}><RefreshCw size={14} className={scanning ? 'animate-spin' : undefined} />Scan again</button>
     </div>
     {working && progress && progress.total > 0 && <div className="import-progress" role="status">

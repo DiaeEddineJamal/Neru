@@ -22,22 +22,26 @@ const fn preset(id: &'static str, name: &'static str, base_url: &'static str, fo
 
 /// The app's provider list (app/src/providerCatalog.ts), free coding providers first.
 pub const PRESETS: &[Preset] = &[
-    preset("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", "openai-chat", "", "https://build.nvidia.com/settings/api-keys", "free · ~10,000 requests/day"),
+    preset("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", "openai-chat", "", "https://build.nvidia.com/settings/api-keys", "free · for prototyping, rate limited"),
     preset("modelscope", "ModelScope", "https://api-inference.modelscope.cn/v1", "openai-chat", "", "https://modelscope.cn/my/myaccesstoken", "free · 2,000 requests/day"),
     preset("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "openai-chat", "gemini-3.8-flash", "https://aistudio.google.com/apikey", "free · daily quota per model, per project"),
-    preset("cerebras", "Cerebras", "https://api.cerebras.ai/v1", "openai-chat", "gpt-oss-120b", "https://cloud.cerebras.ai/platform/", "free · 1M tokens/day"),
-    preset("mistral", "Mistral", "https://api.mistral.ai/v1", "openai-chat", "codestral-latest", "https://console.mistral.ai/api-keys", "free · monthly credit"),
+    preset("mistral", "Mistral", "https://api.mistral.ai/v1", "openai-chat", "codestral-latest", "https://console.mistral.ai/api-keys", "free plan · rate limited"),
     preset("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai-chat", "openrouter/free", "https://openrouter.ai/settings/keys", "free · 50 requests/day"),
     preset("cloudflare", "Cloudflare Workers AI", "https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1", "openai-chat", "@cf/openai/gpt-oss-120b", "https://dash.cloudflare.com/profile/api-tokens", "free · 10,000 neurons/day"),
-    preset("zai", "Z.AI GLM", "https://api.z.ai/api/paas/v4", "openai-chat", "glm-4.7-flash", "https://z.ai/manage-apikey/apikey-list", "GLM-4.7-Flash free"),
-    preset("groq", "Groq Cloud", "https://api.groq.com/openai/v1", "openai-chat", "llama-3.3-70b-versatile", "https://console.groq.com/keys", "free · 8K tokens/min"),
+    preset("groq", "Groq Cloud", "https://api.groq.com/openai/v1", "openai-chat", "openai/gpt-oss-120b", "https://console.groq.com/keys", "free · 8K tokens/min"),
+    preset("ovhcloud", "OVHcloud AI Endpoints", "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", "openai-chat", "", "https://endpoints.ai.cloud.ovh.net/", "free · no key needed (2 requests/min)"),
+    preset("kilo", "Kilo Code Gateway", "https://ai-gateway.kilo.ai/api/v1", "openai-chat", "", "https://app.kilo.ai/", "free · :free models"),
     preset("sambanova", "SambaNova", "https://api.sambanova.ai/v1", "openai-chat", "Meta-Llama-3.3-70B-Instruct", "https://cloud.sambanova.ai/apis", "free · fallback only"),
+    preset("llm7", "LLM7", "https://api.llm7.io/v1", "openai-chat", "", "https://dash.llm7.io/", "free token · fallback only"),
     preset("ollama", "Ollama (local models)", "http://localhost:11434/v1", "openai-chat", "", "", "runs on this computer"),
     preset("local", "Local gateway", "http://localhost:3001/v1", "openai-chat", "auto", "", "any OpenAI-compatible server"),
+    preset("zai", "Z.AI GLM", "https://api.z.ai/api/paas/v4", "openai-chat", "glm-4.7-flash", "https://z.ai/manage-apikey/apikey-list", "paid · needs a balance; GLM-4.x-Flash priced at zero"),
     preset("opencode", "OpenCode Zen", "https://opencode.ai/zen/v1", "openai-chat", "", "https://opencode.ai/auth", ""),
     preset("xai", "Grok (xAI)", "https://api.x.ai/v1", "openai-chat", "", "https://console.x.ai", ""),
     preset("openai", "OpenAI", "https://api.openai.com/v1", "openai-responses", "", "https://platform.openai.com/api-keys", ""),
     preset("anthropic", "Anthropic", "https://api.anthropic.com/v1", "anthropic", "", "https://console.anthropic.com/settings/keys", ""),
+    preset("cerebras", "Cerebras", "https://api.cerebras.ai/v1", "openai-chat", "gpt-oss-120b", "https://cloud.cerebras.ai/platform/", "paid · $5 trial credit with a card"),
+    preset("ollamacloud", "Ollama Cloud", "https://ollama.com/v1", "openai-chat", "", "https://ollama.com/settings/keys", "paid · pay as you go"),
     preset("huggingface", "Hugging Face", "https://router.huggingface.co/v1", "openai-chat", "openai/gpt-oss-120b", "https://huggingface.co/settings/tokens", "paid · tiny monthly credit"),
     preset("deepseek", "DeepSeek", "https://api.deepseek.com", "openai-chat", "", "https://platform.deepseek.com/api_keys", ""),
     preset("qwen", "Alibaba Qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "openai-chat", "", "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key", ""),
@@ -126,7 +130,7 @@ pub fn login(app: &tauri::AppHandle, screen: &mut Screen) -> Result<Option<Strin
         let label = if same { format!("{} API key (enter to keep the saved one)", preset.name) } else { format!("{} API key", preset.name) };
         match cli_ui::read_secret(screen, &label) {
             Some(value) => key = value,
-            None if same => {}
+            None if same || crate::providers::keyless(preset.id) => {}
             None => return Ok(None),
         }
     }

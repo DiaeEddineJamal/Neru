@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
-import { Brain, Check, CircleAlert, CodeXml, Eye, ListChecks, LoaderCircle, Search, Square, Wrench } from 'lucide-react'
+import { Brain, Check, CircleAlert, CodeXml, Eye, ListChecks, LoaderCircle, Search, Square, Wrench } from '@/components/icons'
 import { api } from '../../api'
 import type { ApiFormat } from '../../providerCatalog'
 import type { ModelInfo, ProbeResult } from '../../types'
@@ -30,8 +30,18 @@ export const shortModelName = (id: string) => id.split('/').pop() || id
 
 /** Replaces the classification of one model with what a check found. */
 export function applyProbe(models: ModelInfo[], result: ProbeResult): ModelInfo[] {
-  if (result.status !== 'ok' && result.status !== 'unavailable') return models
-  return models.map(info => info.id === result.model ? { ...info, verified: result.status as 'ok' | 'unavailable', verifiedReason: result.reason } : info)
+  if (result.status !== 'ok' && result.status !== 'unavailable') return result.tools ? models.map(info => info.id === result.model ? { ...info, toolsVerified: result.tools } : info) : models
+  return models.map(info => info.id === result.model ? { ...info, verified: result.status as 'ok' | 'unavailable', verifiedReason: result.reason, ...(result.tools ? { toolsVerified: result.tools } : {}) } : info)
+}
+
+/** Settings lists the models that answered a test first; the rest wait under "Not checked yet". */
+export function groupByCheck(models: ModelInfo[], trusted: boolean): { key: string; title: string; items: ModelInfo[] }[] {
+  if (trusted) return [{ key: 'all', title: 'Ready to use', items: models }].filter(group => group.items.length > 0)
+  return [
+    { key: 'ok', title: 'Ready to use', items: models.filter(info => info.verified === 'ok') },
+    { key: 'unknown', title: 'Not checked yet', items: models.filter(info => info.verified === 'unknown') },
+    { key: 'unavailable', title: 'Not available to this key', items: models.filter(info => info.verified === 'unavailable') },
+  ].filter(group => group.items.length > 0)
 }
 
 export function filterModels(models: ModelInfo[], options: { query: string; filter: ModelFilter; showUnavailable: boolean; keep?: string }) {
@@ -56,15 +66,16 @@ export function groupModels(models: ModelInfo[]): { key: string; title: string; 
 export function ModelBadges({ info }: { info: ModelInfo }) {
   const context = contextLabel(info.contextWindow)
   return <span className="model-badges">
-    {info.vision && <span className="model-badge vision" title={info.source === 'name' ? t('Reads images (guessed from the model name)') : t('Reads images')}><Eye size={12} strokeWidth={2} /></span>}
-    {info.reasoning && <span className="model-badge reasoning" title={info.source === 'name' ? t('Reasoning model (guessed from the model name)') : t('Reasoning model')}><Brain size={12} strokeWidth={2} /></span>}
+    {info.vision && <span className="model-badge vision" title={info.source === 'name' ? t('Reads images (guessed from the model name)') : t('Reads images')}><Eye size={12} /></span>}
+    {info.reasoning && <span className="model-badge reasoning" title={info.source === 'name' ? t('Reasoning model (guessed from the model name)') : t('Reasoning model')}><Brain size={12} /></span>}
     {info.protocol === 'text' && <span className="model-badge tools text" title={t('No native tool calls: Neru describes its tools in the prompt and reads the calls from the reply')}>{t('txt')}</span>}
-    {info.tools && <span className="model-badge tools" title={info.source === 'name' ? t('Can call tools, which Neru needs to edit files and run commands (guessed from the model name)') : t('Can call tools, which Neru needs to edit files and run commands')}><Wrench size={12} strokeWidth={2} /></span>}
-    {info.kind === 'code' && <span className="model-badge code" title={t('Tuned for code')}><CodeXml size={12} strokeWidth={2} /></span>}
+    {info.tools && <span className="model-badge tools" title={info.source === 'name' ? t('Can call tools, which Neru needs to edit files and run commands (guessed from the model name)') : t('Can call tools, which Neru needs to edit files and run commands')}><Wrench size={12} /></span>}
+    {info.kind === 'code' && <span className="model-badge code" title={t('Tuned for code')}><CodeXml size={12} /></span>}
     {info.free && <span className="model-badge free" title={t('Free to use')}>{t('free')}</span>}
     {context && <span className="model-badge context" title={t('{n} tokens of context', { n: info.contextWindow?.toLocaleString() ?? '' })}>{context}</span>}
-    {info.verified === 'ok' && <span className="model-badge ok" title={info.verifiedReason || t('A test request worked')}><Check size={12} strokeWidth={2.4} /></span>}
-    {info.verified === 'unavailable' && <span className="model-badge bad" title={info.verifiedReason || t('The provider does not serve this model to this key')}><CircleAlert size={12} strokeWidth={2} /></span>}
+    {info.toolsVerified === 'no' && <span className="model-badge chat-only" title={t('Failed the tool test: works in Chat, but cannot edit files or run commands in Code')}>{t('Chat only')}</span>}
+    {info.verified === 'ok' && <span className="model-badge ok" title={info.verifiedReason || t('A test request worked')}><Check size={12} /></span>}
+    {info.verified === 'unavailable' && <span className="model-badge bad" title={info.verifiedReason || t('The provider does not serve this model to this key')}><CircleAlert size={12} /></span>}
   </span>
 }
 
@@ -121,17 +132,23 @@ export function SettingsModelPicker({ providerId, baseUrl, apiKey, models, onMod
   const runId = useRef('')
   const mounted = useRef(true)
   const authoritative = LISTING_IS_AUTHORITATIVE.has(providerId)
+  const providerRef = useRef(providerId)
+  providerRef.current = providerId
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   // The list belongs to one provider and key; switching them drops the old messages.
-  useEffect(() => { setNotice(null); setSummary(''); setQuery(''); setFilter('all') }, [providerId, baseUrl])
+  useEffect(() => { setNotice(null); setSummary(''); setQuery(''); setFilter('all'); setRun(null) }, [providerId, baseUrl])
   useEffect(() => {
     let stop: (() => void) | undefined
     let live = true
     void api.onModelCheck(progress => {
-      if (progress.runId !== runId.current || !mounted.current) return
+      if (!mounted.current) return
+      // Neru also tests a new key's models on its own (run id "auto:<provider>"); show that run too.
+      const auto = progress.runId === `auto:${providerRef.current}`
+      if (progress.runId !== runId.current && !auto) return
       if (progress.result) onModels(current => applyProbe(current, progress.result as ProbeResult))
-      setRun(current => current ? { ...current, done: progress.done, total: progress.total } : current)
+      if (auto) setRun(progress.finished ? null : { id: progress.runId, done: progress.done, total: progress.total })
+      else setRun(current => current ? { ...current, done: progress.done, total: progress.total } : current)
     }).then(unlisten => { if (live) stop = unlisten; else unlisten() }).catch(() => undefined)
     return () => { live = false; stop?.() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,9 +156,10 @@ export function SettingsModelPicker({ providerId, baseUrl, apiKey, models, onMod
 
   const hidden = models.filter(info => info.verified === 'unavailable').length
   const shown = useMemo(() => filterModels(models, { query, filter, showUnavailable, keep: value }), [models, query, filter, showUnavailable, value])
-  const groups = groupModels(shown)
+  const groups = groupByCheck(shown, authoritative)
   const isUnique = useMemo(() => uniqueShortNames(models), [models])
   const checked = models.filter(info => info.verified === 'ok').length
+  const unchecked = models.filter(info => info.verified === 'unknown').length
 
   const pick = async (info: ModelInfo) => {
     if (info.id === value || picking) return
@@ -165,7 +183,7 @@ export function SettingsModelPicker({ providerId, baseUrl, apiKey, models, onMod
     const id = `check-${Date.now().toString(36)}`
     runId.current = id
     setNotice(null); setSummary('')
-    const targets = models.filter(info => info.verified !== 'unavailable').map(info => ({ model: info.id, apiFormat: formatFor(info.id) }))
+    const targets = models.filter(info => info.verified === 'unknown').map(info => ({ model: info.id, apiFormat: formatFor(info.id) }))
     setRun({ id, done: 0, total: targets.length })
     try {
       const outcome = await api.checkModels(id, providerId, baseUrl, apiKey, targets)
@@ -202,13 +220,13 @@ export function SettingsModelPicker({ providerId, baseUrl, apiKey, models, onMod
         ? <span className="model-foot-text">{providerId === 'openrouter' ? t('Only the models your OpenRouter account can use, with tool calling. Free-tier keys see free models only.') : t('These models are installed or served right now.')}</span>
         : run
           ? <>
-            <span className="model-foot-text" aria-live="polite">{t('{done}/{total} checked', { done: run.done, total: run.total })}</span>
+            <span className="model-foot-text" aria-live="polite">{t('Testing models: {done} of {total}', { done: run.done, total: run.total })}</span>
             <span className="model-progress" aria-hidden><i style={{ width: `${run.total ? Math.round(run.done / run.total * 100) : 0}%` }} /></span>
             <button type="button" className="button subtle small" onClick={cancel}><Square size={11} /> {t('Stop')}</button>
           </>
           : <>
-            <button type="button" className="button subtle small" onClick={() => void check()} disabled={loading || Boolean(picking)} title={t('Sends one tiny request per model to see which ones this provider actually serves')}><ListChecks size={13} /> {t('Check availability')}</button>
-            <span className="model-foot-text">{summary || (checked || hidden ? `${hidden ? t('{checked} confirmed, {hidden} unavailable.', { checked, hidden }) : t('{checked} confirmed.', { checked })} ` : `${t('Some listed models may not be served to your key.')} `)}</span>
+            {unchecked > 0 && <button type="button" className="button subtle small" onClick={() => void check()} disabled={loading || Boolean(picking)} title={t('Sends one tiny request per model to see which ones this key can really use')}><ListChecks size={13} /> {t('Test the rest ({n})', { n: unchecked })}</button>}
+            <span className="model-foot-text">{summary || (unchecked ? t('{checked} ready. Models not checked yet are tested when you pick them.', { checked }) : t('{checked} ready to use.', { checked }))}</span>
           </>}
       {footer}
     </div>

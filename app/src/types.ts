@@ -1,4 +1,4 @@
-export type Section = 'home' | 'explorer' | 'search' | 'git' | 'terminal' | 'preview' | 'settings' | 'team' | 'board'
+export type Section = 'home' | 'explorer' | 'search' | 'git' | 'terminal' | 'preview' | 'settings' | 'team' | 'board' | 'projects'
 
 export interface ProjectInfo {
   name: string
@@ -146,6 +146,8 @@ export interface ContextUsage {
   windowReported?: boolean
   model?: string
   quotas?: Quota[]
+  /** What `used` is made of: system prompt, tool definitions, messages and tool results. */
+  breakdown?: { kind: 'system' | 'tools' | 'messages' | 'results'; tokens: number }[]
 }
 
 export interface AgentResponse {
@@ -204,11 +206,11 @@ export interface Source {
 
 export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'ieee' | 'harvard'
 /** The chat card for a research paper Research mode wrote (paper.rs). */
-export interface PaperCard { id: string; title: string; kind: string; words: number; sources: number; format: '' | 'docx' | 'pdf' | 'md' | 'html' | 'tex' }
+export interface PaperCard { id: string; title: string; kind: string; words: number; sources: number; format: '' | 'docx' | 'pdf' | 'md' | 'html' | 'tex'; status?: 'writing' | 'paused' | 'done' }
 export interface PaperSection { heading: string; body: string }
 export interface PaperReference { number: number; text: string; source: Source }
 /** A research paper: Markdown sections with in-text citations already in `style`, and the works cited. */
-export interface Paper { id: string; title: string; kind: string; authors: string[]; affiliation: string; date: string; abstractText: string; keywords: string[]; sections: PaperSection[]; references: PaperReference[]; style: CitationStyle; format: PaperCard['format']; language: string; question: string; words: number; created: number }
+export interface Paper { id: string; title: string; kind: string; authors: string[]; affiliation: string; date: string; abstractText: string; keywords: string[]; sections: PaperSection[]; references: PaperReference[]; style: CitationStyle; format: PaperCard['format']; language: string; question: string; words: number; created: number; status: 'writing' | 'paused' | 'done'; outline: { heading: string; goal: string; words: number }[]; cited: number[]; note: string; plain?: boolean }
 /** A step of Research mode's plan, as research.rs reports it. */
 export interface ResearchStep { label: string; status: 'pending' | 'running' | 'done' | 'error'; detail: string }
 
@@ -283,6 +285,52 @@ export interface SessionSummary {
   status?: SessionStatus
   /** The pull request for a worktree session's branch, when the board looked it up. */
   pr?: SessionPr
+  /** The Chat project this chat is filed under. */
+  chatProjectId?: string
+}
+
+/** A Chat project (Claude-style Projects): shared instructions and knowledge for its chats. */
+export interface ChatProject {
+  id: string
+  name: string
+  description: string
+  instructions: string
+  starred: boolean
+  archived: boolean
+  created: number
+  updated: number
+}
+
+export interface ChatProjectListItem extends ChatProject {
+  knowledgeItems: number
+  knowledgeTokens: number
+}
+
+export interface KnowledgeItem {
+  id: string
+  title: string
+  kind: 'file' | 'text'
+  source: string
+  chars: number
+  tokens: number
+  added: number
+}
+
+export interface ChatProjectDetail {
+  project: ChatProject
+  knowledge: KnowledgeItem[]
+  knowledgeTokens: number
+  /** The model's token budget; knowledge above inlineLimitTokens is searched instead of inlined. */
+  budgetTokens: number
+  inlineLimitTokens: number
+}
+
+export interface ChatProjectPatch {
+  name?: string
+  description?: string
+  instructions?: string
+  starred?: boolean
+  archived?: boolean
 }
 
 export type SessionStatus = 'running' | 'needs-you' | 'done' | 'merged'
@@ -374,11 +422,16 @@ export interface ModelInfo {
   /** ok: a test request worked. unavailable: the provider refused the model. unknown: not checked, or the check was inconclusive. */
   verified: 'ok' | 'unavailable' | 'unknown'
   verifiedReason?: string
+  /** ok: answered a test request with a tool call. no: did not, so it is offered for Chat only. unknown: not tested yet. */
+  toolsVerified?: 'ok' | 'no' | 'unknown'
   /** metadata: the provider said what the model can do. name: guessed from the id. */
   source: 'metadata' | 'name'
 }
 
-export interface ProbeResult { model: string; status: 'ok' | 'unavailable' | 'unknown' | 'badKey'; reason: string; rateLimited: boolean; cached: boolean }
+export interface ProbeResult { model: string; status: 'ok' | 'unavailable' | 'unknown' | 'badKey'; reason: string; rateLimited: boolean; cached: boolean; tools?: 'ok' | 'no' | 'unknown' }
+
+/** What a key's free plan has left, when the provider says (OpenRouter). */
+export interface Allowance { freeTier: boolean; remaining: number | null; note: string }
 
 export interface CheckProgress { runId: string; done: number; total: number; result: ProbeResult | null; finished: boolean; note: string | null }
 
@@ -428,3 +481,10 @@ export interface ImportScan { sources: ImportSource[]; chats: ImportChat[]; skil
 
 /** Settings → Phone (Neru Remote). `pairing` and `qrSvg` are empty while it is off. */
 export interface RemoteStatus { enabled: boolean; port: number; hosts: string[]; name: string; pairing: string; qrSvg: string; clients: number; internet: boolean; endpoint: string; internetError: string }
+
+/** Settings → Memory: facts about the user that every model sees (memory.rs). */
+export type MemoryCategory = 'about' | 'preferences' | 'work' | 'projects' | 'other'
+/** `source` user: the user said it; noticed: Neru inferred it from a chat. Times are milliseconds. */
+export interface SavedMemory { id: string; text: string; category: MemoryCategory; createdAt: number; updatedAt: number; source: 'user' | 'noticed'; sessionId?: string }
+export interface MemoryPrefs { referenceMemories: boolean; learnFromChats: boolean; referenceChatHistory: boolean }
+export interface MemoryStore { settings: MemoryPrefs; memories: SavedMemory[] }

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
-import { Check, Copy, LoaderCircle, SquareTerminal } from 'lucide-react'
+import { Check, Copy, LoaderCircle, SquareTerminal } from '@/components/icons'
 import { api } from '../../api'
 import type { CliStatus } from '../../types'
 import { t } from '../../i18n'

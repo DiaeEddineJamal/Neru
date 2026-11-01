@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { FileDiff as FileDiffIcon, LoaderCircle, MessageSquarePlus, Pencil, RefreshCw, Save, Send, Trash2, X } from 'lucide-react'
+import { FileDiff as FileDiffIcon, LoaderCircle, MessageSquarePlus, Pencil, RefreshCw, Save, Send, Trash2, X } from '@/components/icons'
 import { FileDiff } from '@/components/agents/file-diff'
 import { api } from '../../api'
 import { languageForPath } from '@/components/agents/agent-code'

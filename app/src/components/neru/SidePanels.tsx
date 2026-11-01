@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Columns3, LoaderCircle, MessageCircleQuestion, Plus, Send, X } from 'lucide-react'
+import { Check, Columns3, LoaderCircle, MessageCircleQuestion, Plus, Send, X } from '@/components/icons'
 import { api } from '../../api'
 import { t } from '../../i18n'
 import { cn } from '@/lib/utils'

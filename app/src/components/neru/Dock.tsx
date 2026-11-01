@@ -1,9 +1,9 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { Maximize2, Minimize2, X } from 'lucide-react'
+import { Maximize2, Minimize2, X } from '@/components/icons'
 import { cn } from '@/lib/utils'
 import { t } from '../../i18n'
 
-export type PaneId = 'terminal' | 'files' | 'changes' | 'browser'
+export type PaneId = 'session' | 'terminal' | 'files' | 'changes' | 'browser'
 
 export interface DockPaneSpec {
   id: PaneId
@@ -36,7 +36,7 @@ export function Dock({ panes, open, expanded, onExpand, onClose }: {
   const [resizing, setResizing] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const visible = (id: PaneId) => open[id] && (!expanded || expanded === id)
-  const stackVisible = (['terminal', 'files', 'changes'] as PaneId[]).some(visible)
+  const stackVisible = (['session', 'terminal', 'files', 'changes'] as PaneId[]).some(visible)
   const browserVisible = visible('browser')
   const anyOpen = stackVisible || browserVisible
 

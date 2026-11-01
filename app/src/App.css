@@ -92,15 +92,13 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .page-project { flex: 0 1 auto; max-width: 230px; color: var(--secondary); font-size: var(--fs-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .text-action { display: inline-flex; align-items: center; gap: 6px; color: var(--secondary); background: transparent; border: 0; font-size: var(--fs-sm); }
 .text-action:hover { color: var(--text); }
-.error-banner { display: flex; align-items: center; gap: 10px; padding: 8px 15px; border-bottom: 1px solid #68403f; color: #e8b0ab; background: #2d1d1c; font-size: var(--fs-sm); }
-.error-banner > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 8px; height: 34px; padding: 0 14px; font-size: var(--fs-base); font-weight: 500; white-space: nowrap; text-decoration: none; }
 .button.primary { background: var(--moss-action); border: 1px solid var(--moss-action); color: #f5f4ef; }
 .button.primary:hover { background: var(--moss-action-hover); }
 .button.subtle { background: var(--surface-2); border: 1px solid var(--border); color: var(--secondary); }
 .button.subtle:hover { color: var(--text); border-color: var(--moss); }
-.home-view { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; padding: 24px 28px 14px; overflow: hidden; animation: surface-enter .62s cubic-bezier(.16, 1, .3, 1); }
-@keyframes surface-enter { from { opacity: 0; transform: translateY(16px) scale(.985); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
+.home-view { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; padding: 24px 28px 14px; overflow: hidden; animation: surface-enter var(--dur-3) var(--ease-out); }
+@keyframes surface-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .home-hero { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; margin: 0 0 20px; }
 .home-hero > .mascot-control { margin-bottom: 20px; }
 .home-hero h1 { margin: 0 0 8px; font-family: 'Instrument Serif', Georgia, serif; font-size: var(--fs-display); font-weight: 400; letter-spacing: -.02em; line-height: 1.15; }
@@ -140,9 +138,6 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .message { display: flex; gap: 14px; line-height: 1.65; }
 .message.user { justify-content: flex-end; }
 .message.user .message-body { position: relative; max-width: 75%; padding: 11px 17px; border: 1px solid var(--bubble-border); border-radius: 20px 20px 6px 20px; background: linear-gradient(180deg, var(--bubble-top), var(--bubble-bottom)); box-shadow: var(--bubble-shadow); color: var(--bubble-text); font-size: var(--fs-md); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; }
-/* A soft light sweeps across a message once as it lands. */
-.message.user.just-sent .message-body::after { content: ''; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 30%, rgb(255 255 255 / .16) 50%, transparent 70%); transform: translateX(-100%); animation: bubble-sheen .9s .18s cubic-bezier(.22,1,.36,1) forwards; pointer-events: none; }
-@keyframes bubble-sheen { to { transform: translateX(100%); } }
 .message.user .message-context > span { background: rgb(0 0 0 / .12); border-color: var(--bubble-border); color: var(--bubble-text); }
 @media (prefers-reduced-motion: reduce) { .message.user.just-sent .message-body::after { display: none; } }
 .message.user .message-body.images-only { padding: 0; border: 0; background: none; box-shadow: none; }
@@ -414,8 +409,8 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .provider-settings label { display: flex; flex-direction: column; gap: 6px; color: var(--secondary); font-size: var(--fs-sm); font-weight: 500; margin-bottom: 14px; }
 .provider-settings input { width: 100%; min-width: 0; height: 38px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: var(--bg); padding: 0 12px; color: var(--text); font-size: var(--fs-base); }
 .provider-settings input::placeholder { color: var(--muted); }
-.provider-settings select { width: 100%; min-width: 0; height: 38px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: var(--bg); color: var(--text); font-size: var(--fs-base); }
-.provider-settings input:focus, .provider-settings select:focus { border-color: var(--moss); }
+.provider-settings .nselect { width: 100%; min-width: 0; height: 38px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: var(--bg); color: var(--text); font-size: var(--fs-base); }
+.provider-settings input:focus, .provider-settings .nselect.is-open { border-color: var(--moss); }
 .provider-description { margin: -6px 0 18px; color: var(--muted); font-size: var(--fs-sm); }
 .provider-description p { margin: 0; }
 .provider-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px !important; }
@@ -466,18 +461,10 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .session-running { flex: 0 0 auto; display: grid; place-items: center; padding-right: 10px; color: var(--sage); }
 .page-branch { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: 22px; padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--sage); font: var(--fs-xs) 'JetBrains Mono', monospace; }
 .remote-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.notice-banner { display: flex; align-items: center; gap: 10px; padding: 8px 15px; border-bottom: 1px solid var(--border); color: var(--secondary); background: color-mix(in oklch, var(--sage) 10%, var(--surface)); font-size: var(--fs-sm); }
-.notice-banner > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Session events in the thread, the way Claude shows "Compacted conversation" */
 .session-note { display: flex; align-items: center; gap: 6px; margin: -12px 0; padding-left: 42px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
 .session-note > svg { flex: 0 0 auto; }
 /* Asking once before a project's own connectors and hooks may run */
-.trust-banner { display: flex; align-items: center; gap: 12px; padding: 9px 15px; border-bottom: 1px solid var(--border); background: color-mix(in oklch, oklch(0.72 0.14 75) 9%, var(--surface)); color: var(--text); font-size: var(--fs-sm); }
-.trust-banner > svg { flex: 0 0 auto; color: oklch(0.62 0.13 75); }
-.trust-banner-body { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; line-height: 1.45; }
-.trust-banner-body > span { overflow: hidden; color: var(--secondary); text-overflow: ellipsis; white-space: nowrap; }
-.trust-banner-actions { display: flex; flex: 0 0 auto; gap: 8px; }
-@media (max-width: 640px) { .trust-banner { flex-wrap: wrap; } .trust-banner-body > span { white-space: normal; } }
 
 /* Rewind under a sent message */
 .message.user { flex-direction: column; align-items: flex-end; gap: 4px; }
@@ -651,7 +638,7 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 
 .git-actions { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
 .git-select, .pr-form { display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-sm); color: var(--secondary); }
-.git-select select, .pr-form input, .pr-form textarea, .git-actions select { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: 8px 10px; }
+.git-select .nselect, .pr-form input, .pr-form textarea, .git-actions .nselect { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: 8px 10px; }
 .pr-toggles { display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--fs-sm); color: var(--secondary); }
 .pr-toggles label { display: flex; align-items: center; gap: 6px; }
 .preview-pane { position: relative; display: flex; flex-direction: column; flex: 1; width: 100%; min-width: 0; min-height: 0; }
@@ -855,7 +842,6 @@ kbd { font: var(--fs-xs) Inter, sans-serif; color: var(--muted); letter-spacing:
 .error-notice-details svg { transition: transform .15s; }
 .error-notice-details svg.open { transform: rotate(180deg); }
 .error-notice-raw { max-height: 180px; overflow: auto; margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.error-banner-wrap { position: relative; z-index: 40; margin: 8px 16px 0; }
 
 /* The right-click menu. */
 .context-menu { position: fixed; z-index: 300; min-width: 220px; max-width: 320px; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); box-shadow: 0 14px 38px rgb(0 0 0 / .28), 0 2px 6px rgb(0 0 0 / .18); outline: none; transform-origin: top left; }
@@ -1419,7 +1405,7 @@ button.task-card:hover { border-color: var(--sage); }
 .model-logo.blank { border-radius: 4px; background: color-mix(in srgb, var(--muted) 30%, transparent); }
 .ms-badge { flex: 0 0 auto; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--moss) 22%, transparent); color: var(--sage); font-size: 10.5px; font-weight: 600; line-height: 17px; }
 .ms-badge.free { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); text-transform: uppercase; font-size: 9.5px; letter-spacing: .04em; }
-.ms-popup { position: absolute; z-index: 60; right: 0; bottom: calc(100% + 8px); display: flex; flex-direction: row-reverse; align-items: flex-end; gap: 8px; animation: ms-in .14s cubic-bezier(.16, 1, .3, 1); }
+.ms-popup { position: fixed; z-index: 1000; display: flex; flex-direction: row-reverse; align-items: flex-end; gap: 8px; animation: ms-in .14s cubic-bezier(.16, 1, .3, 1); }
 @keyframes ms-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .ms-panel, .ms-preview { border: 1px solid var(--border); border-radius: 12px; background: var(--menu-bg); color: var(--text); box-shadow: 0 18px 50px -12px rgb(0 0 0 / .45), 0 2px 8px rgb(0 0 0 / .18); }
 .ms-panel { display: flex; flex-direction: column; width: 300px; max-height: min(460px, 70vh); overflow: hidden; }
@@ -1453,8 +1439,8 @@ button.task-card:hover { border-color: var(--sage); }
 .ms-metric-info { display: grid; place-items: center; color: var(--muted); opacity: .7; cursor: help; }
 .ms-bar { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; cursor: help; }
 .ms-bar i { height: 9px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 22%, transparent); }
-.ms-bar.good i.on { background: oklch(0.7 0.13 150); }
-.ms-bar.warm i.on { background: oklch(0.72 0.15 55); }
+.ms-bar.good i.on { background: var(--sage); }
+.ms-bar.warm i.on { background: color-mix(in oklch, var(--sage) 62%, var(--text)); }
 .ms-metric-none { color: var(--muted); font-size: 11px; }
 .ms-preview-facts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 12px; }
 .ms-preview-facts span { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 14%, transparent); color: var(--secondary); font-size: 10.5px; }
@@ -1482,3 +1468,111 @@ button.task-card:hover { border-color: var(--sage); }
 .ms-filters .model-filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 .ms-filters .model-filters::-webkit-scrollbar { display: none; }
 .ms-filters .model-chip { flex: 0 0 auto; }
+.ms-popup.down { align-items: flex-start; }
+.ms-preview-wrap { display: flex; overflow-y: auto; border-radius: 12px; }
+.agent-quill { place-items: center; color: var(--sage); }
+
+/* ===== Design system layer =====
+   One recipe per kind of element, built on the tokens in index.css (spacing, radius, type, motion,
+   z-index, elevation). Rules here deliberately come last so they settle the older one-off values. */
+
+/* Floating menus and popovers: one surface, one border, one radius, one shadow. */
+.menu, .mic-menu-panel, .app-menu-panel, .rewind-menu, .context-panel, .context-menu, .pv-menu-panel, .title-menu, .send-menu-panel, .slash-menu, .ms-panel, .ms-preview, .artifact-menu {
+  border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--menu-bg); box-shadow: var(--shadow-popover);
+}
+.slash-menu, .send-menu-panel { background: var(--menu-bg); }
+.menu, .mic-menu-panel, .rewind-menu, .pv-menu-panel, .title-menu, .send-menu-panel, .slash-menu, .context-menu { padding: var(--space-1); }
+
+/* Stacking order: panes, then menus, overlays, modals (settings and the dialogs opened from it), toasts. */
+.menu, .mic-menu-panel, .rewind-menu, .pv-menu-panel, .slash-menu { z-index: var(--z-dropdown); }
+.title-menu, .app-menu-panel { z-index: calc(var(--z-dropdown) + 10); }
+.sidebar-peek { z-index: var(--z-overlay); }
+.settings-backdrop { z-index: var(--z-modal); }
+.modal-backdrop, .whats-new-backdrop { z-index: calc(var(--z-modal) + 10); }
+.context-menu { z-index: var(--z-context); }
+
+/* Icon buttons: ghost by default, one hover and press recipe, never under 24px. */
+.icon-button, .titlebar-button, .prompt-toggle, .artifact-tool { border-radius: var(--r-md); transition: background-color var(--dur-1) ease-out, color var(--dur-1) ease-out; }
+.icon-button:hover:not(:disabled), .titlebar-button:hover:not(:disabled), .prompt-toggle:hover:not(:disabled) { background: var(--state-hover); color: var(--text); }
+.icon-button:active:not(:disabled), .titlebar-button:active:not(:disabled), .prompt-toggle:active:not(:disabled) { background: var(--state-pressed); }
+.prompt-icon { border-radius: var(--r-md); border-color: var(--border); background: transparent; }
+.prompt-icon:hover:not(:disabled) { background: var(--state-hover); color: var(--text); }
+.terminal-tab-close, .terminal-tab-add { width: 24px; height: 24px; border-radius: var(--r-sm); }
+.ms-segmented button { height: 24px; font-size: var(--fs-xs); }
+button:disabled { opacity: .45; }
+
+/* Inputs: a findable border, and focus shown by more than color. */
+input.settings-select, .nselect.settings-select, .settings-textarea, .model-search input, .tree-filter input, .field-row input { border-color: var(--border-strong); }
+.settings-textarea:focus, input.settings-select:focus { border-color: var(--sage); box-shadow: 0 0 0 3px color-mix(in oklch, var(--sage) 22%, transparent); outline: none; }
+
+/* Small labels: sentence case at the 12px minimum instead of tiny capitals. */
+.model-group-title, .ms-group, .ms-metric-head, .ms-config-title { font-size: var(--fs-xs); font-weight: 500; letter-spacing: 0; text-transform: none; }
+.ms-badge.free { font-size: 11px; letter-spacing: .02em; }
+
+/* Panel headers share one height so docked panes line up. */
+.panel-heading, .side-panel-head { min-height: 44px; height: auto; }
+
+/* Settings read as one column: a label sits near its control on wide windows. */
+.settings-section { max-width: 760px; }
+
+/* Calm, quick motion everywhere. */
+.ms-popup { animation-duration: var(--dur-2); }
+.tree-pane, .artifact-pane { animation-duration: var(--dur-3); }
+
+/* Fields drawn inside their own box show focus on the box (:focus-within), not a second ring on the text. */
+:is(.search-form, .field-row, .commit-box, .settings-search, .palette-search, .model-search, .pv-url, .tree-filter, .ms-search, .team-rail-search) :is(input, textarea):focus-visible,
+.neru-prompt textarea:focus-visible { outline: none; }
+:is(.search-form, .field-row, .commit-box, .palette-search, .model-search, .tree-filter, .ms-search, .team-rail-search):focus-within { border-color: var(--sage); }
+.settings-search:focus-within { border-color: var(--sage); }
+
+/* ===== Fits any window size =====
+   Nothing floating may outgrow the window: dialogs scroll inside themselves, menus cap their height
+   to the room they have, and backdrops start tall content at the top instead of pushing it off-screen. */
+
+/* Command palette: anchored near the top like Spotlight, so the search box stays put and only the results scroll. */
+.palette-backdrop { align-items: flex-start; padding-top: clamp(16px, 12vh, 120px); }
+.palette { display: flex; flex-direction: column; max-height: calc(100dvh - clamp(16px, 12vh, 120px) - 16px); }
+.palette-search { flex: 0 0 auto; }
+.palette-results { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+/* Dialogs: centred when they fit, top-aligned and scrollable when the window is short. */
+.modal-backdrop, .whats-new-backdrop, .compare-overlay, .settings-backdrop { align-items: safe center; overflow-y: auto; }
+.clone-dialog, .deny-dialog, .modal-backdrop > form, .modal-backdrop > div:not(.palette) { max-height: calc(100dvh - 48px); overflow-y: auto; }
+.settings-dialog { height: min(900px, calc(100dvh - 48px)); }
+.compare-panel { max-height: calc(100dvh - 48px); }
+
+/* Menus that open upward from the composer. */
+.slash-menu { max-height: min(320px, calc(100dvh - 180px)); }
+.mic-menu-panel, .send-menu-panel, .context-panel { max-height: calc(100dvh - 140px); overflow-y: auto; overscroll-behavior: contain; }
+.mic-menu-panel { max-width: calc(100vw - 24px); }
+
+/* Menus that open downward from the title bar, panes and toolbars. */
+.title-menu, .rewind-menu, .pv-menu-panel, .artifact-menu, .team-appearance, .team-filter, .team-more, .menu { max-height: calc(100dvh - 72px); overflow-y: auto; overscroll-behavior: contain; }
+.rewind-menu, .artifact-menu { max-width: calc(100vw - 24px); }
+
+/* Right-click menus are placed by script inside the window; a long one scrolls rather than running off the bottom. */
+.context-menu { max-height: calc(100dvh - 16px); overflow-y: auto; }
+
+/* The tour card scrolls if its text is longer than a short window. */
+.tour-card { max-height: calc(100dvh - 24px); overflow-y: auto; }
+
+/* The + menu as a plain list when the window is too short for its pills. */
+.plus-list { position: absolute; z-index: var(--z-dropdown); left: 0; bottom: calc(100% + 8px); display: flex; flex-direction: column; min-width: 220px; padding: var(--space-1); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--menu-bg); box-shadow: var(--shadow-popover); animation: ms-in var(--dur-2) var(--ease-out); }
+.plus-list.down { top: calc(100% + 8px); bottom: auto; }
+.plus-list-item { display: flex; align-items: center; gap: var(--space-2); height: 32px; padding: 0 var(--space-2); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); font-size: var(--fs-sm); text-align: left; white-space: nowrap; }
+.plus-list-item:hover:not(:disabled) { background: var(--state-hover); }
+.plus-list-item svg { flex: 0 0 auto; color: var(--sage); }
+
+/* The update card shares the toast surface and corner. */
+.update-toast { z-index: var(--z-toast); right: 20px; bottom: 24px; width: min(420px, calc(100vw - 32px)); border: 1px solid rgb(255 255 255 / .08); border-radius: var(--r-lg); background: color-mix(in oklch, var(--surface-2) 92%, transparent); box-shadow: 0 8px 24px rgb(0 0 0 / .28), 0 2px 6px rgb(0 0 0 / .14); -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%); }
+:root[data-theme='light'] .update-toast { border-color: rgb(0 0 0 / .08); background: color-mix(in oklch, #fffefb 94%, transparent); box-shadow: 0 8px 24px rgb(40 50 35 / .14), 0 2px 6px rgb(40 50 35 / .08); }
+@media (prefers-reduced-transparency: reduce) { .update-toast { background: var(--surface-2); backdrop-filter: none; } }
+
+/* "Trust this folder?": a decision about the project, asked where the work happens, just above the composer. */
+.trust-card { display: flex; align-items: center; gap: var(--space-3); width: 100%; margin: 0 0 var(--space-2); padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4); border: 1px solid color-mix(in oklch, oklch(0.72 0.14 75) 35%, var(--border)); border-radius: var(--r-lg); background: color-mix(in oklch, oklch(0.72 0.14 75) 7%, var(--surface-2)); font-size: var(--fs-sm); }
+.trust-card > svg { flex: 0 0 auto; color: oklch(0.7 0.13 75); }
+:root[data-theme='light'] .trust-card > svg { color: oklch(0.58 0.13 70); }
+.trust-card-body { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; line-height: var(--lh-sm); }
+.trust-card-body > span { color: var(--secondary); overflow-wrap: anywhere; }
+.trust-card-actions { display: flex; flex: 0 0 auto; gap: var(--space-2); }
+@media (max-width: 720px) { .trust-card { flex-wrap: wrap; } .trust-card-actions { margin-left: auto; } }

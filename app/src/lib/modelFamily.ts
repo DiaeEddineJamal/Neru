@@ -55,7 +55,7 @@ const FAMILIES: [RegExp, Family][] = [
 const HOST_LOGO: Record<string, string> = {
   nvidia: 'nvidia', modelscope: 'modelscope', gemini: 'gemini', cerebras: 'cerebras', mistral: 'mistral', openrouter: 'openrouter',
   groq: 'groq', huggingface: 'huggingface', ollama: 'ollama', opencode: 'opencode', xai: 'grok', openai: 'openai', anthropic: 'claude',
-  deepseek: 'deepseek', qwen: 'qwen', kimi: 'moonshot', zai: 'zai', minimax: 'minimax', cloudflare: 'cloudflare', sambanova: 'sambanova',
+  deepseek: 'deepseek', qwen: 'qwen', kimi: 'moonshot', zai: 'zai', minimax: 'minimax', cloudflare: 'cloudflare', sambanova: 'sambanova', ollamacloud: 'ollama',
 }
 
 const UNKNOWN: Family = { key: '', label: 'Model', maker: '', base: 55 }

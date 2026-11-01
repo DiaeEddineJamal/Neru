@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Keyboard, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { Keyboard, RotateCcw, TriangleAlert, X } from '@/components/icons'
 import { t } from '../../i18n'
 import { cn } from '@/lib/utils'
 import './SidePanels.css'

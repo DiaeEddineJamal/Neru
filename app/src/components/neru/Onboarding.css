@@ -133,9 +133,9 @@
 .ob-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; margin-bottom: 12px; }
 .ob-field > span { display: flex; align-items: center; gap: 6px; color: var(--ob-muted); font-size: 13px; font-weight: 500; }
 .ob-field > span small { color: var(--ob-soft); font-weight: 400; }
-.ob-field input, .ob-field select { width: 100%; min-width: 0; height: 42px; padding: 0 14px; border: 1px solid var(--ob-line); border-radius: 10px; outline: none; background: var(--ob-surface); color: var(--ob-text); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
+.ob-field input, .ob-field .nselect { width: 100%; min-width: 0; height: 42px; padding: 0 14px; border: 1px solid var(--ob-line); border-radius: 10px; outline: none; background: var(--ob-surface); color: var(--ob-text); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
 .ob-field input::placeholder { color: var(--ob-soft); }
-.ob-field input:focus, .ob-field select:focus { border-color: var(--ob-accent); box-shadow: 0 0 0 3px var(--ob-accent-soft); }
+.ob-field input:focus, .ob-field .nselect:focus, .ob-field .nselect.is-open { border-color: var(--ob-accent); box-shadow: 0 0 0 3px var(--ob-accent-soft); }
 .ob-field input[aria-invalid='true'] { border-color: var(--ob-danger); }
 .ob-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ob-key-link { margin: -4px 0 10px; font-size: 13px; color: var(--ob-soft); }

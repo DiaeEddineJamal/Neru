@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { BookOpen, Clock, Compass, ChevronRight, Command, Copy, FileDown, Folder, FolderMinus, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Link, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquareKanban, SquarePen, Sun, Trash2, Users } from 'lucide-react'
+import { BookOpen, Clock, Compass, ChevronRight, Command, Copy, FileDown, Folder, FolderMinus, Folders, Star, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Link, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquareKanban, SquarePen, Sun, Trash2, Users } from '@/components/icons'
 import { useContextMenu } from './ContextMenu'
+import './SidebarRail.css'
 import { Mascot } from './Mascot'
-import type { ProjectInfo, Section, SessionSummary } from '../../types'
+import type { ChatProjectListItem, ProjectInfo, Section, SessionSummary } from '../../types'
 import { t } from '../../i18n'
 
 const MIN_WIDTH = 220
@@ -68,6 +69,12 @@ export interface SidebarProps {
   onCollapse: () => void
   /** Rendered over the workspace while the pointer hovers the left edge. */
   floating?: boolean
+  /** Chat projects (Chat surface): starred ones are listed, chats show their project. */
+  chatProjects?: ChatProjectListItem[]
+  onProjects?: () => void
+  onOpenChatProject?: (id: string) => void
+  /** Files a chat under a project, or takes it out (null). */
+  onMoveChat?: (id: string, projectId: string | null) => void
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -94,6 +101,19 @@ export function Sidebar(props: SidebarProps) {
     { label: t('Share link (secret gist)…'), icon: <Link size={14} />, onSelect: () => props.onShareReplay(session.id) },
     'separator',
     { label: t('Delete session'), icon: <Trash2 size={14} />, danger: true, disabled: busy || session.running || !current, onSelect: () => props.onDeleteSession(session.id) },
+  ])
+  const chatProjects = (props.chatProjects ?? []).filter(item => !item.archived)
+  const projectName = (id?: string) => id ? chatProjects.find(item => item.id === id)?.name ?? (props.chatProjects ?? []).find(item => item.id === id)?.name : undefined
+  const chatMenu = (event: React.MouseEvent, session: SessionSummary) => openMenu(event, [
+    { label: t('Open'), icon: <MessageSquare size={14} />, disabled: busy, onSelect: () => props.onOpenSession('', session.id) },
+    { label: t('Rename…'), icon: <Pencil size={14} />, disabled: busy, onSelect: () => { setRenamingId(session.id); setRenameValue(session.title) } },
+    ...(props.onMoveChat ? [
+      'separator' as const,
+      ...chatProjects.filter(item => item.id !== session.chatProjectId).slice(0, 8).map(item => ({ label: t('Move to {name}', { name: item.name }), icon: <Folders size={14} />, disabled: busy, onSelect: () => props.onMoveChat?.(session.id, item.id) })),
+      ...(session.chatProjectId ? [{ label: t('Remove from project'), icon: <FolderMinus size={14} />, disabled: busy, onSelect: () => props.onMoveChat?.(session.id, null) }] : []),
+    ] : []),
+    'separator',
+    { label: t('Delete chat'), icon: <Trash2 size={14} />, danger: true, disabled: busy || session.running, onSelect: () => props.onDeleteSession(session.id) },
   ])
   const [renameValue, setRenameValue] = useState('')
   const [accountOpen, setAccountOpen] = useState(false)
@@ -137,26 +157,35 @@ export function Sidebar(props: SidebarProps) {
 
     <nav className="sidebar-nav" aria-label={t('Main navigation')}>
       <button className="nav-item new-session" data-tour="new-session" onClick={() => props.onNewSession()} disabled={(props.surface === 'code' && !project) || busy}><SquarePen size={16} /><span>{t('New session')}</span><kbd>{mod} N</kbd></button>
-      <button className="nav-item" onClick={props.onTasks} title={t('Queue work for tonight, and see what happened while you were away')}><Clock size={16} strokeWidth={1.75} /><span>{t('Tasks')}</span>{props.queued > 0 && <span className="nav-count" aria-label={t('{n} queued', { n: props.queued })}>{props.queued}</span>}</button>
-      <button data-tour="team-nav" className={`nav-item ${section === 'team' ? 'active' : ''}`} onClick={() => props.onSection('team')} title={t('Claude Code, Codex and more in one shared thread')}><Users size={16} strokeWidth={1.75} /><span>{t('Team')}</span></button>
-      {props.surface === 'code' && tools.map(item => <button key={item.id} className={`nav-item ${section === item.id ? 'active' : ''}`} onClick={() => props.onSection(item.id)} disabled={!project}><item.icon size={16} strokeWidth={1.75} /><span>{t(item.label)}</span></button>)}
+      <button className="nav-item" onClick={props.onTasks} title={t('Queue work for tonight, and see what happened while you were away')}><Clock size={16} /><span>{t('Tasks')}</span>{props.queued > 0 && <span className="nav-count" aria-label={t('{n} queued', { n: props.queued })}>{props.queued}</span>}</button>
+      <button data-tour="team-nav" className={`nav-item ${section === 'team' ? 'active' : ''}`} onClick={() => props.onSection('team')} title={t('Claude Code, Codex and more in one shared thread')}><Users size={16} weight={section === 'team' ? 'fill' : 'regular'} /><span>{t('Team')}</span></button>
+      {props.surface === 'chat' && props.onProjects && <button className={`nav-item ${section === 'projects' ? 'active' : ''}`} onClick={props.onProjects}><Folders size={16} weight={section === 'projects' ? 'fill' : 'regular'} /><span>{t('Projects')}</span></button>}
+      {props.surface === 'code' && tools.map(item => <button key={item.id} className={`nav-item ${section === item.id ? 'active' : ''}`} onClick={() => props.onSection(item.id)} disabled={!project}><item.icon size={16} weight={section === item.id ? 'fill' : 'regular'} /><span>{t(item.label)}</span></button>)}
     </nav>
 
     <div className="sidebar-scroll" data-tour="sessions">
       {props.surface === 'chat' ? <>
-        <div className="sidebar-label"><span>{t('Chat history')}</span></div>
+        {chatProjects.some(item => item.starred) && <>
+          <div className="sidebar-label"><span>{t('Starred')}</span></div>
+          <div className="session-list starred-projects">
+            {chatProjects.filter(item => item.starred).map(item => <div className="session-row" key={item.id}>
+              <button className="session-select" onClick={() => props.onOpenChatProject?.(item.id)} title={item.name}><Star size={12} weight="fill" className="starred-icon" aria-hidden /><span className="truncate">{item.name}</span></button>
+            </div>)}
+          </div>
+        </>}
+        <div className="sidebar-label"><span>{t('Recents')}</span></div>
         {sessions.filter(session => !session.projectPath).length === 0 && <p className="sidebar-empty">{t('No chats yet.')}</p>}
         <div className="session-list">
-          {sessions.filter(session => !session.projectPath).map(session => <div className={`session-row ${session.id === activeSessionId && section === 'home' ? 'active' : ''}`} key={session.id}>
+          {sessions.filter(session => !session.projectPath).map(session => <div className={`session-row ${session.id === activeSessionId && section === 'home' ? 'active' : ''}`} key={session.id} onContextMenu={event => chatMenu(event, session)}>
             {renamingId === session.id
               ? <input className="session-rename" autoFocus aria-label={t('Rename session')} value={renameValue} onChange={event => setRenameValue(event.target.value)} onBlur={finishRename} onKeyDown={event => { if (event.key === 'Enter') finishRename(); if (event.key === 'Escape') setRenamingId(null) }} />
               : <>
-                <button className="session-select" disabled={busy} onClick={() => props.onOpenSession('', session.id)} title={session.title}><span className="truncate">{session.title}</span></button>
+                <button className="session-select" disabled={busy} onClick={() => props.onOpenSession('', session.id)} title={projectName(session.chatProjectId) ? `${projectName(session.chatProjectId)} / ${session.title}` : session.title}><span className="truncate">{session.title}</span>{projectName(session.chatProjectId) && <span className="chat-project-tag truncate">{projectName(session.chatProjectId)}</span>}</button>
                 {session.running
                   ? <span className="session-running" title={t('Responding')}><LoaderCircle size={13} className="animate-spin" aria-label={t('Responding')} /></span>
                   : <span className="session-time">{relativeTime(session.updatedAt)}</span>}
                 <span className="session-actions">
-                  <button disabled={busy} aria-label={t('Rename {name}', { name: session.title })} title={t('Rename')} onClick={() => { setRenamingId(session.id); setRenameValue(session.title) }}><Pencil size={13} /></button>
+                  <button disabled={busy} aria-label={t('More actions for {name}', { name: session.title })} title={t('More actions')} onClick={event => chatMenu(event, session)}><MoreHorizontal size={13} /></button>
                   <button disabled={busy || session.running} aria-label={t('Delete {name}', { name: session.title })} title={t('Delete')} onClick={() => props.onDeleteSession(session.id)}><Trash2 size={13} /></button>
                 </span>
               </>}
@@ -182,7 +211,7 @@ export function Sidebar(props: SidebarProps) {
         return <section className={`project-group ${current ? 'current' : ''}`} key={path} aria-label={t('{name} sessions', { name })}>
           <div className="project-row">
             <button className="project-toggle" onClick={() => toggle(path)} onContextMenu={event => projectMenu(event, path, name, current)} aria-expanded={open} title={path}>
-              <span className="project-icon">{open ? <FolderOpen size={16} strokeWidth={1.75} /> : <Folder size={16} strokeWidth={1.75} />}<ChevronRight size={14} className={`chevron ${open ? 'open' : ''}`} /></span>
+              <span className="project-icon">{open ? <FolderOpen size={16} /> : <Folder size={16} />}<ChevronRight size={14} className={`chevron ${open ? 'open' : ''}`} /></span>
               <span className="truncate">{name}</span>
             </button>
             {current && project?.git && <button className="icon-button small row-action" onClick={() => props.onNewSession(path, true)} disabled={busy} aria-label={t('New worktree session in {name}', { name })} title={t('New session in its own Git worktree, for parallel work')}><GitBranchPlus size={14} /></button>}
@@ -221,7 +250,7 @@ export function Sidebar(props: SidebarProps) {
       </div>}
       <div className="sidebar-footer-row" data-tour="settings">
         <button className={`footer-settings ${section === 'settings' ? 'active' : ''}`} onClick={() => { setAccountOpen(false); props.onSection('settings') }} title={`${t('Settings')} (${mod} ,)`}>
-          <Settings2 size={16} strokeWidth={1.75} /><span>{t('Settings')}</span><kbd>{mod} ,</kbd>
+          <Settings2 size={16} /><span>{t('Settings')}</span><kbd>{mod} ,</kbd>
         </button>
         <button className={`icon-button footer-more ${accountOpen ? 'active' : ''}`} onClick={() => setAccountOpen(value => !value)} aria-expanded={accountOpen} aria-haspopup="menu" aria-label={t('More options')} title={t('More')}><MoreHorizontal size={16} /></button>
       </div>

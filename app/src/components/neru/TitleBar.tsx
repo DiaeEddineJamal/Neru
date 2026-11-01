@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { ArrowLeft, ArrowRight, ChevronRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ChevronRight } from '@/components/icons'
 import { cn } from '@/lib/utils'
 import { t } from '../../i18n'
 
@@ -76,8 +76,8 @@ export function TitleBarLeading(props: TitleBarLeadingProps): ReactNode {
   return <div className="titlebar-leading">
     <AppMenu sections={props.sections} />
     <button type="button" className="titlebar-button" onClick={props.onToggleSidebar} onMouseEnter={props.onPeek} onMouseLeave={props.onUnpeek} aria-label={sidebarOpen ? t('Close sidebar') : t('Open sidebar')} aria-pressed={sidebarOpen} title={`${sidebarOpen ? t('Close sidebar') : t('Open sidebar')} (${mod} B)`}><SidebarIcon open={sidebarOpen} /></button>
-    <button type="button" className="titlebar-button" onClick={props.onBack} disabled={!props.canBack} aria-label={t('Back')} title={`${t('Back')} (Alt ←)`}><ArrowLeft size={17} strokeWidth={1.75} /></button>
-    <button type="button" className="titlebar-button" onClick={props.onForward} disabled={!props.canForward} aria-label={t('Forward')} title={`${t('Forward')} (Alt →)`}><ArrowRight size={17} strokeWidth={1.75} /></button>
+    <button type="button" className="titlebar-button" onClick={props.onBack} disabled={!props.canBack} aria-label={t('Back')} title={`${t('Back')} (Alt ←)`}><ArrowLeft size={17} /></button>
+    <button type="button" className="titlebar-button" onClick={props.onForward} disabled={!props.canForward} aria-label={t('Forward')} title={`${t('Forward')} (Alt →)`}><ArrowRight size={17} /></button>
   </div>
 }
 

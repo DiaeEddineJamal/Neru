@@ -4,7 +4,7 @@ import { api } from '../api'
 import type { Paper } from '../types'
 import { blocks, inlines, plain, type Block, type Inline } from './paperBlocks'
 
-export type ExportFormat = 'docx' | 'pdf' | 'html' | 'tex' | 'md' | 'bib'
+export type ExportFormat = 'docx' | 'pdf' | 'html' | 'tex' | 'md' | 'txt' | 'bib'
 
 export const EXPORTS: { format: ExportFormat; label: string; hint: string; extension: string; filter: string }[] = [
   { format: 'docx', label: 'Word document', hint: 'Edit in Microsoft Word, Google Docs or LibreOffice', extension: 'docx', filter: 'Word document' },
@@ -12,10 +12,12 @@ export const EXPORTS: { format: ExportFormat; label: string; hint: string; exten
   { format: 'tex', label: 'LaTeX', hint: 'For Overleaf or a LaTeX template', extension: 'tex', filter: 'LaTeX' },
   { format: 'html', label: 'Web page', hint: 'A standalone HTML page', extension: 'html', filter: 'HTML' },
   { format: 'md', label: 'Markdown', hint: 'Plain text with formatting marks', extension: 'md', filter: 'Markdown' },
+  { format: 'txt', label: 'Plain text', hint: 'Just the words, no formatting', extension: 'txt', filter: 'Text' },
   { format: 'bib', label: 'BibTeX references', hint: 'The works cited, for Zotero, Mendeley or LaTeX', extension: 'bib', filter: 'BibTeX' },
 ]
 
-const heading = (index: number, text: string) => `${index + 1}. ${text}`
+/** Papers number their sections; plain documents (plans, reports) do not. */
+const heading = (index: number, text: string, plainDoc = false) => plainDoc ? text : `${index + 1}. ${text}`
 const fileName = (paper: Paper) => (paper.title.replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Research paper')
 
 // ---------- Markdown ----------
@@ -26,7 +28,7 @@ export function toMarkdown(paper: Paper) {
   if (byline) parts.push(byline)
   if (paper.abstractText) parts.push(`## Abstract\n\n${paper.abstractText}`)
   if (paper.keywords.length) parts.push(`*Keywords:* ${paper.keywords.join(', ')}`)
-  paper.sections.forEach((section, index) => parts.push(`## ${heading(index, section.heading)}\n\n${section.body.trim()}`))
+  paper.sections.forEach((section, index) => parts.push(section.heading.trim() ? `## ${heading(index, section.heading, paper.plain)}\n\n${section.body.trim()}` : section.body.trim()))
   if (paper.references.length) parts.push(`## References\n\n${paper.references.map(reference => reference.text).join('\n\n')}`)
   return `${parts.join('\n\n')}\n`
 }
@@ -55,7 +57,7 @@ export function toHtml(paper: Paper) {
     `<header><p class="kind">${escapeHtml(paper.kind)}</p><h1>${escapeHtml(paper.title)}</h1>`,
     `<p class="byline">${escapeHtml([paper.authors.join(', '), paper.affiliation].filter(Boolean).join(' · '))}</p><p class="date">${escapeHtml(paper.date)}</p></header>`,
     paper.abstractText ? `<section class="abstract"><h2>Abstract</h2><p>${htmlRuns(inlines(paper.abstractText))}</p>${paper.keywords.length ? `<p class="keywords"><em>Keywords:</em> ${escapeHtml(paper.keywords.join(', '))}</p>` : ''}</section>` : '',
-    ...paper.sections.map((section, index) => `<section><h2>${escapeHtml(heading(index, section.heading))}</h2>${blocks(section.body).map(htmlBlock).join('\n')}</section>`),
+    ...paper.sections.map((section, index) => `<section>${section.heading.trim() ? `<h2>${escapeHtml(heading(index, section.heading, paper.plain))}</h2>` : ''}${blocks(section.body).map(htmlBlock).join('\n')}</section>`),
     paper.references.length ? `<section class="references"><h2>References</h2>${paper.references.map(reference => `<p>${htmlRuns(inlines(reference.text))}</p>`).join('\n')}</section>` : '',
   ].join('\n')
   return `<!doctype html>
@@ -177,7 +179,7 @@ async function toDocx(paper: Paper): Promise<Uint8Array> {
     if (paper.keywords.length) body.push(new Paragraph({ indent: { left: 567, right: 567 }, spacing: { after: 360 }, children: [new TextRun({ text: 'Keywords: ', italics: true }), new TextRun({ text: paper.keywords.join(', ') })] }))
   }
   paper.sections.forEach((section, index) => {
-    body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: heading(index, section.heading) })] }))
+    if (section.heading.trim()) body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: heading(index, section.heading, paper.plain) })] }))
     blocks(section.body).forEach(blockOut)
   })
   if (paper.references.length) {
@@ -210,7 +212,9 @@ async function toDocx(paper: Paper): Promise<Uint8Array> {
       children: body,
     }],
   })
-  return new Uint8Array(await (await Packer.toBlob(document)).arrayBuffer())
+  // Base64 works the same in the window and in tests, unlike Blob.arrayBuffer.
+  const binary = atob(await Packer.toBase64String(document))
+  return Uint8Array.from(binary, char => char.charCodeAt(0))
 }
 
 // ---------- PDF ----------
@@ -265,7 +269,7 @@ async function toPdf(paper: Paper): Promise<Uint8Array> {
     if (paper.keywords.length) content.push({ text: [{ text: 'Keywords: ', italics: true }, paper.keywords.join(', ')], margin: [28, 0, 28, 18] })
   }
   paper.sections.forEach((section, index) => {
-    content.push({ text: heading(index, section.heading), style: 'h1' })
+    if (section.heading.trim()) content.push({ text: heading(index, section.heading, paper.plain), style: 'h1' })
     blocks(section.body).forEach(blockOut)
   })
   if (paper.references.length) {
@@ -316,6 +320,7 @@ export async function build(paper: Paper, format: ExportFormat): Promise<Uint8Ar
     case 'tex': return encoder.encode(toLatex(paper))
     case 'html': return encoder.encode(toHtml(paper))
     case 'md': return encoder.encode(toMarkdown(paper))
+    case 'txt': return encoder.encode(toText(paper))
     case 'bib': return encoder.encode(await api.exportCitations(paper.references.map(reference => reference.source), 'bibtex'))
   }
 }
@@ -332,4 +337,13 @@ export async function download(paper: Paper, format: ExportFormat): Promise<stri
 }
 
 export const paperText = (paper: Paper) => toMarkdown(paper)
+
+/** The Markdown export without its marks: heading signs, emphasis, code ticks and table rules removed. */
+export function toText(paper: Paper) {
+  return toMarkdown(paper).split('\n')
+    .filter(line => !/^\s*\|?\s*:?-{3,}/.test(line))
+    .map(line => line.replace(/^#{1,6}\s+/, '').replace(/^(\s*)[-*]\s+\[( |x)\]\s+/i, (_, pad: string, done: string) => `${pad}${done.trim() ? '☑' : '☐'} `)
+      .replace(/^(\s*)[-*]\s+/, '$1• ').replace(/\*\*|__|`/g, '').replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2').replace(/\s*\|\s*/g, '  ').trim())
+    .join('\n').replace(/\n{3,}/g, '\n\n')
+}
 export const paperTitle = (paper: Paper) => plain(inlines(paper.title))

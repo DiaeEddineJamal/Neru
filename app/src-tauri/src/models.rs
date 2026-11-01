@@ -7,7 +7,7 @@
 //! rules for lists that are only ids (NVIDIA, OpenAI, Groq, Cerebras…).
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     hash::{Hash, Hasher},
     sync::{
         Arc, LazyLock, Mutex,
@@ -55,6 +55,9 @@ pub struct ModelInfo {
     pub verified: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verified_reason: Option<String>,
+    /// "ok" (a test request with one tool came back with a tool call), "no" (the model takes no tools, or
+    /// the provider refused them) or "unknown" (not tested yet, or the test was inconclusive).
+    pub tools_verified: String,
     /// "metadata" when the provider said what the model can do, "name" when Neru guessed from the id.
     pub source: String,
 }
@@ -265,6 +268,10 @@ fn info_from_item(item: &Value, provider_id: &str) -> Option<ModelInfo> {
     if provider_id == "opencode" && (id.starts_with("gemini-") || id.starts_with("jev-")) {
         return None;
     }
+    // Google shut the Gemini 2.0 models down.
+    if provider_id == "gemini" && id.to_ascii_lowercase().starts_with("gemini-2.0") {
+        return None;
+    }
     if let Some(kind) = item["type"].as_str() {
         let kind = kind.to_ascii_lowercase();
         if ["embed", "image", "audio", "moderation", "rerank", "video", "tts", "stt", "speech", "transcri"].iter().any(|part| kind.contains(part)) {
@@ -375,9 +382,11 @@ fn info_from_item(item: &Value, provider_id: &str) -> Option<ModelInfo> {
         }
     }
     let lower = id.to_ascii_lowercase();
-    let free = lower.ends_with(":free")
-        || lower == "openrouter/free"
-        || (zero_price(&item["pricing"]["prompt"]) && zero_price(&item["pricing"]["completion"]));
+    let free = if provider_id == "gemini" {
+        gemini_free(&lower)
+    } else {
+        lower.ends_with(":free") || lower == "openrouter/free" || (zero_price(&item["pricing"]["prompt"]) && zero_price(&item["pricing"]["completion"]))
+    };
     let name = ["display_name", "displayName", "name"]
         .iter()
         .find_map(|key| item[*key].as_str())
@@ -404,8 +413,28 @@ fn info_from_item(item: &Value, provider_id: &str) -> Option<ModelInfo> {
         free,
         verified: "unknown".into(),
         verified_reason: None,
+        tools_verified: if tools { "unknown" } else { "no" }.into(),
         source: if from_metadata { "metadata" } else { "name" }.into(),
     })
+}
+
+/// Gemini models on Google's free tier (checked 2026-11-01). Gemini 3.1 Pro and the Gemini 4 "argon"
+/// models are paid only; Gemma 4 is free. A test request that answers still marks a model free.
+const GEMINI_FREE: &[&str] = &[
+    "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-2.5-pro",
+    "gemini-2.5-flash", "gemini-2.5-flash-lite",
+];
+
+/// Whether a Gemini id (lowercase) is on the free tier: a listed id, a dated variant of one, or Gemma 4.
+fn gemini_free(lower: &str) -> bool {
+    let lower = lower.trim_start_matches("models/");
+    lower.starts_with("gemma-4") || GEMINI_FREE.iter().any(|free| lower == *free || lower.strip_prefix(free).is_some_and(|rest| rest.starts_with('-')))
+}
+
+/// Long enough to hold a coding session's system prompt and tools, and the model passed the tool test
+/// (or has not taken it yet). Code mode's automatic switch only picks models that fit.
+pub fn fits_code(info: &ModelInfo) -> bool {
+    info.context_window.is_none_or(|window| window >= 32_000) && info.tools_verified != "no"
 }
 
 fn item_window(item: &Value) -> Option<usize> {
@@ -449,12 +478,26 @@ fn known_key(provider_id: &str, model: &str) -> String {
     format!("{provider_id}\n{model}")
 }
 
+/// Per model: whether it [`fits_code`].
+static FITS: LazyLock<Mutex<HashMap<String, bool>>> = LazyLock::new(Default::default);
+
 pub fn remember(provider_id: &str, models: &[ModelInfo]) {
     if let Ok(mut known) = KNOWN.lock() {
         for info in models {
             known.insert(known_key(provider_id, &info.id), (info.vision, info.source == "metadata", info.tools));
         }
     }
+    if let Ok(mut fits) = FITS.lock() {
+        for info in models {
+            fits.insert(known_key(provider_id, &info.id), fits_code(info));
+        }
+    }
+}
+
+/// Whether Code mode may switch to this model: true unless a listing showed it under 32K context or
+/// without working tool calls.
+pub fn fits_code_id(provider_id: &str, model: &str) -> bool {
+    FITS.lock().ok().and_then(|fits| fits.get(&known_key(provider_id, model)).copied()).unwrap_or(true)
 }
 
 /// Whether to send images to this model: what the provider's model list said, else a guess from
@@ -526,7 +569,10 @@ const PARAMETER_ISSUE: &[&str] = &[
     "stream_options", "tool_choice", "unrecognized request argument", "unknown parameter", "extra inputs are not permitted",
 ];
 
-const BAD_KEY: &[&str] = &["invalid api key", "invalid_api_key", "incorrect api key", "invalid token", "authentication", "unauthenticated", "api key not valid", "api_key_invalid", "expired"];
+const BAD_KEY: &[&str] = &[
+    "invalid api key", "invalid_api_key", "incorrect api key", "invalid token", "authentication", "unauthenticated", "api key not valid", "api_key_invalid", "expired",
+    "has been denied access",
+];
 
 /// The error (lowercase) is about the key itself, not the model.
 pub fn is_bad_key_text(lower: &str) -> bool {
@@ -564,18 +610,99 @@ fn excerpt(body: &str) -> String {
     message.chars().take(160).collect()
 }
 
-/// Turns an HTTP answer to the test request into what it says about the model.
+pub const NO_FREE_QUOTA: &str = "No free quota for this model on this key (Google's free tier does not include it)";
+const DAILY_LIMIT: &str = "Today's quota for this model is used up; it is checked again when the quota resets";
+/// A billing or credit error: the key works, but the provider wants money for this model.
+pub const NO_CREDIT: &str = "This key has no credit for this model (the provider bills it). Add credit, or pick a free model";
+/// The key's subscription (a coding plan, an enterprise package) does not cover this model.
+pub const NOT_IN_PLAN: &str = "This key's plan does not include this model";
+const PLAN_LIMIT: &str = "This key's plan has used up its allowance for now; it is checked again after it resets";
+
+/// The provider's own error code: `error.code` in a JSON body, or "(code 1113)" in a chat error
+/// (`providers::response_error`).
+fn error_code(body: &str) -> Option<String> {
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        match &value["error"]["code"] {
+            Value::String(code) if !code.is_empty() => return Some(code.clone()),
+            Value::Number(code) => return Some(code.to_string()),
+            _ => {}
+        }
+    }
+    let start = body.find("(code ")? + 6;
+    body[start..].split(')').next().map(|code| code.trim().to_string()).filter(|code| !code.is_empty())
+}
+
+/// Z.AI's numeric error codes (https://docs.z.ai/api-reference/api-code, checked 2026-11-01). They come
+/// with HTTP 429 for billing as well as for limits, so the code decides, not the status.
+fn zai_verdict(code: &str, said: &str) -> Option<Verdict> {
+    let code: u32 = code.parse().ok()?;
+    Some(match code {
+        1000..=1005 => Verdict::BadKey("The provider rejected the API key".into()),
+        // 1113 "Insufficient balance or no resource package", 1309 "GLM Coding Plan package has expired".
+        1113 | 1309 => Verdict::Unavailable(NO_CREDIT.into()),
+        // 1211 "Unknown Model", 1221 "API has been taken offline", 1222 "API does not exist".
+        1211 | 1221 | 1222 => Verdict::Unavailable(format!("Not served by this provider ({said})")),
+        // 1220 no permission, 1311 "plan does not yet include access", 1314/1315 enterprise-only keys.
+        1220 | 1311 | 1314 | 1315 => Verdict::Unavailable(NOT_IN_PLAN.into()),
+        1302 => Verdict::RateLimited("Rate limited right now; try again in a minute".into()),
+        // 1308 "Usage limit reached… will reset at", 1310 weekly or monthly limit, 1316-1321 plan windows
+        // (their "insufficient balance for extra usage" variants are caught as credit errors first).
+        1308 | 1310 | 1316..=1321 => Verdict::RateLimited(PLAN_LIMIT.into()),
+        1261 => Verdict::Unknown("The provider said the test prompt is too long for this model".into()),
+        1200 | 1230 | 1234 | 1305 => Verdict::Unknown("The provider is busy or had a problem; try again later".into()),
+        _ => return None,
+    })
+}
+
+/// A Gemini 429 about a free-tier quota whose limit is 0: the model is not on the free tier at all, so
+/// waiting will not help ("…generate_content_free_tier_requests, limit: 0", `"quotaValue": "0"`).
+fn no_free_quota(lower: &str) -> bool {
+    let compact: String = lower.chars().filter(|c| !c.is_whitespace()).collect();
+    let zero = compact.contains("\"quotavalue\":\"0\"")
+        || compact.match_indices("limit:0").any(|(at, marker)| !compact[at + marker.len()..].starts_with(|c: char| c.is_ascii_digit() || c == '.'));
+    zero && (compact.contains("free_tier") || compact.contains("freetier"))
+}
+
+/// Google refused the key's Cloud project, not the model ("Consumer … has been denied access",
+/// PERMISSION_DENIED for the project).
+fn project_denied(lower: &str) -> bool {
+    lower.contains("has been denied access") || (lower.contains("permission_denied") && lower.contains("project"))
+}
+
+/// Turns an HTTP answer to the test request into what it says about the model, for any provider.
+#[cfg(test)]
 pub fn classify_probe(status: u16, body: &str) -> Verdict {
+    classify_probe_for("", status, body)
+}
+
+/// [`classify_probe`] with the provider's own error codes (Z.AI's) read as well. Billing and credit
+/// errors (HTTP 402, "insufficient balance", "insufficient_quota", "requires a paid plan"…) make the
+/// model unavailable on this key: waiting will not help, and they are not rate limits.
+pub fn classify_probe_for(provider_id: &str, status: u16, body: &str) -> Verdict {
     let lower = body.to_ascii_lowercase();
     let said = excerpt(body);
     let said_or = |fallback: &str| if said.is_empty() { fallback.to_string() } else { said.clone() };
     let strong = STRONG_UNAVAILABLE.iter().any(|marker| lower.contains(marker))
         || (lower.contains("function") && lower.contains("not found"));
+    let failed = !(200..=299).contains(&status) && status != 401;
+    if failed && !no_free_quota(&lower) && crate::fallback::needs_credits(&format!("http {status} {lower}")) {
+        return Verdict::Unavailable(NO_CREDIT.into());
+    }
+    if failed && crate::fallback::plan_excludes(&lower) {
+        return Verdict::Unavailable(NOT_IN_PLAN.into());
+    }
+    if let Some(verdict) = error_code(body).filter(|_| failed && provider_id == "zai").and_then(|code| zai_verdict(&code, &said_or(&format!("HTTP {status}")))) {
+        return verdict;
+    }
     match status {
         200..=299 => Verdict::Ok("Answered a test request".into()),
         401 => Verdict::BadKey("The provider rejected the API key".into()),
+        429 if no_free_quota(&lower) => Verdict::Unavailable(NO_FREE_QUOTA.into()),
+        429 if crate::fallback::is_daily(&lower) || lower.contains("perday") => Verdict::RateLimited(DAILY_LIMIT.into()),
         429 => Verdict::RateLimited("Rate limited right now; try again in a minute".into()),
-        402 => Verdict::Unknown(format!("The provider asks for credits or a paid plan ({})", said_or("HTTP 402"))),
+        403 if project_denied(&lower) => {
+            Verdict::BadKey("Google denied this key's Cloud project access to the API. Check the project in Google AI Studio, or create a new key".into())
+        }
         403 if crate::fallback::is_client_locked(&format!("http 403 {lower}")) => Verdict::Unavailable(client_locked_reason(&said)),
         403 => {
             if is_bad_key_text(&lower) {
@@ -614,30 +741,103 @@ pub fn classify_probe(status: u16, body: &str) -> Verdict {
 }
 
 /// Same rules for the text of a failed chat request ("Provider HTTP 404 Not Found: …").
+#[cfg(test)]
 pub fn classify_error_text(error: &str) -> Option<Verdict> {
+    classify_error_text_for("", error)
+}
+
+fn classify_error_text_for(provider_id: &str, error: &str) -> Option<Verdict> {
     let lower = error.to_ascii_lowercase();
     let start = lower.find("http ")? + 5;
     let status: u16 = lower[start..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()?;
-    Some(classify_probe(status, error))
+    Some(classify_probe_for(provider_id, status, error))
+}
+
+/// The provider refused the tool list itself ("tools are not supported", "No endpoints found that
+/// support tool use").
+fn tools_refused(lower: &str) -> bool {
+    (lower.contains("tool") || lower.contains("function"))
+        && ["not supported", "unsupported", "does not support", "not support", "not enabled", "not available", "that support tool"].iter().any(|marker| lower.contains(marker))
+}
+
+/// What a reply to the tool test says: "ok" when it holds a tool call, "no" when the provider refused
+/// the tool or the model answered in text instead, "unknown" for limits, cut-off replies and unclear errors.
+pub fn classify_tool_probe(status: u16, body: &str) -> &'static str {
+    let lower = body.to_ascii_lowercase();
+    match status {
+        200..=299 => {
+            let Ok(value) = serde_json::from_str::<Value>(body) else { return "unknown" };
+            let message = &value["choices"][0]["message"];
+            let called = message["tool_calls"].as_array().is_some_and(|calls| !calls.is_empty())
+                || message["function_call"].is_object()
+                || value["content"].as_array().is_some_and(|parts| parts.iter().any(|part| part["type"] == "tool_use"))
+                || value["output"].as_array().is_some_and(|items| items.iter().any(|item| item["type"] == "function_call"));
+            let cut = value["choices"][0]["finish_reason"] == "length" || value["stop_reason"] == "max_tokens" || value["status"] == "incomplete";
+            if called {
+                "ok"
+            } else if cut {
+                "unknown"
+            } else {
+                "no"
+            }
+        }
+        // A refused `tool_choice` says nothing about tools themselves; the test is sent again without it.
+        _ if lower.contains("tool_choice") => "unknown",
+        400 | 404 | 405 | 415 | 422 | 500 if tools_refused(&lower) => "no",
+        _ => "unknown",
+    }
 }
 
 // ---------- cache of probe results ----------
 
-/// Verdicts last until the weekly re-check (`sweep`) renews them, with a day to spare.
-const TTL_SECONDS: u64 = 8 * 24 * 3600;
-/// How often every listed model is checked again.
-const SWEEP_SECONDS: u64 = 7 * 24 * 3600;
-/// The entry in a scope that records the last sweep.
-const SWEEP_KEY: &str = "\u{0}sweep";
+const DAY: u64 = 24 * 3600;
 /// "Not found" or "not supported" failures within a day that hide a model even when the provider's
 /// wording was not clear enough to say so the first time.
 const STRIKES: u32 = 3;
+/// A model's tool test is stored next to its own verdict, under its id plus this suffix.
+const TOOLS_SUFFIX: &str = "\u{0}tools";
+
+/// How long a verdict lasts before the model is checked again: a week for a model that answered, two
+/// for one the provider refused (they rarely come back sooner), a month for a tool test. Strikes last
+/// a day.
+fn ttl(status: &str) -> u64 {
+    match status {
+        "ok" => 7 * DAY,
+        "unavailable" => 14 * DAY,
+        "tools:ok" | "tools:no" => 30 * DAY,
+        _ => DAY,
+    }
+}
+
+/// When a verdict stored at `at` expires. Gemini's spent daily quotas, and models with no free quota
+/// on the key, are checked again after Google's quota day turns over (midnight Pacific time, see
+/// `limits::next_day`), since a free tier can change then.
+fn expiry(provider_id: &str, status: &str, reason: &str, at: u64) -> u64 {
+    if provider_id == "gemini" && (status == "limited" || reason == NO_FREE_QUOTA) {
+        crate::limits::next_day("gemini", at)
+    } else if reason == NO_CREDIT || reason == NOT_IN_PLAN {
+        // Credit can be topped up and plans change: check again after a day, not two weeks.
+        at + DAY
+    } else {
+        at + ttl(status)
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Entry {
     status: String,
     reason: String,
     at: u64,
+    /// When the verdict expires (Unix seconds). 0 in entries written before expiries were stored: those
+    /// last [`ttl`] from `at`.
+    #[serde(default)]
+    until: u64,
+}
+
+impl Entry {
+    fn expires(&self) -> u64 {
+        if self.until > 0 { self.until } else { self.at + ttl(&self.status) }
+    }
 }
 
 type Scopes = HashMap<String, HashMap<String, Entry>>;
@@ -657,10 +857,10 @@ fn load_cache() -> Scopes {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default();
-    let cutoff = now().saturating_sub(TTL_SECONDS);
+    let now = now();
     for entries in scopes.values_mut() {
         // Gateway 404s were once stored as "unavailable"; they said nothing about the model.
-        entries.retain(|_, entry| entry.at >= cutoff && !entry.reason.contains("404 page not found"));
+        entries.retain(|_, entry| entry.expires() > now && !entry.reason.contains("404 page not found"));
     }
     scopes.retain(|_, entries| !entries.is_empty());
     scopes
@@ -684,24 +884,52 @@ pub fn scope(config: &ProviderConfig) -> String {
     format!("{}\n{}\n{:016x}", config.provider_id, config.base_url.trim_end_matches('/'), hasher.finish())
 }
 
-fn cached(config: &ProviderConfig, model: &str) -> Option<Entry> {
+fn cached(config: &ProviderConfig, key: &str) -> Option<Entry> {
     let cache = CACHE.lock().ok()?;
-    let entry = cache.get(&scope(config))?.get(model)?;
-    (entry.at + TTL_SECONDS > now()).then(|| entry.clone())
+    let entry = cache.get(&scope(config))?.get(key)?;
+    (entry.expires() > now()).then(|| entry.clone())
+}
+
+/// A verdict that needs no new request yet: the model answered, was refused, or spent its Gemini day.
+fn settled(entry: &Entry) -> bool {
+    matches!(entry.status.as_str(), "ok" | "unavailable" | "limited")
+}
+
+/// The tool test's stored answer for a model: "ok" or "no".
+fn cached_tools(config: &ProviderConfig, model: &str) -> Option<String> {
+    cached(config, &format!("{model}{TOOLS_SUFFIX}")).and_then(|entry| entry.status.strip_prefix("tools:").map(str::to_string))
+}
+
+fn put(config: &ProviderConfig, key: &str, status: &str, reason: &str) {
+    let at = now();
+    let entry = Entry { status: status.into(), reason: reason.into(), at, until: expiry(&config.provider_id, status, reason, at) };
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.entry(scope(config)).or_default().insert(key.to_string(), entry);
+        save_cache(&cache);
+    }
 }
 
 fn store(config: &ProviderConfig, model: &str, verdict: &Verdict) {
-    let status = verdict.status();
-    if !matches!(status, "ok" | "unavailable") {
-        return;
+    let status = match verdict {
+        Verdict::Ok(_) => "ok",
+        Verdict::Unavailable(_) => "unavailable",
+        // A spent Gemini day: checking again before midnight Pacific only spends more quota.
+        Verdict::RateLimited(reason) if config.provider_id == "gemini" && reason == DAILY_LIMIT => "limited",
+        _ => return,
+    };
+    put(config, model, status, verdict.reason());
+}
+
+/// Stores a tool test's answer; "unknown" is not stored, so the test runs again next time.
+fn store_tools(config: &ProviderConfig, model: &str, tools: &str) {
+    if matches!(tools, "ok" | "no") {
+        put(config, &format!("{model}{TOOLS_SUFFIX}"), &format!("tools:{tools}"), "Tool test");
     }
-    if let Ok(mut cache) = CACHE.lock() {
-        cache
-            .entry(scope(config))
-            .or_default()
-            .insert(model.to_string(), Entry { status: status.into(), reason: verdict.reason().into(), at: now() });
-        save_cache(&cache);
-    }
+}
+
+/// True when a check or a request showed this model answers on this key.
+pub fn verified_ok(config: &ProviderConfig, model: &str) -> bool {
+    cached(config, model).is_some_and(|entry| entry.status == "ok")
 }
 
 /// True when a recent check found this model unavailable.
@@ -711,9 +939,10 @@ fn known_unavailable(config: &ProviderConfig, model: &str) -> bool {
 }
 
 /// Records a chat request that failed with "this model does not exist / is not supported". Clear answers
-/// hide the model at once; vaguer "not found" or "unsupported" failures hide it after three in a day.
+/// hide the model at once; vaguer "not found" or "unsupported" failures replace an "ok" verdict (so the
+/// next listing checks the model again) and hide it after three in a day.
 pub fn note_failure(config: &ProviderConfig, error: &str) {
-    if let Some(verdict @ Verdict::Unavailable(_)) = classify_error_text(error) {
+    if let Some(verdict @ Verdict::Unavailable(_)) = classify_error_text_for(&config.provider_id, error) {
         store(config, &config.model, &verdict);
         return;
     }
@@ -724,16 +953,17 @@ pub fn note_failure(config: &ProviderConfig, error: &str) {
     }
     let Ok(mut cache) = CACHE.lock() else { return };
     let entries = cache.entry(scope(config)).or_default();
+    let at = now();
     let strikes = entries
         .get(&config.model)
-        .filter(|entry| entry.at + 24 * 3600 > now())
+        .filter(|entry| entry.at + DAY > at)
         .and_then(|entry| entry.status.strip_prefix("strike:").and_then(|count| count.parse::<u32>().ok()))
         .unwrap_or(0)
         + 1;
     let entry = if strikes >= STRIKES {
-        Entry { status: "unavailable".into(), reason: format!("Failed {STRIKES} times in a day: {}", excerpt(error)), at: now() }
+        Entry { status: "unavailable".into(), reason: format!("Failed {STRIKES} times in a day: {}", excerpt(error)), at, until: at + ttl("unavailable") }
     } else {
-        Entry { status: format!("strike:{strikes}"), reason: excerpt(error), at: now() }
+        Entry { status: format!("strike:{strikes}"), reason: excerpt(error), at, until: at + DAY }
     };
     entries.insert(config.model.clone(), entry);
     save_cache(&cache);
@@ -742,21 +972,18 @@ pub fn note_failure(config: &ProviderConfig, error: &str) {
 fn apply_cache(config: &ProviderConfig, models: &mut [ModelInfo]) {
     for info in models {
         if let Some(entry) = cached(config, &info.id).filter(|entry| matches!(entry.status.as_str(), "ok" | "unavailable")) {
+            // A Gemini model that answers on this key is free here, whatever the allowlist says.
+            if entry.status == "ok" && config.provider_id == "gemini" {
+                info.free = true;
+            }
             info.verified = entry.status;
             info.verified_reason = Some(entry.reason);
         }
-    }
-}
-
-/// When every model on this key was last checked (Unix seconds), 0 when never.
-fn last_sweep(config: &ProviderConfig) -> u64 {
-    CACHE.lock().ok().and_then(|cache| cache.get(&scope(config)).and_then(|entries| entries.get(SWEEP_KEY)).map(|entry| entry.at)).unwrap_or(0)
-}
-
-fn mark_sweep(config: &ProviderConfig) {
-    if let Ok(mut cache) = CACHE.lock() {
-        cache.entry(scope(config)).or_default().insert(SWEEP_KEY.into(), Entry { status: "sweep".into(), reason: String::new(), at: now() });
-        save_cache(&cache);
+        if info.tools {
+            if let Some(tools) = cached_tools(config, &info.id) {
+                info.tools_verified = tools;
+            }
+        }
     }
 }
 
@@ -922,7 +1149,7 @@ async fn fetch_list(client: &Client, config: &ProviderConfig) -> Result<Vec<Mode
     crate::limits::record_windows(&body, provider_id);
     let mut models = parse_models(&body, provider_id)?;
     if provider_id == "nvidia" {
-        apply_nvidia_checks(&mut models);
+        apply_nvidia_checks(&mut models, &merge_nvidia(remote_nvidia_list(client).await.as_ref()));
     }
     Ok(models)
 }
@@ -930,16 +1157,19 @@ async fn fetch_list(client: &Client, config: &ProviderConfig) -> Result<Vec<Mode
 /// NVIDIA's catalog lists far more models than a free key can call: most answer "Function not found
 /// for account". Each model was checked with a free key (see `live_probe`); the ones that refused are
 /// left out, the ones that answered start confirmed. Models NVIDIA adds later are checked in the
-/// background the first time the list is loaded (`verify_new`).
-fn apply_nvidia_checks(models: &mut Vec<ModelInfo>) {
-    models.retain(|info| !NVIDIA_NOT_SERVED.contains(&info.id.as_str()));
+/// background the first time the list is loaded (`auto_check`).
+fn apply_nvidia_checks(models: &mut Vec<ModelInfo>, lists: &NvidiaLists) {
+    models.retain(|info| !lists.not_served.contains(&info.id));
     for info in models.iter_mut() {
-        if NVIDIA_SERVED.contains(&info.id.as_str()) {
+        if lists.served.contains(&info.id) {
             info.verified = "ok".into();
             info.verified_reason = Some("Answered a test request with a free key".into());
         }
     }
 }
+
+/// When the built-in NVIDIA lists below were checked.
+const NVIDIA_CHECKED: &str = "2026-09-30";
 
 /// NVIDIA models that answered a test request from a free key (checked 2026-09-30).
 const NVIDIA_SERVED: &[&str] = &[
@@ -963,43 +1193,138 @@ const NVIDIA_NOT_SERVED: &[&str] = &[
     "writer/palmyra-med-70b", "writer/palmyra-med-70b-32k", "zyphra/zamba2-7b-instruct",
 ];
 
-static VERIFYING: AtomicBool = AtomicBool::new(false);
+/// A hosted copy of the NVIDIA lists, so new checks reach users without an app update:
+/// `{ "checked": "YYYY-MM-DD", "served": [...], "notServed": [...] }`. Empty until the file is hosted
+/// somewhere; until then only the built-in lists are used.
+const NVIDIA_LIST_URL: &str = "";
 
-/// Checks, one at a time and within the free plan's pace, the models that need it, so the next listing
-/// hides the ones the provider refuses: on NVIDIA (whose catalog lists far more than a free key can call)
-/// the ones nobody has checked yet, at most 25 per run; on every provider with a test request, all of
-/// them once a week (the weekly re-probe). Runs once at a time.
-fn verify_new(config: &ProviderConfig, models: &[ModelInfo]) {
-    if config.api_key.is_empty() || probe_skip(&config.provider_id).is_some() {
-        return;
-    }
-    let weekly = now().saturating_sub(last_sweep(config)) > SWEEP_SECONDS;
-    let unchecked: Vec<String> = if weekly {
-        models.iter().map(|info| info.id.clone()).take(probe_budget(&config.provider_id)).collect()
-    } else if config.provider_id == "nvidia" {
-        models.iter().filter(|info| info.verified == "unknown").map(|info| info.id.clone()).take(25).collect()
-    } else {
-        Vec::new()
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+#[serde(rename_all = "camelCase", default)]
+struct NvidiaList {
+    checked: String,
+    served: Vec<String>,
+    not_served: Vec<String>,
+}
+
+#[derive(Default, Debug)]
+struct NvidiaLists {
+    served: HashSet<String>,
+    not_served: HashSet<String>,
+}
+
+/// The built-in lists with a downloaded one on top: its new ids are added, and where the two disagree
+/// the more recent check wins.
+fn merge_nvidia(remote: Option<&NvidiaList>) -> NvidiaLists {
+    let mut lists = NvidiaLists {
+        served: NVIDIA_SERVED.iter().map(|id| id.to_string()).collect(),
+        not_served: NVIDIA_NOT_SERVED.iter().map(|id| id.to_string()).collect(),
     };
-    if unchecked.is_empty() || VERIFYING.swap(true, Ordering::SeqCst) {
+    let Some(remote) = remote else { return lists };
+    let newer = remote.checked.as_str() >= NVIDIA_CHECKED;
+    for id in &remote.served {
+        if newer || !lists.not_served.contains(id) {
+            lists.not_served.remove(id);
+            lists.served.insert(id.clone());
+        }
+    }
+    for id in &remote.not_served {
+        if newer || !lists.served.contains(id) {
+            lists.served.remove(id);
+            lists.not_served.insert(id.clone());
+        }
+    }
+    lists
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedNvidiaList {
+    fetched: u64,
+    list: NvidiaList,
+}
+
+/// The hosted NVIDIA list: the copy in the data folder while it is less than a day old, else a fresh
+/// download (five seconds at most). Any failure falls back to the older copy, or to nothing.
+async fn remote_nvidia_list(client: &Client) -> Option<NvidiaList> {
+    if NVIDIA_LIST_URL.is_empty() || cfg!(test) {
+        return None;
+    }
+    let path = data_dir().ok()?.join("nvidia-models.json");
+    let saved: Option<SavedNvidiaList> = std::fs::read_to_string(&path).ok().and_then(|text| serde_json::from_str(&text).ok());
+    if let Some(saved) = saved.as_ref().filter(|saved| now().saturating_sub(saved.fetched) < DAY) {
+        return Some(saved.list.clone());
+    }
+    let response = client.get(NVIDIA_LIST_URL).timeout(Duration::from_secs(5)).send().await.ok().filter(|response| response.status().is_success());
+    let fresh = match response {
+        Some(response) => response.json::<NvidiaList>().await.ok(),
+        None => None,
+    };
+    match fresh {
+        Some(list) => {
+            if let Ok(text) = serde_json::to_string(&SavedNvidiaList { fetched: now(), list: list.clone() }) {
+                let _ = std::fs::write(&path, text);
+            }
+            Some(list)
+        }
+        None => saved.map(|saved| saved.list),
+    }
+}
+
+/// Runs in the background, by key scope: one automatic check per key at a time.
+static AUTO: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+/// Providers whose free plan caps requests per day: their checks go to the strongest coding models first.
+fn daily_capped(provider_id: &str) -> bool {
+    matches!(provider_id, "gemini" | "groq" | "cerebras" | "mistral" | "sambanova")
+}
+
+/// Checks, in the background and within the free plan's pace, every listed model that has no fresh
+/// verdict, then gives the models that answered the one-time tool test, so the picker only offers models
+/// that work. Each run sends at most `probe_budget` requests, strongest coding models first; the rest are
+/// checked the next time the list loads. Progress goes out as `models://check` events with the run id
+/// `auto:<provider id>`.
+fn auto_check(app: &AppHandle, config: &ProviderConfig, models: &[ModelInfo]) {
+    if probe_skip(&config.provider_id).is_some() || (config.api_key.is_empty() && !providers::keyless(&config.provider_id)) {
         return;
     }
-    if weekly {
-        mark_sweep(config);
+    let mut ranked: Vec<&ModelInfo> = models.iter().collect();
+    if daily_capped(&config.provider_id) || config.provider_id == "nvidia" {
+        ranked.sort_by_key(|info| std::cmp::Reverse(crate::fallback::coding_score(&info.id)));
     }
-    let template = config.clone();
-    tauri::async_runtime::spawn(async move {
-        let client = Client::new();
-        for model in unchecked {
-            let config = ProviderConfig { model: model.clone(), api_format: "openai-chat".into(), ..template.clone() };
-            let verdict = probe_once(&client, &config).await;
-            store(&config, &model, &verdict);
-            if matches!(verdict, Verdict::RateLimited(_) | Verdict::BadKey(_)) {
-                break;
-            }
-            tokio::time::sleep(probe_spacing(&config.provider_id)).await;
+    let mut budget = probe_budget(&config.provider_id);
+    let mut jobs = VecDeque::new();
+    for info in ranked {
+        let mut job = Job::new(config, &info.id, &config.api_format, info.tools);
+        // NVIDIA's built-in list already confirmed these.
+        if job.known.is_none() && info.verified == "ok" {
+            job.known = Some(Entry { status: "ok".into(), reason: info.verified_reason.clone().unwrap_or_default(), at: now(), until: 0 });
         }
-        VERIFYING.store(false, Ordering::SeqCst);
+        let cost = job.cost(config);
+        if cost == 0 || cost > budget {
+            continue;
+        }
+        budget -= cost;
+        jobs.push_back(job);
+    }
+    if jobs.is_empty() {
+        return;
+    }
+    let key = scope(config);
+    if !AUTO.lock().is_ok_and(|mut auto| auto.insert(key.clone())) {
+        return;
+    }
+    let run_id = format!("auto:{}", config.provider_id);
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Ok(mut runs) = RUNS.lock() {
+        runs.insert(run_id.clone(), cancel.clone());
+    }
+    let total = jobs.len();
+    let run = Arc::new(Run { app: app.clone(), run_id: run_id.clone(), template: config.clone(), total, done: Arc::new(AtomicUsize::new(0)), cancel });
+    tauri::async_runtime::spawn(async move {
+        let outcome = run_jobs(run.clone(), jobs).await;
+        let note = outcome.stopped.then(|| STOPPED_NOTE.to_string());
+        run.emit(None, true, note);
+        RUNS.lock().ok().map(|mut runs| runs.remove(&run_id));
+        AUTO.lock().ok().map(|mut auto| auto.remove(&key));
     });
 }
 
@@ -1029,13 +1354,14 @@ fn sort_for_coding(models: &mut [ModelInfo]) {
     models.sort_by_key(|info| (info.verified == "unavailable", std::cmp::Reverse(crate::fallback::coding_score(&info.id))));
 }
 
-/// Classified chat models this key can list, best coding models first.
+/// Classified chat models this key can list, best coding models first. Models without a fresh check
+/// are checked in the background (`auto_check`).
 #[tauri::command]
 pub async fn list_models(provider_id: String, api_format: String, base_url: String, api_key: String, app: AppHandle) -> Result<Vec<ModelInfo>, String> {
     let config = resolve(provider_id, api_format, base_url, api_key, String::new(), &app)?;
     let mut models = fetch_list(&Client::new(), &config).await?;
     apply_cache(&config, &mut models);
-    verify_new(&config, &models);
+    auto_check(&app, &config, &models);
     // Models this key's provider refused stay in the list, marked: the picker hides them behind "Show hidden".
     remember(&config.provider_id, &models);
     sort_for_coding(&mut models);
@@ -1070,6 +1396,7 @@ fn probe_spacing(provider_id: &str) -> Duration {
         "gemini" => 4_200,
         "modelscope" => 1_000,
         "huggingface" => 1_000,
+        "ovhcloud" | "llm7" => 3_000,
         _ => 400,
     })
 }
@@ -1080,25 +1407,69 @@ fn probe_budget(provider_id: &str) -> usize {
         "gemini" => 30,
         "groq" => 40,
         "cerebras" | "mistral" => 40,
+        "sambanova" | "llm7" | "ovhcloud" => 20,
         "nvidia" => 150,
         _ => 120,
     }
 }
 
+/// The test request, sent once more after a short pause when the first failure was transient (see
+/// [`probe_retryable`]), so a brief hiccup does not leave a working key "unknown".
 async fn probe_once(client: &Client, config: &ProviderConfig) -> Verdict {
     if let Some(reason) = probe_skip(&config.provider_id) {
         return Verdict::Ok(reason.into());
     }
+    let (mut verdict, retry) = probe_attempt(client, config).await;
+    if retry {
+        tokio::time::sleep(PROBE_RETRY_DELAY).await;
+        verdict = probe_attempt(client, config).await.0;
+    }
+    verdict
+}
+
+const PROBE_RETRY_DELAY: Duration = Duration::from_millis(2_500);
+
+/// One test request: its verdict, and whether the failure is worth one retry.
+async fn probe_attempt(client: &Client, config: &ProviderConfig) -> (Verdict, bool) {
     let request = providers::probe_request(client, config).timeout(Duration::from_secs(30));
     match request.send().await {
         Ok(response) => {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
-            classify_probe(status, &body)
+            let verdict = classify_probe_for(&config.provider_id, status, &body);
+            let retry = matches!(verdict, Verdict::Unknown(_)) && probe_retryable(Some(status), &body);
+            (verdict, retry)
         }
-        Err(error) if error.is_timeout() => Verdict::Unknown("The provider did not answer in time".into()),
-        Err(error) => Verdict::Unknown(format!("Could not reach the provider: {}", error.to_string().chars().take(100).collect::<String>())),
+        Err(error) if error.is_timeout() => (Verdict::Unknown("The provider did not answer in time".into()), true),
+        Err(error) => (Verdict::Unknown(format!("Could not reach the provider: {}", error.to_string().chars().take(100).collect::<String>())), true),
     }
+}
+
+/// A failure that says nothing about the model and often clears within seconds: no answer (`None`),
+/// a timeout, a server error or a gateway's bare 404.
+fn probe_retryable(status: Option<u16>, body: &str) -> bool {
+    match status {
+        None => true,
+        Some(408 | 425 | 500..=599) => true,
+        Some(404) => body.to_ascii_lowercase().contains("404 page not found"),
+        Some(_) => false,
+    }
+}
+
+/// The tool test: one trivial tool and a prompt that asks for it. "ok", "no" or "unknown" (see
+/// [`classify_tool_probe`]). A provider that refuses a forced tool call is asked again without forcing.
+async fn tool_probe_once(client: &Client, config: &ProviderConfig) -> &'static str {
+    for forced in [true, false] {
+        let request = providers::tool_probe_request(client, config, forced).timeout(Duration::from_secs(45));
+        let Ok(response) = request.send().await else { return "unknown" };
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        let result = classify_tool_probe(status, &body);
+        if result != "unknown" || !forced || !body.to_ascii_lowercase().contains("tool_choice") {
+            return result;
+        }
+    }
+    "unknown"
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -1110,6 +1481,9 @@ pub struct ProbeResult {
     pub reason: String,
     pub rate_limited: bool,
     pub cached: bool,
+    /// The tool test for a model that answered: "ok", "no" or "unknown". Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<String>,
 }
 
 fn result_of(model: &str, verdict: &Verdict, cached: bool) -> ProbeResult {
@@ -1119,7 +1493,15 @@ fn result_of(model: &str, verdict: &Verdict, cached: bool) -> ProbeResult {
         reason: verdict.reason().to_string(),
         rate_limited: matches!(verdict, Verdict::RateLimited(_)),
         cached,
+        tools: None,
     }
+}
+
+/// A stored verdict as a check result. A spent Gemini day reads as a rate limit; strikes as unknown.
+fn entry_result(model: &str, entry: Entry) -> ProbeResult {
+    let status = if matches!(entry.status.as_str(), "ok" | "unavailable") { entry.status } else { "unknown".into() };
+    let rate_limited = entry.reason == DAILY_LIMIT;
+    ProbeResult { model: model.to_string(), status, reason: entry.reason, rate_limited, cached: true, tools: None }
 }
 
 /// Sends a one-token request to see whether this key can call the model. Rate limits and provider
@@ -1133,22 +1515,31 @@ pub async fn probe_model(provider_id: String, api_format: String, base_url: Stri
     Ok(health(&config, force.unwrap_or(false)).await)
 }
 
-/// Whether this key can call the configured model: a check from the last day when there is one
-/// (unless `force`), else one test request. Used at startup, after signing in, and by doctor.
+/// Whether this key can call the configured model: a stored check when there is one (unless `force`),
+/// else one test request. Used at startup, after signing in, and by doctor.
 pub async fn health(config: &ProviderConfig, force: bool) -> ProbeResult {
     if !force {
-        if let Some(entry) = cached(config, &config.model) {
-            return ProbeResult { model: config.model.clone(), status: entry.status, reason: entry.reason, rate_limited: false, cached: true };
+        if let Some(result) = cached_health(config) {
+            return result;
         }
     }
     let verdict = probe_once(&Client::new(), config).await;
     store(config, &config.model, &verdict);
-    result_of(&config.model, &verdict, false)
+    let mut result = result_of(&config.model, &verdict, false);
+    if result.status == "ok" {
+        result.tools = cached_tools(config, &config.model);
+    }
+    result
 }
 
-/// The check from the last day, without sending anything.
+/// The stored check, without sending anything.
 pub fn cached_health(config: &ProviderConfig) -> Option<ProbeResult> {
-    cached(config, &config.model).map(|entry| ProbeResult { model: config.model.clone(), status: entry.status, reason: entry.reason, rate_limited: false, cached: true })
+    let entry = cached(config, &config.model).filter(settled)?;
+    let mut result = entry_result(&config.model, entry);
+    if result.status == "ok" {
+        result.tools = cached_tools(config, &config.model);
+    }
+    Some(result)
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -1156,6 +1547,10 @@ pub fn cached_health(config: &ProviderConfig) -> Option<ProbeResult> {
 pub struct CheckTarget {
     pub model: String,
     pub api_format: String,
+    /// Whether the model takes a tool list; the tool test runs only then. Defaults to what the last
+    /// listing said, else true.
+    #[serde(default)]
+    pub tools: Option<bool>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -1184,7 +1579,10 @@ pub struct CheckSummary {
 
 static RUNS: LazyLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = LazyLock::new(Default::default);
 
-/// Stops a running availability check after its current requests finish.
+const STOPPED_NOTE: &str = "Stopped: the provider is rate limiting or rejected the key. Try again in a few minutes.";
+
+/// Stops a running availability check (also an automatic `auto:<provider id>` one) after its current
+/// requests finish.
 #[tauri::command]
 pub fn cancel_check_models(run_id: String) {
     if let Ok(runs) = RUNS.lock() {
@@ -1194,8 +1592,160 @@ pub fn cancel_check_models(run_id: String) {
     }
 }
 
-/// Checks a list of models with small concurrency, one progress event (`models://check`) per model.
-/// The provider's per-minute cap and a per-run request budget are respected; results are cached.
+/// One model in a check: its stored verdict when it has one, and whether it takes a tool list.
+struct Job {
+    model: String,
+    api_format: String,
+    takes_tools: bool,
+    known: Option<Entry>,
+}
+
+impl Job {
+    fn new(template: &ProviderConfig, model: &str, api_format: &str, takes_tools: bool) -> Self {
+        Job { model: model.into(), api_format: api_format.into(), takes_tools, known: cached(template, model).filter(settled) }
+    }
+
+    /// The tool test is still due: the model takes tools, did not fail its own test, and has no tool verdict.
+    fn needs_tools(&self, template: &ProviderConfig) -> bool {
+        self.takes_tools && self.known.as_ref().is_none_or(|entry| entry.status == "ok") && cached_tools(template, &self.model).is_none()
+    }
+
+    /// Requests this job sends at most.
+    fn cost(&self, template: &ProviderConfig) -> usize {
+        usize::from(self.known.is_none()) + usize::from(self.needs_tools(template))
+    }
+
+    /// What the tool test says for this model now: "no" without tools, else the stored answer.
+    fn tools(&self, template: &ProviderConfig) -> String {
+        if !self.takes_tools {
+            return "no".into();
+        }
+        cached_tools(template, &self.model).unwrap_or_else(|| "unknown".into())
+    }
+}
+
+/// A check in progress: where its progress events go and what it has done.
+struct Run {
+    app: AppHandle,
+    run_id: String,
+    template: ProviderConfig,
+    total: usize,
+    done: Arc<AtomicUsize>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Run {
+    fn emit(&self, result: Option<ProbeResult>, finished: bool, note: Option<String>) {
+        let done = if result.is_some() { self.done.fetch_add(1, Ordering::SeqCst) + 1 } else { self.done.load(Ordering::SeqCst) };
+        let _ = self.app.emit("models://check", Progress { run_id: self.run_id.clone(), done, total: self.total, result, finished, note });
+    }
+}
+
+#[derive(Default)]
+struct Outcome {
+    ok: usize,
+    unavailable: usize,
+    unknown: usize,
+    stopped: bool,
+}
+
+/// Waits for the next free request slot, so the run stays at one request per `spacing`.
+async fn take_slot(next_slot: &tokio::sync::Mutex<Instant>, spacing: Duration) {
+    let mut slot = next_slot.lock().await;
+    let wait = slot.saturating_duration_since(Instant::now());
+    *slot = Instant::now().max(*slot) + spacing;
+    drop(slot);
+    if !wait.is_zero() {
+        tokio::time::sleep(wait).await;
+    }
+}
+
+/// Works through `jobs` with four workers paced by `probe_spacing`, one progress event per model. Stops
+/// on a rejected key or three rate limits in a row.
+async fn run_jobs(run: Arc<Run>, jobs: VecDeque<Job>) -> Outcome {
+    let queue = Arc::new(Mutex::new(jobs));
+    let outcome = Arc::new(Mutex::new(Outcome::default()));
+    let next_slot = Arc::new(tokio::sync::Mutex::new(Instant::now()));
+    let limited = Arc::new(AtomicUsize::new(0));
+    let stopped = Arc::new(AtomicBool::new(false));
+    let spacing = probe_spacing(&run.template.provider_id);
+    let mut workers = Vec::new();
+    for _ in 0..4 {
+        let (run, queue, outcome, next_slot, limited, stopped) = (run.clone(), queue.clone(), outcome.clone(), next_slot.clone(), limited.clone(), stopped.clone());
+        workers.push(tauri::async_runtime::spawn(async move {
+            let client = Client::new();
+            loop {
+                if run.cancel.load(Ordering::SeqCst) || stopped.load(Ordering::SeqCst) {
+                    break;
+                }
+                let Some(job) = queue.lock().ok().and_then(|mut queue| queue.pop_front()) else { break };
+                let config = ProviderConfig { api_format: job.api_format.clone(), model: job.model.clone(), ..run.template.clone() };
+                let needs_tools = job.needs_tools(&run.template);
+                let mut result = match job.known.clone() {
+                    Some(entry) => entry_result(&job.model, entry),
+                    None => {
+                        let mut verdict;
+                        let mut attempts = 0;
+                        loop {
+                            take_slot(&next_slot, spacing).await;
+                            if run.cancel.load(Ordering::SeqCst) {
+                                return;
+                            }
+                            verdict = probe_once(&client, &config).await;
+                            attempts += 1;
+                            let daily = matches!(&verdict, Verdict::RateLimited(reason) if reason == DAILY_LIMIT);
+                            if matches!(verdict, Verdict::RateLimited(_)) && !daily && attempts < 2 {
+                                tokio::time::sleep(Duration::from_secs(20)).await;
+                                continue;
+                            }
+                            break;
+                        }
+                        // A spent daily quota is per model; it says nothing about the next one.
+                        if matches!(&verdict, Verdict::RateLimited(reason) if reason != DAILY_LIMIT) {
+                            if limited.fetch_add(1, Ordering::SeqCst) + 1 >= 3 {
+                                stopped.store(true, Ordering::SeqCst);
+                            }
+                        } else {
+                            limited.store(0, Ordering::SeqCst);
+                        }
+                        if matches!(verdict, Verdict::BadKey(_)) {
+                            stopped.store(true, Ordering::SeqCst);
+                        }
+                        store(&config, &config.model, &verdict);
+                        result_of(&config.model, &verdict, false)
+                    }
+                };
+                if result.status == "ok" {
+                    if needs_tools && !stopped.load(Ordering::SeqCst) && !run.cancel.load(Ordering::SeqCst) {
+                        take_slot(&next_slot, spacing).await;
+                        let tools = tool_probe_once(&client, &config).await;
+                        store_tools(&config, &config.model, tools);
+                        result.cached = false;
+                    }
+                    result.tools = Some(job.tools(&run.template));
+                }
+                if let Ok(mut outcome) = outcome.lock() {
+                    match result.status.as_str() {
+                        "ok" => outcome.ok += 1,
+                        "unavailable" => outcome.unavailable += 1,
+                        _ => outcome.unknown += 1,
+                    }
+                }
+                run.emit(Some(result), false, None);
+            }
+        }));
+    }
+    for worker in workers {
+        let _ = worker.await;
+    }
+    let mut outcome = outcome.lock().map(|mut outcome| std::mem::take(&mut *outcome)).unwrap_or_default();
+    outcome.stopped = stopped.load(Ordering::SeqCst);
+    outcome
+}
+
+/// Checks a list of models with small concurrency, one progress event (`models://check`) per model:
+/// the one-token test, then the tool test for models that answered and take tools. The provider's
+/// per-minute cap and a per-run request budget are respected; results are cached.
 #[tauri::command]
 pub async fn check_models(run_id: String, provider_id: String, base_url: String, api_key: String, targets: Vec<CheckTarget>, app: AppHandle) -> Result<CheckSummary, String> {
     let template = resolve(provider_id, "openai-chat".into(), base_url, api_key, String::new(), &app)?;
@@ -1205,110 +1755,92 @@ pub async fn check_models(run_id: String, provider_id: String, base_url: String,
     let total = targets.len();
     let cancel = Arc::new(AtomicBool::new(false));
     RUNS.lock().map_err(|e| e.to_string())?.insert(run_id.clone(), cancel.clone());
+    let run = Arc::new(Run { app, run_id: run_id.clone(), template: template.clone(), total, done: Arc::new(AtomicUsize::new(0)), cancel: cancel.clone() });
 
-    // Models with a fresh answer need no request; report them straight away.
-    let done = Arc::new(AtomicUsize::new(0));
-    let mut queue: VecDeque<CheckTarget> = VecDeque::new();
-    let (mut ok, mut unavailable, mut unknown) = (0usize, 0usize, 0usize);
+    // Models whose stored verdicts cover them need no request; report them straight away.
+    let mut queue: VecDeque<Job> = VecDeque::new();
+    let mut tally = Outcome::default();
+    let mut budget = probe_budget(&template.provider_id);
+    let mut over_budget = 0;
     for target in targets {
-        match cached(&template, &target.model) {
-            Some(entry) => {
-                match entry.status.as_str() {
-                    "ok" => ok += 1,
-                    "unavailable" => unavailable += 1,
-                    _ => unknown += 1,
-                }
-                let count = done.fetch_add(1, Ordering::SeqCst) + 1;
-                let result = ProbeResult { model: target.model.clone(), status: entry.status, reason: entry.reason, rate_limited: false, cached: true };
-                let _ = app.emit("models://check", Progress { run_id: run_id.clone(), done: count, total, result: Some(result), finished: false, note: None });
+        let takes_tools = target.tools.or_else(|| supports_tools(&template.provider_id, &target.model)).unwrap_or(true);
+        let job = Job::new(&template, &target.model, &target.api_format, takes_tools);
+        let cost = job.cost(&template);
+        if cost == 0 {
+            let Some(entry) = job.known.clone() else { continue };
+            let mut result = entry_result(&job.model, entry);
+            if result.status == "ok" {
+                result.tools = Some(job.tools(&template));
             }
-            None => queue.push_back(target),
+            match result.status.as_str() {
+                "ok" => tally.ok += 1,
+                "unavailable" => tally.unavailable += 1,
+                _ => tally.unknown += 1,
+            }
+            run.emit(Some(result), false, None);
+        } else if cost <= budget {
+            budget -= cost;
+            queue.push_back(job);
+        } else {
+            over_budget += 1;
         }
     }
-    let budget = probe_budget(&template.provider_id);
-    let over_budget = queue.len().saturating_sub(budget);
-    queue.truncate(budget);
-
-    let queue = Arc::new(Mutex::new(queue));
-    let tally = Arc::new(Mutex::new((ok, unavailable, unknown)));
-    let next_slot = Arc::new(tokio::sync::Mutex::new(Instant::now()));
-    let limited = Arc::new(AtomicUsize::new(0));
-    let stopped_by_limit = Arc::new(AtomicBool::new(false));
-    let spacing = probe_spacing(&template.provider_id);
-    let mut workers = Vec::new();
-    for _ in 0..4 {
-        let (queue, tally, next_slot, limited, stopped_by_limit, cancel, done, app, template, run_id) =
-            (queue.clone(), tally.clone(), next_slot.clone(), limited.clone(), stopped_by_limit.clone(), cancel.clone(), done.clone(), app.clone(), template.clone(), run_id.clone());
-        workers.push(tauri::async_runtime::spawn(async move {
-            let client = Client::new();
-            loop {
-                if cancel.load(Ordering::SeqCst) || stopped_by_limit.load(Ordering::SeqCst) {
-                    break;
-                }
-                let Some(target) = queue.lock().ok().and_then(|mut queue| queue.pop_front()) else { break };
-                let config = ProviderConfig { api_format: target.api_format.clone(), model: target.model.clone(), ..template.clone() };
-                let mut verdict;
-                let mut attempts = 0;
-                loop {
-                    {
-                        let mut slot = next_slot.lock().await;
-                        let wait = slot.saturating_duration_since(Instant::now());
-                        *slot = Instant::now().max(*slot) + spacing;
-                        drop(slot);
-                        if !wait.is_zero() {
-                            tokio::time::sleep(wait).await;
-                        }
-                    }
-                    if cancel.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    verdict = probe_once(&client, &config).await;
-                    attempts += 1;
-                    if matches!(verdict, Verdict::RateLimited(_)) && attempts < 2 {
-                        tokio::time::sleep(Duration::from_secs(20)).await;
-                        continue;
-                    }
-                    break;
-                }
-                if matches!(verdict, Verdict::RateLimited(_)) {
-                    if limited.fetch_add(1, Ordering::SeqCst) + 1 >= 3 {
-                        stopped_by_limit.store(true, Ordering::SeqCst);
-                    }
-                } else {
-                    limited.store(0, Ordering::SeqCst);
-                }
-                store(&config, &config.model, &verdict);
-                if let Ok(mut tally) = tally.lock() {
-                    match verdict.status() {
-                        "ok" => tally.0 += 1,
-                        "unavailable" => tally.1 += 1,
-                        _ => tally.2 += 1,
-                    }
-                }
-                let count = done.fetch_add(1, Ordering::SeqCst) + 1;
-                let _ = app.emit("models://check", Progress { run_id: run_id.clone(), done: count, total, result: Some(result_of(&config.model, &verdict, false)), finished: false, note: None });
-                if matches!(verdict, Verdict::BadKey(_)) {
-                    stopped_by_limit.store(true, Ordering::SeqCst);
-                }
-            }
-        }));
-    }
-    for worker in workers {
-        let _ = worker.await;
-    }
+    let checked_budget = probe_budget(&template.provider_id);
+    let outcome = run_jobs(run.clone(), queue).await;
     RUNS.lock().ok().map(|mut runs| runs.remove(&run_id));
-    let (ok, unavailable, unknown) = *tally.lock().map_err(|e| e.to_string())?;
-    let cancelled = cancel.load(Ordering::SeqCst);
-    let note = if stopped_by_limit.load(Ordering::SeqCst) {
-        Some("Stopped: the provider is rate limiting or rejected the key. Try again in a few minutes.".to_string())
+    let (ok, unavailable, unknown) = (tally.ok + outcome.ok, tally.unavailable + outcome.unavailable, tally.unknown + outcome.unknown);
+    let note = if outcome.stopped {
+        Some(STOPPED_NOTE.to_string())
     } else if over_budget > 0 {
-        Some(format!("Checked the first {budget}; {over_budget} more can be checked in another run (free plans have request limits)."))
+        Some(format!("Used this run's {checked_budget} test requests; {over_budget} more can be checked in another run (free plans have request limits)."))
     } else {
         None
     };
-    let checked = done.load(Ordering::SeqCst);
-    let _ = app.emit("models://check", Progress { run_id, done: checked, total, result: None, finished: true, note: note.clone() });
-    Ok(CheckSummary { checked, total, ok, unavailable, unknown, cancelled, note })
+    run.emit(None, true, note.clone());
+    let checked = run.done.load(Ordering::SeqCst);
+    Ok(CheckSummary { checked, total, ok, unavailable, unknown, cancelled: cancel.load(Ordering::SeqCst), note })
+}
+
+// ---------- allowance ----------
+
+/// What a key may spend, in plain words for the model picker.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Allowance {
+    pub free_tier: bool,
+    /// Credit left on the key (US dollars) when the key has a limit.
+    pub remaining: Option<f64>,
+    pub note: String,
+}
+
+/// Reads OpenRouter's `/key` answer. A free-tier account gets 50 requests a day on free models; one
+/// that bought credits gets 1,000.
+fn allowance_from(body: &Value) -> Option<Allowance> {
+    let data = &body["data"];
+    let free_tier = data["is_free_tier"].as_bool()?;
+    let remaining = data["limit_remaining"].as_f64();
+    let mut note = if free_tier { "Free tier · 50 requests a day".to_string() } else { "Paid account · 1,000 free-model requests a day".to_string() };
+    if let Some(left) = remaining {
+        note.push_str(&format!(" · ${left:.2} left on this key"));
+    } else if let Some(used) = data["usage"].as_f64().filter(|used| *used > 0.0 && !free_tier) {
+        note.push_str(&format!(" · ${used:.2} used"));
+    }
+    Some(Allowance { free_tier, remaining, note })
+}
+
+/// The key's plan and what is left on it, for providers that report it (OpenRouter's `/key`). None for
+/// other providers, or when the provider does not answer.
+#[tauri::command]
+pub async fn provider_allowance(provider_id: String, base_url: String, api_key: String, app: AppHandle) -> Option<Allowance> {
+    if provider_id != "openrouter" {
+        return None;
+    }
+    let config = resolve(provider_id, "openai-chat".into(), base_url, api_key, String::new(), &app).ok()?;
+    if config.api_key.is_empty() {
+        return None;
+    }
+    let body = json_ok(providers::authorize(Client::new().get(format!("{}/key", config.base_url)), &config)).await?;
+    allowance_from(&body)
 }
 
 #[cfg(test)]
@@ -1326,7 +1858,7 @@ mod tests {
     #[test]
     fn nvidia_drops_models_a_free_key_cannot_call() {
         let mut models: Vec<ModelInfo> = [NVIDIA_SERVED[0], NVIDIA_NOT_SERVED[0], "acme/brand-new-coder"].iter().filter_map(|id| info_from_item(&json!({"id": id}), "nvidia")).collect();
-        apply_nvidia_checks(&mut models);
+        apply_nvidia_checks(&mut models, &merge_nvidia(None));
         assert_eq!(ids(&models), vec![NVIDIA_SERVED[0], "acme/brand-new-coder"]);
         assert_eq!(models[0].verified, "ok");
         assert_eq!(models[1].verified, "unknown");
@@ -1603,7 +2135,7 @@ mod tests {
         assert!(matches!(classify_probe(429, r#"{"error":{"message":"Rate limit reached"}}"#), Verdict::RateLimited(_)));
         assert!(matches!(classify_probe(503, "Service Unavailable"), Verdict::Unknown(_)));
         assert!(matches!(classify_probe(500, "internal error"), Verdict::Unknown(_)));
-        assert!(matches!(classify_probe(402, "{}"), Verdict::Unknown(_)));
+        assert!(matches!(classify_probe(402, "{}"), Verdict::Unavailable(_)));
         assert!(matches!(classify_probe(400, r#"{"error":{"message":"messages must not be empty"}}"#), Verdict::Unknown(_)));
         // A refused test parameter proves the model exists.
         let param = r#"{"error":{"message":"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."}}"#;
@@ -1629,7 +2161,62 @@ mod tests {
         assert!(client_locked_reason("Forbidden").contains("the provider's own app"));
         // Other 403s keep their meaning.
         assert!(matches!(classify_probe(403, r#"{"error":{"message":"Invalid API key"}}"#), Verdict::BadKey(_)));
-        assert!(matches!(classify_probe(402, r#"{"error":{"message":"Insufficient balance"}}"#), Verdict::Unknown(reason) if reason.contains("Insufficient balance")));
+        assert_eq!(classify_probe(402, r#"{"error":{"message":"Insufficient balance"}}"#), Verdict::Unavailable(NO_CREDIT.into()));
+    }
+
+    #[test]
+    fn billing_and_credit_errors_are_clear_verdicts_not_rate_limits() {
+        let no_credit = Verdict::Unavailable(NO_CREDIT.into());
+        assert_eq!(classify_probe(402, "{}"), no_credit, "HTTP 402 Payment Required");
+        assert_eq!(classify_probe(402, r#"{"error":{"message":"This request requires more credits"}}"#), no_credit);
+        // OpenAI's spent prepaid balance comes as a 429.
+        let openai = r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}"#;
+        assert_eq!(classify_probe(429, openai), no_credit);
+        assert_eq!(classify_probe(400, r#"{"error":{"message":"Insufficient balance. Please top up."}}"#), no_credit);
+        assert_eq!(classify_probe(403, r#"{"error":{"message":"You have no credits left on this account"}}"#), no_credit);
+        assert_eq!(classify_probe(403, r#"{"error":{"message":"This model requires a paid plan"}}"#), no_credit);
+        assert_eq!(classify_probe(403, r#"{"error":{"message":"This API method requires billing to be enabled"}}"#), no_credit);
+        assert_eq!(classify_probe(403, r#"{"message":"Payment required to use this model"}"#), no_credit);
+        // Gemini's per-minute 429 also says "billing details", but it is a rate limit.
+        let gemini = r#"{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details. Quota exceeded for metric: generate_content_free_tier_requests, limit: 10","status":"RESOURCE_EXHAUSTED"}}"#;
+        assert!(matches!(classify_probe(429, gemini), Verdict::RateLimited(_)));
+        // The same reading for a failed chat request, and none of them count as a rate limit.
+        let chat = "Provider HTTP 402 Payment Required: Insufficient credits";
+        assert_eq!(classify_error_text(chat), Some(no_credit.clone()));
+        assert!(!crate::fallback::is_rate_limited(chat) && crate::fallback::is_unavailable(chat));
+    }
+
+    #[test]
+    fn zai_error_codes_get_plain_verdicts() {
+        let body = |code: &str, message: &str| format!(r#"{{"error":{{"code":"{code}","message":"{message}"}}}}"#);
+        let no_credit = Verdict::Unavailable(NO_CREDIT.into());
+        // Z.AI sends its balance error as HTTP 429.
+        assert_eq!(classify_probe_for("zai", 429, &body("1113", "Insufficient balance or no resource package. Please recharge.")), no_credit);
+        assert_eq!(classify_probe(429, &body("1113", "Insufficient balance or no resource package. Please recharge.")), no_credit, "the wording alone is enough");
+        assert_eq!(classify_probe_for("zai", 429, &body("1309", "Your GLM Coding Plan package has expired and is temporarily unavailable.")), no_credit);
+        assert!(matches!(classify_probe_for("zai", 400, &body("1211", "Unknown Model, please check the model code.")), Verdict::Unavailable(reason) if reason.starts_with("Not served")));
+        assert_eq!(classify_probe_for("zai", 429, &body("1311", "Your current subscription plan does not yet include access to GLM-5")), Verdict::Unavailable(NOT_IN_PLAN.into()));
+        assert_eq!(classify_probe_for("zai", 429, &body("1308", "Usage limit reached for 5 hour. Your limit will reset at 2026-11-01 12:00:00")), Verdict::RateLimited(PLAN_LIMIT.into()));
+        assert!(matches!(classify_probe_for("zai", 429, &body("1302", "Rate limit reached for requests")), Verdict::RateLimited(_)));
+        assert!(matches!(classify_probe_for("zai", 400, &body("1261", "Prompt too long")), Verdict::Unknown(_)));
+        assert!(matches!(classify_probe_for("zai", 429, &body("1305", "The service may be temporarily overloaded, please try again later")), Verdict::Unknown(_)));
+        assert!(matches!(classify_probe_for("zai", 401, &body("1000", "Authentication Failed")), Verdict::BadKey(_)));
+        // A chat error keeps the code (providers::response_error), and the stored verdict hides the model a day.
+        assert_eq!(classify_error_text_for("zai", "Provider HTTP 429 Too Many Requests: Your GLM Coding Plan package has expired (code 1309)"), Some(no_credit));
+        assert_eq!(expiry("zai", "unavailable", NO_CREDIT, 1_000), 1_000 + DAY);
+        // Another provider's numeric codes are not read as Z.AI's.
+        assert!(matches!(classify_probe_for("mistral", 400, &body("1308", "Bad request")), Verdict::Unknown(_)));
+    }
+
+    #[test]
+    fn transient_probe_failures_are_retried_once() {
+        assert!(probe_retryable(None, ""), "no answer or a timeout");
+        assert!(probe_retryable(Some(503), "Service Unavailable"));
+        assert!(probe_retryable(Some(502), "Bad Gateway"));
+        assert!(probe_retryable(Some(404), "404 page not found"), "a gateway's bare 404");
+        assert!(!probe_retryable(Some(404), r#"{"error":{"message":"model_not_found"}}"#));
+        assert!(!probe_retryable(Some(429), "rate limited"), "rate limits are paced, not retried here");
+        assert!(!probe_retryable(Some(402), "payment required"));
     }
 
     #[test]
@@ -1700,6 +2287,182 @@ mod tests {
             cache.remove(&scope(&config));
             save_cache(&cache);
         }
+    }
+
+    #[test]
+    fn gemini_free_tier_without_quota_is_unavailable_not_busy() {
+        let limit_zero = r#"{"error":{"code":429,"message":"You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3.1-pro","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaValue":"0"}]}]}}"#;
+        assert_eq!(classify_probe(429, limit_zero), Verdict::Unavailable(NO_FREE_QUOTA.into()));
+        // A free quota that is merely spent for today is a rate limit, re-checked after the reset.
+        let spent = r#"{"error":{"code":429,"message":"Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 250, model: gemini-2.5-flash","details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaValue":"250"}]}]}}"#;
+        assert_eq!(classify_probe(429, spent), Verdict::RateLimited(DAILY_LIMIT.into()));
+        assert!(matches!(classify_probe(429, r#"{"error":{"message":"limit: 0 requests per minute on paid tier"}}"#), Verdict::RateLimited(_)), "only free-tier quotas say so");
+        assert!(matches!(classify_error_text(&format!("Provider HTTP 429 Too Many Requests: {limit_zero}")), Some(Verdict::Unavailable(_))));
+    }
+
+    #[test]
+    fn a_denied_google_project_is_a_key_problem() {
+        let denied = r#"{"error":{"code":403,"message":"Permission denied: Consumer 'api_key:AIza...' has been denied access.","status":"PERMISSION_DENIED"}}"#;
+        let Verdict::BadKey(reason) = classify_probe(403, denied) else { panic!("a denied project is the key's problem") };
+        assert!(reason.contains("Cloud project"), "{reason}");
+        let project = r#"{"error":{"code":403,"message":"Generative Language API has not been used in project 123 before or it is disabled.","status":"PERMISSION_DENIED"}}"#;
+        assert!(matches!(classify_probe(403, project), Verdict::BadKey(_)));
+        assert!(!crate::fallback::is_forbidden(&format!("Provider HTTP 403 Forbidden: {denied}")), "switching models will not help");
+    }
+
+    #[test]
+    fn tool_test_replies_are_read_per_format() {
+        let openai = r#"{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"get_time","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#;
+        assert_eq!(classify_tool_probe(200, openai), "ok");
+        let anthropic = r#"{"content":[{"type":"text","text":"Let me check."},{"type":"tool_use","id":"t1","name":"get_time","input":{}}],"stop_reason":"tool_use"}"#;
+        assert_eq!(classify_tool_probe(200, anthropic), "ok");
+        let responses = r#"{"status":"completed","output":[{"type":"function_call","name":"get_time","arguments":"{}"}]}"#;
+        assert_eq!(classify_tool_probe(200, responses), "ok");
+        // Answered in words instead of calling the tool.
+        assert_eq!(classify_tool_probe(200, r#"{"choices":[{"message":{"content":"It is noon."},"finish_reason":"stop"}]}"#), "no");
+        assert_eq!(classify_tool_probe(200, r#"{"content":[{"type":"text","text":"I cannot tell."}],"stop_reason":"end_turn"}"#), "no");
+        // Cut off while thinking says nothing.
+        assert_eq!(classify_tool_probe(200, r#"{"choices":[{"message":{"content":""},"finish_reason":"length"}]}"#), "unknown");
+        // The provider refuses tools for this model.
+        assert_eq!(classify_tool_probe(400, r#"{"error":{"message":"This model does not support tools."}}"#), "no");
+        assert_eq!(classify_tool_probe(400, r#"{"error":{"message":"Function calling is not enabled for this model"}}"#), "no");
+        assert_eq!(classify_tool_probe(404, r#"{"error":{"message":"No endpoints found that support tool use."}}"#), "no");
+        // A refused tool_choice, limits and outages are inconclusive.
+        assert_eq!(classify_tool_probe(400, r#"{"error":{"message":"tool_choice 'required' is not supported"}}"#), "unknown");
+        assert_eq!(classify_tool_probe(429, r#"{"error":{"message":"Rate limit reached"}}"#), "unknown");
+        assert_eq!(classify_tool_probe(503, "Service Unavailable"), "unknown");
+    }
+
+    #[test]
+    fn verdicts_last_by_status() {
+        assert_eq!(ttl("ok"), 7 * DAY);
+        assert_eq!(ttl("unavailable"), 14 * DAY);
+        assert_eq!(ttl("tools:no"), 30 * DAY);
+        assert_eq!(ttl("strike:1"), DAY);
+        let at = 1_768_478_400;
+        assert_eq!(expiry("nvidia", "unavailable", "Not served", at), at + 14 * DAY);
+        assert_eq!(expiry("gemini", "ok", "Answered a test request", at), at + 7 * DAY);
+        // Old entries without an expiry last their status's lifetime.
+        let old = Entry { status: "unavailable".into(), reason: String::new(), at, until: 0 };
+        assert_eq!(old.expires(), at + 14 * DAY);
+    }
+
+    #[test]
+    fn gemini_quota_verdicts_expire_at_midnight_pacific() {
+        // 2026-01-15 12:00 UTC is 04:00 PST (UTC-8): next midnight Pacific is 2026-01-16 08:00 UTC.
+        let winter = 1_768_478_400;
+        assert_eq!(expiry("gemini", "unavailable", NO_FREE_QUOTA, winter), 1_768_550_400);
+        assert_eq!(expiry("gemini", "limited", DAILY_LIMIT, winter), 1_768_550_400);
+        // 2026-07-15 12:00 UTC is 05:00 PDT (UTC-7): next midnight Pacific is 2026-07-16 07:00 UTC.
+        let summer = 1_784_116_800;
+        assert_eq!(expiry("gemini", "limited", DAILY_LIMIT, summer), 1_784_185_200);
+        // Only Gemini's quota day is Pacific.
+        assert_eq!(expiry("groq", "unavailable", NO_FREE_QUOTA, winter), winter + 14 * DAY);
+    }
+
+    #[test]
+    fn gemini_quota_and_tool_verdicts_are_stored() {
+        let config = ProviderConfig {
+            provider_id: "gemini".into(),
+            api_format: "openai-chat".into(),
+            base_url: "https://gemini-cache.example/v1beta/openai".into(),
+            model: "gemini-3.1-pro-preview".into(),
+            api_key: "k-gemini-cache-test".into(),
+        };
+        store(&config, "gemini-3.1-pro-preview", &Verdict::Unavailable(NO_FREE_QUOTA.into()));
+        store(&config, "gemini-2.5-flash", &Verdict::RateLimited(DAILY_LIMIT.into()));
+        store(&config, "gemini-2.5-pro", &Verdict::RateLimited("Rate limited right now; try again in a minute".into()));
+        store(&config, "gemini-3.8-flash", &Verdict::Ok("Answered a test request".into()));
+        store_tools(&config, "gemini-3.8-flash", "ok");
+        store_tools(&config, "gemini-2.5-flash", "unknown");
+        assert!(cached(&config, "gemini-3.1-pro-preview").is_some_and(|entry| entry.until <= now() + DAY + 3_600));
+        assert_eq!(cached(&config, "gemini-2.5-flash").map(|entry| entry.status).as_deref(), Some("limited"));
+        assert!(cached(&config, "gemini-2.5-pro").is_none(), "a per-minute limit is not stored");
+        assert_eq!(cached_tools(&config, "gemini-3.8-flash").as_deref(), Some("ok"));
+        assert!(cached_tools(&config, "gemini-2.5-flash").is_none());
+        let mut models: Vec<ModelInfo> =
+            ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-2.5-flash"].iter().filter_map(|id| info_from_item(&json!({"id": id}), "gemini")).collect();
+        apply_cache(&config, &mut models);
+        assert_eq!((models[0].verified.as_str(), models[0].tools_verified.as_str()), ("ok", "ok"));
+        assert_eq!(models[1].verified, "unavailable");
+        assert!(!models[1].free);
+        assert_eq!(models[2].verified, "unknown", "a spent day is not a verdict on the model");
+        let health = cached_health(&ProviderConfig { model: "gemini-2.5-flash".into(), ..config.clone() }).unwrap();
+        assert!(health.status == "unknown" && health.rate_limited);
+        if let Ok(mut cache) = CACHE.lock() {
+            cache.remove(&scope(&config));
+        }
+    }
+
+    #[test]
+    fn gemini_free_allowlist_and_retired_models() {
+        let body = json!({"object":"list","data":[
+            {"id":"models/gemini-3.8-flash"},{"id":"models/gemini-3.1-pro-preview"},{"id":"models/gemini-2.5-flash-lite"},
+            {"id":"models/gemini-2.5-pro"},{"id":"models/gemma-4-27b-it"},{"id":"models/gemini-4-argon-preview"},
+            {"id":"models/gemini-2.0-flash"},{"id":"models/gemini-2.0-flash-lite-001"},{"id":"models/gemini-3-flash-preview"}
+        ]});
+        let parsed = parse_models(&body, "gemini").unwrap();
+        assert!(!ids(&parsed).iter().any(|id| id.starts_with("gemini-2.0")), "Gemini 2.0 is shut down");
+        for id in ["gemini-3.8-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemma-4-27b-it", "gemini-3-flash-preview"] {
+            assert!(find(&parsed, id).free, "{id} is on the free tier");
+        }
+        for id in ["gemini-3.1-pro-preview", "gemini-4-argon-preview"] {
+            assert!(!find(&parsed, id).free, "{id} is paid only");
+        }
+        assert!(gemini_free("gemini-2.5-flash-preview-09-2025"));
+        assert!(!gemini_free("gemini-2.5-flashy"));
+        // Other providers keep their own pricing.
+        assert!(!find(&parse_models(&json!({"data":[{"id":"gemini-3.8-flash"}]}), "opencode-like").unwrap(), "gemini-3.8-flash").free);
+    }
+
+    #[test]
+    fn nvidia_lists_merge_with_a_hosted_copy() {
+        let builtin = merge_nvidia(None);
+        assert!(builtin.served.contains("z-ai/glm-5.3") && builtin.not_served.contains("moonshotai/kimi-k2.6"));
+        let newer = NvidiaList {
+            checked: "2026-10-30".into(),
+            served: vec!["moonshotai/kimi-k2.6".into(), "acme/new-coder".into()],
+            not_served: vec!["z-ai/glm-5.3".into()],
+        };
+        let merged = merge_nvidia(Some(&newer));
+        assert!(merged.served.contains("moonshotai/kimi-k2.6") && !merged.not_served.contains("moonshotai/kimi-k2.6"));
+        assert!(merged.not_served.contains("z-ai/glm-5.3") && !merged.served.contains("z-ai/glm-5.3"));
+        assert!(merged.served.contains("acme/new-coder"));
+        // An older copy only adds what the built-in lists do not know.
+        let older = NvidiaList { checked: "2026-08-01".into(), served: vec!["moonshotai/kimi-k2.6".into(), "acme/old-coder".into()], not_served: vec!["acme/gone".into()] };
+        let merged = merge_nvidia(Some(&older));
+        assert!(merged.not_served.contains("moonshotai/kimi-k2.6") && !merged.served.contains("moonshotai/kimi-k2.6"));
+        assert!(merged.served.contains("acme/old-coder") && merged.not_served.contains("acme/gone"));
+        let parsed: NvidiaList = serde_json::from_str(r#"{"checked":"2026-11-01","served":["a/b"],"notServed":["c/d"]}"#).unwrap();
+        assert_eq!((parsed.served, parsed.not_served), (vec!["a/b".to_string()], vec!["c/d".to_string()]));
+    }
+
+    #[test]
+    fn code_mode_needs_tools_and_room() {
+        let mut info = info_from_item(&json!({"id":"acme/coder","context_length":131072,"supported_parameters":["tools"]}), "openrouter").unwrap();
+        assert_eq!(info.tools_verified, "unknown");
+        assert!(fits_code(&info));
+        info.tools_verified = "no".into();
+        assert!(!fits_code(&info), "failed the tool test");
+        let small = info_from_item(&json!({"id":"acme/tiny","context_length":8192,"supported_parameters":["tools"]}), "openrouter").unwrap();
+        assert!(!fits_code(&small), "under 32K context");
+        let unknown_window = info_from_item(&json!({"id":"acme/plain"}), "groq").unwrap();
+        assert!(fits_code(&unknown_window));
+        let no_tools = info_from_item(&json!({"id":"acme/text","supported_parameters":["temperature"]}), "openrouter").unwrap();
+        assert_eq!(no_tools.tools_verified, "no", "a model without tools never takes the test");
+        remember("test-fits", &[small, no_tools]);
+        assert!(!fits_code_id("test-fits", "acme/tiny") && !fits_code_id("test-fits", "acme/text"));
+        assert!(fits_code_id("test-fits", "never-listed"));
+    }
+
+    #[test]
+    fn openrouter_key_info_becomes_a_plain_allowance() {
+        let free = allowance_from(&json!({"data":{"is_free_tier":true,"usage":0,"limit_remaining":null}})).unwrap();
+        assert_eq!(free, Allowance { free_tier: true, remaining: None, note: "Free tier · 50 requests a day".into() });
+        let paid = allowance_from(&json!({"data":{"is_free_tier":false,"usage":1.5,"limit_remaining":8.5}})).unwrap();
+        assert_eq!(paid.remaining, Some(8.5));
+        assert_eq!(paid.note, "Paid account · 1,000 free-model requests a day · $8.50 left on this key");
+        assert!(allowance_from(&json!({"error":"nope"})).is_none());
     }
 }
 

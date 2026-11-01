@@ -73,6 +73,9 @@ pub struct SessionSummary {
     /// The pull request for the session's branch, when the board looked it up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr: Option<SessionPr>,
+    /// The Chat project this chat is filed under (chat_projects.rs), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_project_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -537,6 +540,7 @@ pub fn create_with_id(
             titled: false,
             status: None,
             pr: None,
+            chat_project_id: None,
         },
         conversation: vec![],
         transcript: vec![],
@@ -571,6 +575,7 @@ pub fn create_detached(state: &AppState, root: &Path, title: &str) -> Result<Str
             titled: true,
             status: None,
             pr: None,
+            chat_project_id: None,
         },
         conversation: vec![],
         transcript: vec![],
@@ -664,8 +669,50 @@ pub fn create_session(
 
 /// A conversation that is not attached to any folder, the way a chat is separate from a project.
 #[tauri::command]
-pub fn create_chat_session(state: State<'_, AppState>) -> Result<SessionSnapshot, String> {
-    create_for_root(&state, Path::new(""), false)
+pub fn create_chat_session(chat_project_id: Option<String>, state: State<'_, AppState>) -> Result<SessionSnapshot, String> {
+    let project = chat_project_id.map(|id| id.trim().to_string()).filter(|id| !id.is_empty());
+    if let Some(id) = &project {
+        crate::chat_projects::Store::default_store()?.get(id)?;
+    }
+    let snapshot = create_for_root(&state, Path::new(""), false)?;
+    let Some(project) = project else { return Ok(snapshot) };
+    let shared = runtime(&state, &snapshot.session.id)?;
+    let mut runtime = lock(&shared)?;
+    runtime.summary.chat_project_id = Some(project);
+    runtime.save()?;
+    Ok(runtime.snapshot())
+}
+
+/// Files a chat under a Chat project, or takes it out of one (`None`).
+#[tauri::command]
+pub fn set_session_chat_project(
+    id: String,
+    chat_project_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<SessionSummary, String> {
+    let project = chat_project_id.map(|id| id.trim().to_string()).filter(|id| !id.is_empty());
+    if let Some(id) = &project {
+        crate::chat_projects::Store::default_store()?.get(id)?;
+    }
+    let shared = runtime(&state, &id)?;
+    let mut runtime = lock(&shared)?;
+    if !is_loose_chat(&runtime.summary.project_path) {
+        return Err("Only chats can be filed under a project".into());
+    }
+    runtime.summary.chat_project_id = project;
+    runtime.save()?;
+    Ok(runtime.summary.clone())
+}
+
+/// Takes every chat out of a project that is being deleted; the chats themselves are kept.
+pub fn detach_chat_project(state: &AppState, project_id: &str) -> Result<(), String> {
+    for summary in all_sessions()?.into_iter().filter(|summary| summary.chat_project_id.as_deref() == Some(project_id)) {
+        let shared = runtime(state, &summary.id)?;
+        let mut runtime = lock(&shared)?;
+        runtime.summary.chat_project_id = None;
+        runtime.save()?;
+    }
+    Ok(())
 }
 
 /// A copy of a session's conversation in a new session, so a different approach can be tried without
@@ -693,6 +740,7 @@ pub fn fork_session(id: String, state: State<'_, AppState>) -> Result<SessionSna
             titled: true,
             status: None,
             pr: None,
+            chat_project_id: summary.chat_project_id,
         },
         conversation,
         transcript,

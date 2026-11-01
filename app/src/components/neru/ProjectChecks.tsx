@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
-import { CircleCheck, CircleMinus, CircleX, ListChecks, LoaderCircle, TriangleAlert } from 'lucide-react'
+import { CircleCheck, CircleMinus, CircleX, ListChecks, LoaderCircle, TriangleAlert } from '@/components/icons'
 import { api } from '../../api'
 import type { CheckResult } from '../../types'
 import { t } from '../../i18n'

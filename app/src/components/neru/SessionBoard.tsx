@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CircleAlert, CircleDashed, ExternalLink, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, LoaderCircle, RefreshCw } from 'lucide-react'
+import { CircleAlert, CircleDashed, ExternalLink, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, LoaderCircle, RefreshCw } from '@/components/icons'
 import { cn } from '@/lib/utils'
 import { api } from '../../api'
 import { t } from '../../i18n'

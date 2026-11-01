@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { motion, useReducedMotion } from 'motion/react'
-import { Activity, ArrowRightLeft, BarChart3, Brush, ChevronRight, CircleAlert, CircleHelp, Copy, Download, ExternalLink, Eye, FileDiff as FileDiffIcon, FileText, FolderOpen, GitBranch, GitFork, GitPullRequest, History, ListFilter, Maximize2, MessageCircleQuestion, Minimize2, MoreHorizontal, Network, PanelRight, Pencil, Pin, Plus, Printer, RefreshCw, Search, Smile, Square, SquareTerminal, Tag, Trash2, Undo2, UserPlus, Users, X } from 'lucide-react'
+import { Activity, ArrowRightLeft, BarChart3, Brush, ChevronRight, CircleAlert, CircleHelp, Copy, Download, ExternalLink, Eye, FileDiff as FileDiffIcon, FileText, FolderOpen, GitBranch, GitFork, GitPullRequest, History, ListFilter, Maximize2, MessageCircleQuestion, Minimize2, MoreHorizontal, Network, PanelRight, Pencil, Pin, Plus, Printer, RefreshCw, Search, Smile, Square, SquareTerminal, Tag, Trash2, Undo2, UserPlus, Users, X } from '@/components/icons'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { MessageScroller } from '@/components/agents/message-scroller'
 import { StreamingResponse } from '@/components/agents/streaming-response'
@@ -34,6 +34,7 @@ import ampLogo from '@/assets/agents/amp.svg?raw'
 import gooseLogo from '@/assets/agents/goose.svg?raw'
 import kiroLogo from '@/assets/agents/kiro.svg?raw'
 import './Team.css'
+import { Select } from '../../ui/Select'
 
 const errorText = (value: unknown) => value instanceof Error ? value.message : String(value)
 const readStored = <T,>(key: string, fallback: T): T => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback } catch { return fallback } }
@@ -127,7 +128,7 @@ export function AgentMark({ kind, size = 28, status }: { kind: string; size?: nu
   const logo = LOGOS[kind]
   return <span className={cn('agent-mark', `agent-${kind}`, status && `is-${status}`)} style={{ width: size, height: size }} title={agentName(kind)} aria-hidden>
     {kind === 'neru' ? <Mascot size={size} />
-      : !logo && kind.startsWith('custom:') ? <SquareTerminal size={size * 0.55} strokeWidth={1.75} />
+      : !logo && kind.startsWith('custom:') ? <SquareTerminal size={size * 0.55} />
       // No published mark for this CLI: its initial on the same tile.
       : !logo ? <b className="agent-initial" style={{ fontSize: size * 0.46 }}>{agentName(kind).charAt(0)}</b>
       // One-colour logos are inlined to take the tile's ink; colour ones stay images so their gradient ids never clash.
@@ -255,14 +256,14 @@ function NewTaskDialog({ agents, project, preset, onClose, onCreate }: { agents:
       <p>{quick ? quick.text : 'The agents share one thread and work in the project you choose.'}</p>
       <label>{preset === 'review' ? 'Anything to focus on? (optional)' : preset === 'bug' ? 'What is the bug?' : preset === 'debate' ? 'What should they debate?' : 'What are you working on?'}<input autoFocus value={title} onChange={event => setTitle(event.target.value)} placeholder={preset === 'bug' ? 'Login fails after the session expires' : preset === 'debate' ? 'REST or GraphQL for the new API' : 'Add rate limiting to the API'} /></label>
       <label>Project
-        <select value={where === 'pick' ? 'pick' : where} onChange={event => { const value = event.target.value; if (value === 'browse') void browse(false); else setWhere(value) }}>
+        <Select value={where === 'pick' ? 'pick' : where} onChange={event => { const value = event.target.value; if (value === 'browse') void browse(false); else setWhere(value) }}>
           {current && <option value="current">{baseName(current)} (open now)</option>}
           {others.map(path => <option key={path} value={path}>{baseName(path)} · {path}</option>)}
           {picked && <option value="pick">{baseName(picked)} · {picked}</option>}
           <option value="browse">Choose another folder…</option>
           <option value="new">New project…</option>
           <option value="none">No project (planning only)</option>
-        </select>
+        </Select>
       </label>
       {where === 'new' && <div className="team-new-project">
         <label>Project name<input value={newName} onChange={event => setNewName(event.target.value)} placeholder="port-website" /></label>
@@ -295,17 +296,17 @@ function ModelField({ member, onChange }: { task: TeamTask; member: TeamMember; 
   if (typing || models.length === 0) return <label className="team-field">Model<input autoFocus={typing} defaultValue={member.model} key={member.model} placeholder={member.kind === 'neru' ? 'Neru’s model' : 'Agent default'} onBlur={event => { setTyping(false); if (event.target.value.trim() !== member.model) onChange({ model: event.target.value.trim() }) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setTyping(false) }} /></label>
   return <div className="team-model-row">
     <label className="team-field">Model
-      <select value={member.model} onChange={event => { if (event.target.value === '__other__') { setTyping(true); return } const next = models.find(model => model.id === event.target.value); onChange({ model: event.target.value, ...(effort && next?.efforts.length && !next.efforts.includes(effort) ? { effort: '' } : {}) }) }}>
+      <Select value={member.model} onChange={event => { if (event.target.value === '__other__') { setTyping(true); return } const next = models.find(model => model.id === event.target.value); onChange({ model: event.target.value, ...(effort && next?.efforts.length && !next.efforts.includes(effort) ? { effort: '' } : {}) }) }}>
         <option value="">Agent default</option>
         {models.map(model => <option key={model.id} value={model.id}>{model.label === model.id ? model.id : `${model.label} · ${model.id}`}</option>)}
         {member.model && !chosen && <option value={member.model}>{member.model}</option>}
         <option value={'__other__'}>Another model…</option>
-      </select></label>
+      </Select></label>
     {efforts.length > 0 && <label className="team-field">Effort
-      <select value={effort} onChange={event => onChange({ effort: event.target.value })}>
+      <Select value={effort} onChange={event => onChange({ effort: event.target.value })}>
         <option value="">{chosen?.defaultEffort ? `Default (${EFFORT_LABELS[chosen.defaultEffort] ?? chosen.defaultEffort})` : 'Default'}</option>
         {efforts.map(level => <option key={level} value={level}>{EFFORT_LABELS[level] ?? level}</option>)}
-      </select></label>}
+      </Select></label>}
   </div>
 }
 
@@ -327,7 +328,7 @@ function MembersPanel({ task, agents, custom, only, onOnly, onChange, onError, o
         {cli(member.kind) && <button className="icon-button small" onClick={() => onTerminal(member.handle)} title="Open its own CLI in Neru's terminal, in the same session" aria-label={`Open @${member.handle} in Neru's terminal`}><SquareTerminal size={14} /></button>}
         {cli(member.kind) && <button className="icon-button small" onClick={() => void api.teamOpenTerminal(task.id, member.handle).catch(cause => onError(errorText(cause)))} title="Open its own CLI in a separate terminal window" aria-label={`Open @${member.handle} in a terminal window`}><ExternalLink size={13} /></button>}
         <button className="icon-button small" onClick={() => act(api.forkTeamMember(task.id, member.handle))} title="Fork: a copy that continues from this member's session" aria-label={`Fork @${member.handle}`}><GitFork size={14} /></button>
-        <button className={cn('icon-button small', only === member.handle && 'active')} onClick={() => onOnly(only === member.handle ? null : member.handle)} aria-pressed={only === member.handle} title="Transcript: show only this member's posts" aria-label={`Show only @${member.handle}'s posts`}><Eye size={14} /></button>
+        <button className={cn('icon-button small', only === member.handle && 'active')} onClick={() => onOnly(only === member.handle ? null : member.handle)} aria-pressed={only === member.handle} title="Transcript: show only this member's posts" aria-label={`Show only @${member.handle}'s posts`}><Eye size={14} weight={only === member.handle ? 'fill' : 'regular'} /></button>
       </div>
       {member.error && <p className="team-member-error">{member.error}</p>}
       <ModelField task={task} member={member} onChange={change => act(api.updateTeamMember(task.id, member.handle, change))} />
@@ -384,10 +385,10 @@ function ArtifactsPanel({ task, onError }: { task: TeamTask; onError: (message: 
         <button className="icon-button small" onClick={() => setDraft(text)} aria-label="Edit" title="Edit"><Pencil size={13} /></button>
       </>}
     </div>
-    {current && current.versions.length > 0 && draft === null && <div className="team-versions"><History size={13} /><select value={version ?? ''} onChange={event => { const value = event.target.value || null; setVersion(value); void api.readTeamArtifact(task.id, value ?? open).then(setText).catch(cause => onError(errorText(cause))) }}>
+    {current && current.versions.length > 0 && draft === null && <div className="team-versions"><History size={13} /><Select value={version ?? ''} onChange={event => { const value = event.target.value || null; setVersion(value); void api.readTeamArtifact(task.id, value ?? open).then(setText).catch(cause => onError(errorText(cause))) }}>
       <option value="">Current</option>
       {current.versions.map(path => <option key={path} value={path}>{new Date(Number(path.split('.').pop())).toLocaleString()}</option>)}
-    </select>{version && <button className="button subtle small" onClick={() => save(text)}>Restore</button>}</div>}
+    </Select>{version && <button className="button subtle small" onClick={() => save(text)}>Restore</button>}</div>}
     {draft !== null
       ? <ArtifactEditor key={open} value={draft} onChange={setDraft} onSave={() => save(draft)} onCancel={() => setDraft(null)}
         renderPreview={markdown => <div className={RESPONSE_PROSE}><ResponseMarkdown content={markdown} sources={[]} idPrefix="artifact-edit" onCite={() => undefined} /></div>} />
@@ -853,7 +854,7 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
             </div>}
             {menu === 'appearance' && <AppearanceMenu task={task} groups={allGroups} onChange={change => act(api.setTeamAppearance(task.id, change))} onClose={() => setMenu(null)} />}</div>
           <button className="icon-button" data-tour="help" onClick={() => taskTour.start()} aria-label="Take the tour" title="Take the tour"><CircleHelp size={16} /></button>
-          <button className={cn('icon-button', panelOpen && 'active')} onClick={togglePanel} aria-label="Toggle the task panel" aria-pressed={panelOpen} title="Members, artifacts, changes, usage"><PanelRight size={16} /></button>
+          <button className={cn('icon-button', panelOpen && 'active')} onClick={togglePanel} aria-label="Toggle the task panel" aria-pressed={panelOpen} title="Members, artifacts, changes, usage"><PanelRight size={16} weight={panelOpen ? 'fill' : 'regular'} /></button>
         </header>
         {only && <div className="team-only" role="status"><Eye size={13} /><span>Showing @{only}’s transcript: its posts and what was sent to it.</span><button className="team-link" onClick={() => void api.revealPath(`${task.folder}/transcripts/${only}.md`).catch(cause => onError(errorText(cause)))}>Open the file</button><button className="team-link" onClick={() => setOnly(null)}>Show everyone</button></div>}
         <MessageScroller data-tour="thread" className="team-thread" label="Team thread" busy={working.length > 0} contentClassName="team-thread-content">

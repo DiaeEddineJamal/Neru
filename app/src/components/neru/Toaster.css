@@ -1,0 +1,62 @@
+/* Toasts: one corner (bottom-right, left of any docked panel), newest in front, a short stack that fans
+   out on hover. Severity is a tinted icon on a neutral surface, never a coloured slab. The surface is
+   lightly frosted, the one translucent element in the app, and turns solid when the system asks for
+   less transparency or more contrast. */
+.toaster {
+  --toast-bg: color-mix(in oklch, var(--surface-2) 92%, transparent);
+  --toast-border: rgb(255 255 255 / .08);
+  --toast-shadow: 0 8px 24px rgb(0 0 0 / .28), 0 2px 6px rgb(0 0 0 / .14);
+  --toast-gap: 10px;
+  position: fixed; z-index: var(--z-toast); right: 20px; bottom: 24px; width: min(372px, calc(100vw - 32px));
+  pointer-events: none;
+}
+:root[data-theme='light'] .toaster { --toast-bg: color-mix(in oklch, #fffefb 94%, transparent); --toast-border: rgb(0 0 0 / .08); --toast-shadow: 0 8px 24px rgb(40 50 35 / .14), 0 2px 6px rgb(40 50 35 / .08); }
+
+.toaster ol { position: relative; display: flex; flex-direction: column; gap: var(--toast-gap); margin: 0; padding: 0; list-style: none; }
+
+.toast {
+  position: relative; display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 10px;
+  padding: 12px 10px 12px 14px; border: 1px solid var(--toast-border); border-radius: var(--r-lg);
+  background: var(--toast-bg); color: var(--text); box-shadow: var(--toast-shadow);
+  -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
+  pointer-events: auto; transform-origin: bottom center;
+  transition: transform var(--dur-3) var(--ease-out), opacity var(--dur-2) ease-out;
+  animation: toast-in 260ms var(--ease-out);
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(12px) scale(.98); } to { opacity: 1; transform: none; } }
+.toast.is-leaving { opacity: 0; transform: translateY(6px) scale(.98); transition-duration: 140ms; }
+
+/* Collapsed stack: older toasts sit behind the newest, a little smaller, peeking out above it. */
+.toaster:not(.is-expanded) .toast.is-behind {
+  position: absolute; right: 0; bottom: 0; left: 0; max-height: 56px; overflow: hidden;
+  transform: translateY(calc(var(--depth) * -12px)) scale(calc(1 - var(--depth) * .05)); opacity: calc(1 - var(--depth) * .25);
+}
+.toaster:not(.is-expanded) .toast.is-behind > * { visibility: hidden; }
+.toaster:not(.is-expanded) .toast:not(.is-behind) { z-index: 2; }
+
+.toast-icon { margin-top: 1px; color: var(--muted); }
+.toast.is-success .toast-icon { color: var(--sage); }
+.toast.is-warning .toast-icon { color: oklch(0.74 0.14 75); }
+.toast.is-error .toast-icon { color: var(--danger); }
+:root[data-theme='light'] .toast.is-warning .toast-icon { color: oklch(0.6 0.14 70); }
+
+.toast-body { min-width: 0; }
+.toast-body strong { display: block; font-size: var(--fs-sm); font-weight: 600; line-height: var(--lh-sm); overflow-wrap: anywhere; }
+.toast-body p { margin: 2px 0 0; color: var(--secondary); font-size: var(--fs-sm); line-height: var(--lh-sm); overflow-wrap: anywhere; }
+.toast-count { margin-left: 6px; color: var(--muted); white-space: nowrap; font-size: var(--fs-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
+.toast-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.toast-action { height: var(--h-sm); padding: 0 12px; border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface-3); color: var(--text); font-size: var(--fs-xs); font-weight: 500; }
+.toast-action:hover { background: var(--state-pressed); }
+.toast-link { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: var(--fs-xs); }
+.toast-link:hover { color: var(--text); }
+.toast-link svg { transition: transform var(--dur-1) ease-out; }
+.toast-link svg.open { transform: rotate(180deg); }
+.toast-detail { max-height: 140px; margin: var(--space-2) 0 0; padding: 8px 10px; overflow: auto; border-radius: var(--r-sm); background: color-mix(in oklch, var(--bg) 70%, transparent); color: var(--secondary); font: 11.5px/1.5 'JetBrains Mono', ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; }
+.toast-close { display: grid; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--dur-1) ease-out, background-color var(--dur-1) ease-out; }
+.toast:hover .toast-close, .toast:focus-within .toast-close, .toast.is-error .toast-close { opacity: 1; }
+.toast-close:hover { background: var(--state-hover); color: var(--text); }
+
+/* Solid when the system asks for less transparency or more contrast. */
+@media (prefers-reduced-transparency: reduce) { .toast { background: var(--surface-2); -webkit-backdrop-filter: none; backdrop-filter: none; } :root[data-theme='light'] .toast { background: #fffefb; } }
+@media (forced-colors: active) { .toast { background: Canvas; border-color: CanvasText; backdrop-filter: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; transition: opacity var(--dur-1) linear; } .toaster:not(.is-expanded) .toast.is-behind { transform: none; } }

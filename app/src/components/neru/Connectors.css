@@ -1,0 +1,28 @@
+/* Settings → Connectors: catalog search, category chips and the guided add form. */
+.provider-settings .catalog-search { flex-direction: row; align-items: center; gap: 10px; margin: 0 0 10px; font-weight: 400; }
+.provider-settings .catalog-search input { height: 100%; border: 0; padding: 0; background: transparent; }
+.catalog-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.catalog-chip { height: 28px; padding: 0 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--secondary); font-size: var(--fs-sm); transition: border-color .15s ease-out, background-color .15s ease-out, color .15s ease-out; }
+.catalog-chip:hover { border-color: var(--moss); color: var(--text); }
+.catalog-chip.active { border-color: var(--sage); background: color-mix(in oklch, var(--sage) 14%, var(--surface)); color: var(--text); }
+.catalog-meta { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; color: var(--secondary); font-size: var(--fs-xs); }
+
+.connector-setup { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.connector-setup > .button { align-self: flex-start; }
+.connector-setup label { margin-bottom: 0; }
+.connector-setup-head { display: flex; align-items: center; gap: 11px; }
+.connector-setup-head > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.connector-setup-head strong { font-size: var(--fs-base); font-weight: 500; }
+.connector-setup-head small { color: var(--muted); font-size: var(--fs-xs); }
+.connector-requirement { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; color: var(--secondary); font-size: var(--fs-sm); line-height: 1.5; }
+.connector-optional { color: var(--muted); font-weight: 400; }
+.connector-label { display: inline-flex; align-items: center; gap: 6px; }
+.connector-advanced { margin-bottom: 12px; }
+.connector-advanced > summary { margin-bottom: 10px; color: var(--secondary); font-size: var(--fs-sm); cursor: pointer; }
+.connector-missing { margin: 0 0 10px; color: var(--secondary); font-size: var(--fs-sm); }
+
+.connector-error-box { margin-top: 8px; }
+.connector-error-box p { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; color: var(--danger); font-size: var(--fs-sm); line-height: 1.5; }
+.connector-error-box details { margin-top: 4px; }
+.connector-error-box summary { color: var(--muted); font-size: var(--fs-xs); cursor: pointer; }
+.connector-error-box .connector-error { margin-top: 6px; }

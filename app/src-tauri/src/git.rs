@@ -74,8 +74,18 @@ pub struct GitFile {
     pub staged: bool,
 }
 
+/// `-c safe.directory=<root>`: Git refuses repositories whose owner it cannot read, which is every
+/// repository on an exFAT or FAT drive. Trusting exactly the folder Neru works in keeps Git working
+/// there without trusting anything else.
+pub fn trust(root: &Path) -> [String; 2] {
+    let path = root.to_string_lossy();
+    let path = path.strip_prefix(r"\\?\").unwrap_or(&path).replace('\\', "/");
+    ["-c".to_string(), format!("safe.directory={path}")]
+}
+
 pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git").hidden()
+        .args(trust(root))
         .args(args)
         .current_dir(root)
         .output()
@@ -661,4 +671,14 @@ pub async fn merge_pull_request(app: tauri::AppHandle) -> Result<String, String>
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn trust_names_the_folder_with_forward_slashes() {
+        let expected = ["-c".to_string(), "safe.directory=D:/Neru/app".to_string()];
+        assert_eq!(super::trust(std::path::Path::new(r"\\?\D:\Neru\app")), expected);
+        assert_eq!(super::trust(std::path::Path::new(r"D:\Neru\app")), expected);
+    }
 }

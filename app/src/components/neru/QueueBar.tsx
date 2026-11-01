@@ -1,4 +1,4 @@
-import { CornerDownLeft, Pencil, X } from 'lucide-react'
+import { CornerDownLeft, Pencil, X } from '@/components/icons'
 import { canSteerQueued, type QueuedMessage } from '../../lib/queue'
 import { t } from '../../i18n'
 

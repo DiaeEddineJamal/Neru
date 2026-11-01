@@ -1,4 +1,4 @@
-import { CircleCheck, LoaderCircle, ShieldAlert, ShieldQuestion } from 'lucide-react'
+import { CircleCheck, LoaderCircle, ShieldAlert, ShieldQuestion } from '@/components/icons'
 import type { Review } from '../../types'
 import { cn } from '@/lib/utils'
 import { t } from '../../i18n'

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { Check, Copy, Maximize2, Minus, Plus, X } from 'lucide-react'
+import { Check, Copy, Maximize2, Minus, Plus, X } from '@/components/icons'
 import { t } from '../../i18n'
 
 /** Shared shell: a titled block with copy and fullscreen, as Traycer shows diagrams and wireframes. */

@@ -39,7 +39,7 @@ pub struct Changes {
 
 fn git(root: &Path) -> Command {
     let mut command = Command::new("git");
-    command.current_dir(root).stdin(Stdio::null());
+    command.args(crate::git::trust(root)).current_dir(root).stdin(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

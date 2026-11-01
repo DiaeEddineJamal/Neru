@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { ArrowLeft, ArrowRight, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, X } from '@/components/icons'
 import { EASE_OUT, SPRING_LAYOUT } from '@/lib/ease'
 import { cn } from '@/lib/utils'
 import './Tour.css'

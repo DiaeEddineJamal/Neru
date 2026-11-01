@@ -23,7 +23,7 @@
 .team-filter-head { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--fs-xs); }
 .team-filter-head .team-access { flex: 1; }
 .team-filter-foot { display: flex; justify-content: flex-end; gap: 6px; padding-top: 4px; }
-.team-field select, .team-panel-tools select, .team-review-all select { flex: 1; min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: var(--fs-sm); }
+.team-field .nselect, .team-panel-tools .nselect, .team-review-all .nselect { flex: 1; min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: var(--fs-sm); }
 .team-check { display: flex; align-items: center; gap: 8px; color: var(--secondary); font-size: var(--fs-sm); cursor: pointer; }
 .team-check input { accent-color: var(--moss-action); }
 .team-link { padding: 0; border: 0; background: transparent; color: var(--link); font-size: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }

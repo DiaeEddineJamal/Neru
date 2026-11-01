@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Laptop, MessageCircle } from 'lucide-react'
+import { ChevronDown, ChevronRight, Laptop, MessageCircle } from '@/components/icons'
 import { cn } from '@/lib/utils'
 import { t } from '../../i18n'
 
@@ -86,9 +86,9 @@ export function SessionTitle(props: SessionTitleProps) {
   return <div className="session-title" data-tauri-drag-region>
     <div className="title-anchor" ref={session.box}>
       {props.renaming
-        ? <div className="title-trigger renaming"><Icon size={16} strokeWidth={1.75} aria-hidden /><input autoFocus className="title-rename" aria-label={t('Session name')} value={draft} onChange={event => setDraft(event.target.value)} onFocus={event => event.currentTarget.select()} onBlur={finish} onKeyDown={event => { if (event.key === 'Enter') finish(); if (event.key === 'Escape') props.onCancelRename() }} /></div>
+        ? <div className="title-trigger renaming"><Icon size={16} aria-hidden /><input autoFocus className="title-rename" aria-label={t('Session name')} value={draft} onChange={event => setDraft(event.target.value)} onFocus={event => event.currentTarget.select()} onBlur={finish} onKeyDown={event => { if (event.key === 'Enter') finish(); if (event.key === 'Escape') props.onCancelRename() }} /></div>
         : <button type="button" className={cn('title-trigger', session.open && 'open')} aria-haspopup="menu" aria-expanded={session.open} disabled={props.disabled} title={props.title} onClick={() => { project.setOpen(false); session.setOpen(value => !value) }}>
-          <Icon size={16} strokeWidth={1.75} aria-hidden /><strong className="truncate">{props.title}</strong><ChevronDown size={14} aria-hidden />
+          <Icon size={16} aria-hidden /><strong className="truncate">{props.title}</strong><ChevronDown size={14} aria-hidden />
         </button>}
       {session.open && <TitleMenu items={props.sessionItems} onClose={() => session.setOpen(false)} />}
     </div>

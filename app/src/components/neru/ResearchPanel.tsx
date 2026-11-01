@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { BookMarked, Check, CircleAlert, Copy, Download, LoaderCircle } from 'lucide-react'
+import { BookMarked, Check, CircleAlert, Copy, Download, LoaderCircle } from '@/components/icons'
 import { useReducedMotion } from 'motion/react'
 import { cn } from '@/lib/utils'
 import { setCitationStyle, useCitationStyle, saveTextFile } from '@/lib/citations'
 import { api } from '../../api'
 import type { CitationStyle, ResearchStep, Source } from '../../types'
+import { Select } from '../ui/Select'
 
 const STYLES: { value: CitationStyle; label: string }[] = [
   { value: 'apa', label: 'APA 7' },
@@ -73,9 +74,9 @@ export function Bibliography({ sources }: { sources: Source[] }) {
     <div className="mb-2 flex flex-wrap items-center gap-1">
       <p className="mr-auto text-xs font-medium uppercase tracking-wide text-muted-foreground">Bibliography</p>
       <label className="sr-only" htmlFor="citation-style">Citation style</label>
-      <select id="citation-style" value={current} onChange={event => setCitationStyle(event.target.value as CitationStyle)} className="h-7 rounded-lg border-0 bg-transparent px-1.5 text-xs text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring outline-none">
+      <Select id="citation-style" value={current} onChange={event => setCitationStyle(event.target.value as CitationStyle)} className="h-7 rounded-lg border-0 bg-transparent px-1.5 text-xs text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring outline-none">
         {STYLES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
-      </select>
+      </Select>
       <button type="button" className={button} onClick={() => void copy()} title="Copy the reference list"><Copy size={12} aria-hidden />Copy</button>
       <button type="button" className={button} onClick={() => void exportAs('bibtex')} title="Save as BibTeX for LaTeX, Zotero or Mendeley"><Download size={12} aria-hidden />BibTeX</button>
       <button type="button" className={button} onClick={() => void exportAs('ris')} title="Save as RIS for EndNote, Zotero or Mendeley"><Download size={12} aria-hidden />RIS</button>

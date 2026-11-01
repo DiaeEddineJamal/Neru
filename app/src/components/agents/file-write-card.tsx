@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { Check, ChevronDown, CircleAlert, FilePen, FilePlus2, LoaderCircle, ShieldCheck } from 'lucide-react'
+import { Check, ChevronDown, CircleAlert, FilePen, FilePlus2, LoaderCircle, ShieldCheck } from '@/components/icons'
 import { useReducedMotion } from 'motion/react'
 import { AgentDisclosure } from './agent-disclosure'
 import { CodeBlock } from './code-block'

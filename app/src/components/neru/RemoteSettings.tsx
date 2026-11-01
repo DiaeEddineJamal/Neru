@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
-import { LoaderCircle, Smartphone } from 'lucide-react'
+import { LoaderCircle, Smartphone } from '@/components/icons'
 import { api } from '../../api'
 import type { RemoteStatus } from '../../types'
 import { cn } from '@/lib/utils'

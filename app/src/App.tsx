@@ -4,7 +4,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { cn } from '@/lib/utils'
-import { Bot, Cpu, Download, Keyboard, Palette, Plug, Search, Settings, FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, MessageCircle, Mic, Moon, Paperclip, PenLine, RotateCw, FolderSearch, Plus, ShieldCheck, Smartphone, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
+import { Bot, Brain, Cpu, Download, Keyboard, Palette, Plug, Search, Settings, FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, Lightbulb, MessageCircle, Mic, Moon, Paperclip, PenLine, RotateCw, FolderSearch, Plus, ShieldCheck, Smartphone, Sparkles, SquareTerminal, Sun, Undo2, X } from '@/components/icons'
 import { FileDiff } from '@/components/agents/file-diff'
 import { languageForPath } from '@/components/agents/agent-code'
 import type { StreamingResponseFeedback } from '@/components/agents/streaming-response'
@@ -12,7 +12,7 @@ import type { ToolApprovalStatus } from '@/components/agents/tool-approval'
 import { parseUnifiedDiff } from '@/lib/diff'
 import { api } from './api'
 import { author } from './credits'
-import { formatForModel, formatLabel, privacyLabels, providerPresets, type ApiFormat } from './providerCatalog'
+import { formatForModel, providerPresets, type ApiFormat } from './providerCatalog'
 import { Attachments } from './components/neru/Attachments'
 import { QueueBar } from './components/neru/QueueBar'
 import { canSteerQueued, dequeue, enqueue, type QueueMap, type QueuedMessage } from './lib/queue'
@@ -33,6 +33,9 @@ import { Onboarding } from './components/neru/Onboarding'
 import { Tour, useTour } from './components/neru/Tour'
 import { APP_TOUR } from './components/neru/appTour'
 import { Sidebar } from './components/neru/Sidebar'
+import { SidebarRail } from './components/neru/SidebarRail'
+import { ChatProjects } from './components/neru/ChatProjects'
+import type { ProjectsView } from '@/lib/chatProjects'
 import { TitleBarLeading, WindowControls, type AppMenuSection } from './components/neru/TitleBar'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { TerminalPane, pushAgentOutput, type TerminalScope } from './components/neru/TerminalPane'
@@ -41,17 +44,21 @@ import { BrowserTabStrip, PreviewPane } from './components/neru/PreviewPane'
 import { Dock, type DockPaneSpec, type PaneId } from './components/neru/Dock'
 import { IconMenu, SessionTitle, type TitleMenuItem } from './components/neru/SessionTitle'
 import { useBrowserTabs } from './lib/useBrowserTabs'
-import { EllipsisVertical, ScanSearch } from 'lucide-react'
+import { EllipsisVertical, PanelRight, ScanSearch } from '@/components/icons'
+import { SessionPanel } from './components/neru/SessionPanel'
 import { SearchPanel } from './components/neru/SearchPanel'
 import { SessionBoard } from './components/neru/SessionBoard'
-import { ErrorNotice } from './components/neru/ErrorNotice'
+import { Toaster } from './components/neru/Toaster'
+import { dismissAll, toast } from '@/lib/toast'
+import { actionLabels } from '@/lib/friendlyError'
 import { CliSettings } from './components/neru/CliSettings'
 import { useContextMenu } from './components/neru/ContextMenu'
 import type { ErrorAction } from '@/lib/friendlyError'
 import type {  EngineSettings, ModelInfo, Profile, Todo, WorkspaceChange, AgentEvent, AgentMode, AgentResponse, PrStatus, SessionChange, SlashCommand, AttachedDocument, ChatEntry, ContextUsage, Effort, GitStatus, PendingView, ProjectInfo, ProviderView, RemoteInfo, Section, SessionSnapshot, SessionSummary, TrustStatus, VoiceView ,  CheckResult } from './types'
 import { Connectors } from './components/neru/Connectors'
 import { RemoteSettings } from './components/neru/RemoteSettings'
-import { PrivacySettings, PrivacyTag } from './components/neru/PrivacySettings'
+import { PrivacySettings } from './components/neru/PrivacySettings'
+import { MemorySettings } from './components/neru/MemorySettings'
 import { TasksDialog, digestSince } from './components/neru/TasksDialog'
 import { languages, languageSetting, setLanguage, t, type LanguageSetting } from './i18n'
 import { DenyDialog } from './components/neru/DenyDialog'
@@ -59,17 +66,20 @@ import { ReviewPane, type ReviewComment } from './components/neru/ReviewPane'
 import { PullRequestChecks } from './components/neru/PullRequestChecks'
 import { ProjectChecks } from './components/neru/ProjectChecks'
 import { expandCommand } from './components/neru/Composer'
-import { SettingsModelPicker, applyProbe, shortModelName, LISTING_IS_AUTHORITATIVE } from './components/neru/ModelPicker'
+import { applyProbe, shortModelName, LISTING_IS_AUTHORITATIVE } from './components/neru/ModelPicker'
+import { ProviderSettings } from './components/neru/ProviderSettings'
 import { notifyUser } from '@/lib/notify'
 import { actionFor, loadBindings } from '@/lib/shortcuts'
 import { BtwPanel, ComparePanel, type CompareTarget } from './components/neru/SidePanels'
 import { DocumentsPanel } from './components/neru/DocumentsPanel'
 import { ArtifactPane } from './components/neru/ArtifactPane'
-import { closePaper, openPaper, paperIdIn, useOpenPaper } from '@/lib/artifactStore'
+import { closePaper, listenForPapers, openPaper, paperIdIn, useOpenPaper } from '@/lib/artifactStore'
 import { SPEC_STEPS } from '@/lib/review'
 import { ShortcutsSettings } from './components/neru/ShortcutsSettings'
 import { OutputStyles } from './components/neru/OutputStyles'
 import type { ServerPrompt, ServerResource, SessionDocument, SideAnswer } from './types'
+import type { ChatProjectListItem } from './types'
+import { Select } from './components/ui/Select'
 import { extractDocumentText, imageDataUrl, isReadableDocument } from '@/lib/documents'
 import { STUDY_COMMANDS, studyPrompt } from '@/lib/study'
 import './App.css'
@@ -82,7 +92,7 @@ const BINARY_FILE = /\.(pdf|zip|gz|tgz|7z|rar|tar|exe|dll|so|dylib|bin|woff2?|tt
 const fileKind = (path: string): 'image' | 'binary' | null => IMAGE_FILE.test(path) ? 'image' : BINARY_FILE.test(path) ? 'binary' : null
 const errorText = (value: unknown) => value instanceof Error ? value.message : String(value)
 
-const sectionTitles: Record<Section, string> = { home: 'Session', explorer: 'Explorer', search: 'Search', git: 'Source control', terminal: 'Terminal', preview: 'Preview', settings: 'Settings', team: 'Team', board: 'Board' }
+const sectionTitles: Record<Section, string> = { home: 'Session', explorer: 'Explorer', search: 'Search', git: 'Source control', terminal: 'Terminal', preview: 'Preview', settings: 'Settings', team: 'Team', board: 'Board', projects: 'Projects' }
 const ATTACH_LIMIT = 20
 
 /** "MCP servers github, db · hooks on PreToolUse, Stop" for the trust banner. */
@@ -110,7 +120,7 @@ function promptArguments(prompt: ServerPrompt, text: string): Record<string, str
 
 /** Overrides for one send: who it goes to, what it carries, and whether the message box is left alone (a queued message). */
 interface SendOptions { mode?: AgentMode; sessionId?: string; documents?: AttachedDocument[]; contextPaths?: string[]; keepComposer?: boolean; onStarted?: () => void }
-type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'model' | 'privacy' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills' | 'styles' | 'phone'
+type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'model' | 'privacy' | 'memory' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills' | 'styles' | 'phone'
 // Grouped like Claude's settings: the app, this computer, and what you add to it. Words help the search find a tab.
 const settingsGroups: { label: string; tabs: { id: SettingsTab; label: string; icon: typeof Settings; words: string }[] }[] = [
   { label: 'Settings', tabs: [
@@ -119,6 +129,7 @@ const settingsGroups: { label: string; tabs: { id: SettingsTab; label: string; i
     { id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard, words: 'keyboard shortcuts keys bindings hotkeys rebind' },
     { id: 'model', label: 'Model provider', icon: Cpu, words: 'api key provider model base url format free forget keys' },
     { id: 'privacy', label: 'Privacy and savings', icon: ShieldCheck, words: 'privacy secrets redact training data cost savings spent tokens second opinion review learned rules memory' },
+    { id: 'memory', label: 'Memory', icon: Brain, words: 'memory memories remember forget saved facts about you learn chat history past chats personalize' },
     { id: 'voice', label: 'Voice', icon: Mic, words: 'dictation speech microphone whisper transcription language' },
   ] },
   { label: 'This computer', tabs: [
@@ -222,10 +233,13 @@ function App() {
   const stoppedSessions = useRef(new Set<string>())
   const liveBy = useRef<Record<string, LiveResponse>>({})
   const activeRef = useRef<string | null>(null)
+  // Research papers stream into the document panel while they are written (paper.rs, ArtifactPane).
+  useEffect(() => { if (isTauri()) listenForPapers(() => activeRef.current) }, [])
   const [effort, setEffort] = useState<Effort>(() => readStored<Effort>('neru.effort', 'auto'))
   const [effortOk, setEffortOk] = useState(false)
   const [context, setContext] = useState<ContextUsage | null>(null)
-  const [notice, setNotice] = useState('')
+  // Confirmations and background news are toasts (Toaster.tsx); an empty string means nothing to say.
+  const setNotice = (text: string) => { if (text.trim()) toast.info(text) }
   // Session events (a model switch, a compaction) are lines in the thread. The backend keeps the
   // finished ones in the session's transcript; one ending in “…” is progress, shown until the next.
   const [progressNote, setProgressNote] = useState<string | null>(null)
@@ -280,7 +294,9 @@ function App() {
   const [prError, setPrError] = useState('')
   const [fixing, setFixing] = useState(false)
   const [notifications, setNotifications] = useState(() => readStored('neru.notifications', true))
-  const [error, setError] = useState('')
+  // Errors outside a reply are toasts that wait to be dismissed and carry their one-click fix; starting
+  // something new (an empty string) clears the old ones. Reply errors stay in the conversation.
+  const setError = (message: string) => { if (message.trim()) toast.error(message, action => errorAction(action), actionLabels); else dismissAll('error') }
   const [pending, setPending] = useState<PendingView | null>(null)
   const [pendingFromAgent, setPendingFromAgent] = useState(false)
   const [pendingStatus, setPendingStatus] = useState<ToolApprovalStatus>('pending')
@@ -291,7 +307,7 @@ function App() {
   const [todos, setTodos] = useState<Todo[]>([])
   const openMenu = useContextMenu()
   // Terminal, files, changes and the browser open beside the conversation, like Claude Code.
-  const [dock, setDock] = useState<Record<'terminal' | 'files' | 'browser', boolean>>(() => ({ terminal: false, files: false, browser: false, ...readStored<Record<string, boolean>>('neru.dock', {}) }))
+  const [dock, setDock] = useState<Record<'session' | 'terminal' | 'files' | 'browser', boolean>>(() => ({ session: false, terminal: false, files: false, browser: false, ...readStored<Record<string, boolean>>('neru.dock', {}) }))
   const [dockExpanded, setDockExpanded] = useState<PaneId | null>(null)
   const [terminalSeen, setTerminalSeen] = useState(false)
   const [browserSeen, setBrowserSeen] = useState(false)
@@ -300,7 +316,7 @@ function App() {
   useEffect(() => writeStored('neru.dock', dock), [dock])
   const browser = useBrowserTabs()
   const [renamingTitle, setRenamingTitle] = useState(false)
-  const paneOpen: Record<PaneId, boolean> = { terminal: dock.terminal, files: dock.files, browser: dock.browser, changes: reviewOpen }
+  const paneOpen: Record<PaneId, boolean> = { session: dock.session, terminal: dock.terminal, files: dock.files, browser: dock.browser, changes: reviewOpen }
   const setPane = (id: PaneId, open: boolean) => {
     if (id === 'changes') { setReviewOpen(open); if (open) void loadChangesRef.current() } else setDock(current => ({ ...current, [id]: open }))
     // Panes open beside a session or a Team task; anywhere else they bring you back to the session.
@@ -381,6 +397,8 @@ function App() {
   const [paletteQuery, setPaletteQuery] = useState('')
   const [cloneOpen, setCloneOpen] = useState(false)
   const [cloneUrl, setCloneUrl] = useState('')
+  // A failed clone is explained inside the dialog, next to the fields to fix.
+  const [cloneError, setCloneError] = useState('')
   const [cloneDestination, setCloneDestination] = useState('D:\\Neru\\projects\\')
   const [sidebarOpen, setSidebarOpen] = useState(() => readStored('neru.sidebar.open', true))
   const [sidebarHover, setSidebarHover] = useState(() => readStored('neru.sidebar.hover', true))
@@ -394,6 +412,11 @@ function App() {
   const [chatPhrase, setChatPhrase] = useState(() => pickPhrase())
   const codeSessionRef = useRef<string | null>(null)
   const chatSessionRef = useRef<string | null>(null)
+  // Chat projects (Claude-style Projects): the Projects page and what the sidebar lists.
+  const [projectsView, setProjectsView] = useState<ProjectsView>({ kind: 'list' })
+  const [chatProjects, setChatProjects] = useState<ChatProjectListItem[]>([])
+  const refreshChatProjects = useCallback(() => { if (isTauri()) void api.listChatProjects().then(setChatProjects).catch(() => undefined) }, [])
+  useEffect(() => { refreshChatProjects() }, [refreshChatProjects])
   const [provider, setProvider] = useState<ProviderView>({ providerId: 'local', apiFormat: 'openai-chat', baseUrl: 'http://localhost:3001/v1', model: 'auto', configured: false, hasKey: false })
   const [providerId, setProviderId] = useState('local')
   const [providerFormat, setProviderFormat] = useState<ApiFormat>('openai-chat')
@@ -408,7 +431,9 @@ function App() {
   const [modelNotice, setModelNotice] = useState<{ tone: 'checking' | 'error' | 'note'; text: string } | null>(null)
   const sameEndpoint = (a: string, b: string) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '')
   // The menu lists the active provider's models; while Settings browses another provider it has nothing to offer.
-  const composerModels = providerId === provider.providerId && sameEndpoint(providerUrl, provider.baseUrl) ? models : []
+  const keyModels = providerId === provider.providerId && sameEndpoint(providerUrl, provider.baseUrl) ? models : []
+  // Code needs tool calls and room for a project: models that failed the tool test or hold under 32K stay in Chat.
+  const composerModels = surface === 'code' ? keyModels.filter(info => info.id === provider.model || (info.toolsVerified !== 'no' && (!info.contextWindow || info.contextWindow >= 32_000))) : keyModels
   const activeModel = composerModels.find(info => info.id === provider.model)
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelsError, setModelsError] = useState('')
@@ -715,11 +740,11 @@ function App() {
     } catch (cause) { setError(errorText(cause)) }
   }
   const cloneProject = async () => {
-    setBusy(true); setError('')
+    setBusy(true); setCloneError('')
     try {
       const next = await api.cloneProject(cloneUrl, cloneDestination)
       setProject(next); setRecent(await api.recentProjects()); const snapshot = await api.currentSession(); if (snapshot) loadSession(snapshot); await refreshSessions(); setSelectedFile(null); setGitStatus(null); setSection('home'); setCloneOpen(false); setCloneUrl('')
-    } catch (cause) { setError(errorText(cause)) } finally { setBusy(false) }
+    } catch (cause) { setCloneError(errorText(cause)) } finally { setBusy(false) }
   }
   const newChat = useCallback(async (worktree = false) => { if (!project || busy) return; try { loadSession(await api.createSession(worktree === true)); await refreshSessions(); if (worktree === true) sessionNote(t('New session in its own Git worktree. Its changes stay on a separate branch until you push them.')) } catch (cause) { setError(errorText(cause)) } }, [project, busy, loadSession, refreshSessions])
   const blankChat = () => {
@@ -776,6 +801,29 @@ function App() {
       if (loose) { blankChat(); await refreshSessions() }
       else setError(errorText(cause))
     }
+  }
+  const openProjects = (view: ProjectsView = { kind: 'list' }) => {
+    if (surface !== 'chat') { setSurface('chat'); writeStored('neru.surface', 'chat') }
+    setProjectsView(view); setSection('projects')
+  }
+  /** A new chat filed under the project, opened with its first message. */
+  const startProjectChat = async (projectId: string, text: string) => {
+    if (busy || !isTauri()) return
+    try {
+      const snapshot = await api.createChatSession(projectId)
+      chatSessionRef.current = snapshot.session.id
+      loadSession(snapshot); setSection('home')
+      await refreshSessions()
+      void runChat(text, true, { sessionId: snapshot.session.id })
+    } catch (cause) { toast.error(cause) }
+  }
+  const moveChat = async (id: string, projectId: string | null) => {
+    try {
+      await api.setSessionChatProject(id, projectId)
+      await refreshSessions()
+      const name = chatProjects.find(item => item.id === projectId)?.name
+      toast.success(name ? t('Moved to {name}.', { name }) : t('Removed from the project.'))
+    } catch (cause) { toast.error(cause) }
   }
   const showFile = async (path: string) => {
     setSelectedFile(path); openPane('files')
@@ -1112,7 +1160,7 @@ function App() {
           say(t('Checking your setup…'))
           const checks = await api.doctor()
           setMessages(current => current.slice(0, -1))
-          say(`${checks.every(check => check.ok) ? t('**Everything looks good.**') : t('**Some things need attention.**')}\n\n${checks.map(check => `- ${check.ok ? '✅' : '⚠️'} **${check.name}:** ${check.detail}${check.ok ? '' : ` — ${check.fix}`}`).join('\n')}`); return
+          say(`${checks.every(check => check.ok) ? t('**Everything looks good.**') : t('**Some things need attention.**')}\n\n${checks.map(check => `- ${check.ok ? '✅' : '⚠ï¸'} **${check.name}:** ${check.detail}${check.ok ? '' : ` — ${check.fix}`}`).join('\n')}`); return
         }
         case 'output-style': {
           if (!project) { say(t('Open a project to choose its output style.')); return }
@@ -1518,7 +1566,7 @@ function App() {
   const chooseModel = (model: string) => { setProviderModel(model); setProviderFormat(formatForModel(providerId, model, providerFormat, providerUrl)) }
   useEffect(() => {
     if (!providerReady || !isTauri()) return
-    const local = /localhost|127\.0\.0\.1/.test(providerUrl)
+    const local = /localhost|127\.0\.0\.1/.test(providerUrl) || Boolean(providerPresets.find(item => item.id === providerId)?.keyOptional)
     const savedKey = (provider.hasKey && provider.providerId === providerId) || savedKeys.includes(providerId)
     if (!providerKey.trim() && !savedKey && !local) {
       setModels([])
@@ -1551,7 +1599,7 @@ function App() {
     { label: t('Open project'), action: chooseProject }, { label: t('Clone repository'), action: () => setCloneOpen(true) }, { label: t('New chat'), action: () => newChat() }, ...(project?.git ? [{ label: t('New worktree session'), action: () => newChat(true) }] : []),
     { label: t('Team'), action: () => setSection('team') }, { label: t('Import chats & skills'), action: () => { setSettingsTab('imports'); setSection('settings') } },
     { label: t('Search project'), action: () => setSection('search') }, { label: t('Toggle files'), action: () => togglePane('files') },
-    { label: t('View Git'), action: () => setSection('git') }, { label: t('Toggle terminal'), action: () => togglePane('terminal') }, { label: t('Toggle browser'), action: () => togglePane('browser') }, { label: t('Toggle changes'), action: () => togglePane('changes') },
+    { label: t('View Git'), action: () => setSection('git') }, { label: t('Toggle terminal'), action: () => togglePane('terminal') }, { label: t('Toggle session details'), action: () => togglePane('session') }, { label: t('Toggle browser'), action: () => togglePane('browser') }, { label: t('Toggle changes'), action: () => togglePane('changes') },
     { label: t('Settings'), action: () => setSection('settings') }, { label: t('Model provider'), action: () => { setSettingsTab('model'); setSection('settings') } },
     { label: t('Toggle sidebar'), action: () => dockSidebar(!sidebarOpen) }, { label: light ? t('Switch to dark theme') : t('Switch to light theme'), action: () => setLight(value => !value) },
     { label: t('Getting started guide'), action: () => setOnboarding('show') },
@@ -1581,6 +1629,8 @@ function App() {
     <WhatsNew open={whatsNew !== null} version={whatsNew && whatsNew !== 'latest' ? whatsNew : undefined} onClose={() => setWhatsNew(null)} />
     <TasksDialog open={tasksView !== null} view={tasksView ?? 'queue'} projects={[...new Set([...(project ? [project.path] : []), ...recent])]} onClose={closeTasks} onOpenSession={(path, id) => void openSession(path, id)} onError={setError} />
     <DenyDialog open={denying} project={Boolean(project) && surface === 'code'} onCancel={cancelDeny} onDeny={(reason, remember) => void denyWith(reason, remember)} />
+    {/* Toasts keep clear of the document panel and of the update card in the same corner. */}
+    <Toaster style={{ right: paperOpen && activeSessionId ? 'calc(min(760px, 54vw) + 20px)' : docsShown && activeSessionId ? 'calc(min(520px, 45vw) + 20px)' : undefined, bottom: update && updateDismissed !== update.version && onboarding !== 'show' ? 132 : undefined }} />
     {update && updateDismissed !== update.version && onboarding !== 'show' && <UpdateToast version={update.version} progress={updateProgress} onInstall={() => void applyUpdate()} onDetails={() => setWhatsNew('latest')} onDismiss={() => setUpdateDismissed(update.version)} />}
   </>
   if (onboarding === 'show') return <Onboarding project={project} provider={provider} isDesktop={isTauri()} light={light} language={dictationLanguage} onLanguageChange={value => { setDictationLanguage(value); writeStored('neru.voice.language', value) }} onOpenProject={chooseProject} onProviderSaved={value => { setProvider(value); setProviderId(value.providerId); setProviderFormat(value.apiFormat); setProviderUrl(value.baseUrl); setProviderModel(value.model) }} onToggleTheme={() => setLight(value => !value)} onFinish={finishOnboarding} />
@@ -1609,6 +1659,7 @@ function App() {
       { label: t('Command palette'), shortcut: 'Mod K', onSelect: () => setPalette(true) },
       { label: light ? t('Dark theme') : t('Light theme'), onSelect: () => setLight(value => !value) },
       'separator',
+      { label: t('Session details'), disabled: !project, onSelect: () => togglePane('session') },
       { label: t('Files'), disabled: !project, onSelect: () => togglePane('files') },
       { label: t('Changes'), disabled: !project, onSelect: () => togglePane('changes') },
       { label: t('Source control'), disabled: !project, onSelect: () => { setSection('git'); void refreshGit() } },
@@ -1630,7 +1681,8 @@ function App() {
   const sidebar = (floating: boolean) => <Sidebar surface={surface} project={project} recent={recent} sessions={sessions} activeSessionId={activeSessionId} section={settingsOpen ? 'settings' : section} busy={busy} light={light} model={provider.model}
     onSection={next => { setSection(next); if (next === 'git') void refreshGit() }} onNewSession={newSessionIn} onOpenSession={openSession} onOpenProject={() => void chooseProject()} onCloneProject={() => setCloneOpen(true)}
     onTasks={() => setTasksView('queue')} queued={queuedCount} onExportReplay={id => void exportReplay(id)} onShareReplay={id => void shareReplay(id)}
-    onRenameSession={(id, title) => void renameSession(id, title)} onDeleteSession={id => void removeSession(id)} onForgetProject={path => void forgetProject(path)} onRevealProject={path => void api.revealPath(path).catch(cause => setError(errorText(cause)))} onToggleTheme={() => setLight(value => !value)} onPalette={() => setPalette(true)} onGuide={() => setOnboarding('show')} onTour={() => { setSection('home'); appTour.start() }} onCollapse={() => dockSidebar(floating)} floating={floating} />
+    onRenameSession={(id, title) => void renameSession(id, title)} onDeleteSession={id => void removeSession(id)} onForgetProject={path => void forgetProject(path)} onRevealProject={path => void api.revealPath(path).catch(cause => setError(errorText(cause)))} onToggleTheme={() => setLight(value => !value)} onPalette={() => setPalette(true)} onGuide={() => setOnboarding('show')} onTour={() => { setSection('home'); appTour.start() }} onCollapse={() => dockSidebar(floating)} floating={floating}
+    chatProjects={chatProjects} onProjects={() => openProjects()} onOpenChatProject={id => openProjects({ kind: 'project', id })} onMoveChat={(id, projectId) => void moveChat(id, projectId)} />
   const activeWorktree = sessions.find(item => item.id === activeSessionId)?.worktree
   /** Writes a replay page of the session (secrets removed) and opens its folder. */
   const exportReplay = async (id: string) => {
@@ -1666,6 +1718,11 @@ function App() {
     { label: t('Change folder…'), onSelect: () => void chooseProject() },
     { label: t('Open in terminal'), onSelect: () => openPane('terminal') },
   ] : []
+  const activeChatProject = surface === 'chat' ? chatProjects.find(item => item.id === sessions.find(session => session.id === activeSessionId)?.chatProjectId) : undefined
+  const chatProjectItems: TitleMenuItem[] = activeChatProject && activeSessionId ? [
+    { label: t('Open project'), onSelect: () => openProjects({ kind: 'project', id: activeChatProject.id }) },
+    { label: t('Remove chat from project'), onSelect: () => void moveChat(activeSessionId, null) },
+  ] : []
   const moreItems: TitleMenuItem[] = [
     { label: t('Search project'), disabled: !project, shortcut: '', onSelect: () => setSection('search') },
     { label: t('Source control'), disabled: !project, onSelect: () => { setSection('git'); void refreshGit() } },
@@ -1675,63 +1732,56 @@ function App() {
   ]
   const filesBody = project ? <><div className="tree-panel"><div className="panel-heading">{t('Files')} <span>{project.name}</span></div><FileTree key={project.path} projectKey={project.path} selected={selectedFile} version={treeVersion} changed={touched} lastChange={lastChange} onSelect={path => void showFile(path)} {...treeActions} /></div><div className="editor-panel">{selectedFile ? <><div className="editor-tabs">{tabs.map(tab => <button key={tab.path} type="button" className={tab.path === selectedFile ? 'active' : ''} onClick={() => void showFile(tab.path)} onContextMenu={event => tabMenu(event, tab.path)} onAuxClick={event => { if (event.button === 1) closeTabs(item => item.path === tab.path) }} title={tab.path}>{tab.path.split(/[/\\]/).pop()}{tab.draft !== tab.saved ? ' •' : ''}</button>)}</div><div className="file-toolbar"><FileDiffIcon size={14} /><span className="truncate">{selectedFile}</span>{fileDraft !== fileText && <span className="unsaved-mark">{t('Edited')}</span>}<button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void saveDraft()}>{t('Save')}</button><button className="button subtle" onClick={() => void openEditor()}>{t('Open in editor')}</button><button className="button subtle" disabled={fileDraft === fileText || Boolean(pending)} onClick={() => void proposeDraft()}>{t('Review changes')}</button></div><div className="editor-host">{filePreview?.path === selectedFile ? <div className="file-preview">{filePreview.kind === 'image' ? (filePreview.url ? <img src={filePreview.url} alt={selectedFile} /> : t('Loading image…')) : <p>{t('{name} is not a text file.', { name: selectedFile.split(/[\\/]/).pop() ?? '' })} <button className="team-link" onClick={() => void openEditor()}>{t('Open it in another app')}</button></p>}</div> : fileLoading ? t('Reading file…') : <Suspense fallback={t('Loading editor…')}><CodeEditor path={selectedFile} value={fileDraft} onChange={setFileDraft} light={light} complete={editorComplete} /></Suspense>}</div>{pending && !pendingFromAgent && <div className="editor-pending"><ApprovalCard pending={pending} status={pendingStatus} projectPath={project.path} onApprove={() => void approve()} onDeny={() => void reject()} /></div>}</> : <div className="empty-pane"><FileSearch size={27} /><h2>{t('Select a file')}</h2><p>{t('Browse your project from the tree.')}</p></div>}</div></> : null
   const dockPanes: DockPaneSpec[] = project ? [
+    { id: 'session', title: t('Session'), body: <SessionPanel context={context} todos={todos} canCompact={Boolean(activeSessionId) && !responding} onCompact={() => void compactNow()} onError={setError} onOpenSettings={tab => { setSettingsTab(tab); setSection('settings') }} /> },
     { id: 'terminal', title: t('Terminal'), keepAlive: true, body: terminalSeen ? <TerminalPane key={project.path} projectKey={project.path} scope={section === 'team' && teamScope ? teamScope : undefined} /> : null },
     { id: 'files', title: t('Files'), body: filesBody, actions: <button type="button" className="dock-button" onClick={() => setTreeVersion(value => value + 1)} aria-label={t('Refresh files')} title={t('Refresh files')}><RotateCw size={14} /></button> },
     { id: 'changes', title: t('Changes'), body: <ReviewPane embedded changes={changes} loading={changesLoading} comments={reviewComments} onComments={setReviewComments} onRefresh={() => void loadChanges()} onClose={() => setPane('changes', false)} onSend={message => void runChat(message)} onOpenFile={path => void showFile(path)} /> },
     { id: 'browser', title: t('Browser'), keepAlive: true, header: <BrowserTabStrip browser={browser} />, body: browserSeen ? <PreviewPane key={project.path} browser={browser} projectKey={project.path} projectName={project.name} open={dock.browser && (section === 'home' || section === 'team')} onOpenExternal={url => void api.openUrl(url)} onSendToAgent={sendFromPreview} /> : null },
   ] : []
-  const errorBanner = <div className="error-banner-wrap"><ErrorNotice error={error} onAction={action => { setError(''); errorAction(action) }} onDismiss={() => setError('')} /></div>
   // The side panes work next to a session and next to a Team task.
   const dockHere = section === 'home' || section === 'team'
-  const dockElement = project && surface !== 'chat' ? <Dock panes={dockPanes} open={{ terminal: dock.terminal && dockHere, files: dock.files && dockHere, changes: reviewOpen && dockHere, browser: dock.browser && dockHere }} expanded={dockExpanded} onExpand={setDockExpanded} onClose={id => setPane(id, false)} /> : null
+  const dockElement = project && surface !== 'chat' ? <Dock panes={dockPanes} open={{ session: dock.session && dockHere, terminal: dock.terminal && dockHere, files: dock.files && dockHere, changes: reviewOpen && dockHere, browser: dock.browser && dockHere }} expanded={dockExpanded} onExpand={setDockExpanded} onClose={id => setPane(id, false)} /> : null
   return <div className="app-shell">
   <header className={`titlebar ${/Mac/i.test(navigator.platform) ? 'mac' : ''}`} data-tauri-drag-region>
     <TitleBarLeading sections={menuSections} sidebarOpen={sidebarOpen} onToggleSidebar={() => dockSidebar(!sidebarOpen)} onPeek={() => !sidebarOpen && sidebarHover && showPeek(250)} onUnpeek={() => !sidebarOpen && sidebarHover && hidePeek(400)}
       canBack={navFlags.back} canForward={navFlags.forward} onBack={() => void navigate(-1)} onForward={() => void navigate(1)} />
     <div className="surface-switch" role="group" aria-label={t('Chat or code')}>
-      <button type="button" aria-label={t('Chat')} aria-pressed={surface === 'chat'} title={t('Chat. Your project is not sent.')} onClick={() => chooseSurface('chat')}><MessageCircle size={15} strokeWidth={1.75} /></button>
-      <button type="button" aria-label={t('Code')} aria-pressed={surface === 'code'} title={t('Code. Neru can read and edit the open project.')} onClick={() => chooseSurface('code')}><CodeXml size={15} strokeWidth={1.75} /></button>
+      <button type="button" aria-label={t('Chat')} aria-pressed={surface === 'chat'} title={t('Chat. Your project is not sent.')} onClick={() => chooseSurface('chat')}><MessageCircle size={15} weight={surface === 'chat' ? 'fill' : 'regular'} /></button>
+      <button type="button" aria-label={t('Code')} aria-pressed={surface === 'code'} title={t('Code. Neru can read and edit the open project.')} onClick={() => chooseSurface('code')}><CodeXml size={15} weight={surface === 'code' ? 'fill' : 'regular'} /></button>
     </div>
-    <SessionTitle title={pageTitle} surface={surface} projectName={project && surface !== 'chat' && section === 'home' ? project.name : undefined} branch={section === 'home' ? activeWorktree?.branch : undefined}
-      sessionItems={sessionItems} projectItems={projectItems} renaming={renamingTitle && section === 'home'} onRename={title => { setRenamingTitle(false); if (activeSessionId) void renameSession(activeSessionId, title) }} onCancelRename={() => setRenamingTitle(false)} disabled={section !== 'home' || !activeSessionId} />
+    <SessionTitle title={pageTitle} surface={surface} projectName={project && surface !== 'chat' && section === 'home' ? project.name : surface === 'chat' && section === 'home' ? activeChatProject?.name : undefined} branch={section === 'home' ? activeWorktree?.branch : undefined}
+      sessionItems={sessionItems} projectItems={surface === 'chat' ? chatProjectItems : projectItems} renaming={renamingTitle && section === 'home'} onRename={title => { setRenamingTitle(false); if (activeSessionId) void renameSession(activeSessionId, title) }} onCancelRename={() => setRenamingTitle(false)} disabled={section !== 'home' || !activeSessionId} />
     <span className="titlebar-drag" data-tauri-drag-region />
     <div className="titlebar-actions">
-      {checkpoint && <button type="button" className="titlebar-button" onClick={undoCheckpoint} aria-label={t('Undo last change')} title={t('Undo the last approved change')}><Undo2 size={17} strokeWidth={1.75} /></button>}
-      <button type="button" className="titlebar-button" onClick={() => setPalette(true)} aria-label={t('Command palette')} title={`Command palette (${modKey} K)`}><Command size={17} strokeWidth={1.75} /></button>
+      {checkpoint && <button type="button" className="titlebar-button" onClick={undoCheckpoint} aria-label={t('Undo last change')} title={t('Undo the last approved change')}><Undo2 size={17} /></button>}
+      <button type="button" className="titlebar-button" onClick={() => setPalette(true)} aria-label={t('Command palette')} title={`Command palette (${modKey} K)`}><Command size={17} /></button>
       {project && surface !== 'chat' && <>
-        <button type="button" className={`titlebar-button${paneOpen.terminal ? ' on' : ''}`} onClick={() => togglePane('terminal')} aria-label={t('Terminal')} aria-pressed={paneOpen.terminal} title={t('Terminal')}><SquareTerminal size={17} strokeWidth={1.75} /></button>
-        <button type="button" className={`titlebar-button${paneOpen.files ? ' on' : ''}`} onClick={() => togglePane('files')} aria-label={t('Files')} aria-pressed={paneOpen.files} title={t('Files')}><FolderTree size={17} strokeWidth={1.75} /></button>
+        <button type="button" className={`titlebar-button${paneOpen.session ? ' on' : ''}`} onClick={() => togglePane('session')} aria-label={t('Session details')} aria-pressed={paneOpen.session} title={t('Session: context, tasks, MCP servers, memory')}><PanelRight size={17} weight={paneOpen.session ? 'fill' : 'regular'} /></button>
+        <button type="button" className={`titlebar-button${paneOpen.terminal ? ' on' : ''}`} onClick={() => togglePane('terminal')} aria-label={t('Terminal')} aria-pressed={paneOpen.terminal} title={t('Terminal')}><SquareTerminal size={17} weight={paneOpen.terminal ? 'fill' : 'regular'} /></button>
+        <button type="button" className={`titlebar-button${paneOpen.files ? ' on' : ''}`} onClick={() => togglePane('files')} aria-label={t('Files')} aria-pressed={paneOpen.files} title={t('Files')}><FolderTree size={17} weight={paneOpen.files ? 'fill' : 'regular'} /></button>
         <button type="button" className={`titlebar-button${paneOpen.changes ? ' on' : ''}`} onClick={() => togglePane('changes')} aria-label={t('Changes')} aria-pressed={paneOpen.changes} title={t('Changes in this session')}>
-          <FileDiffIcon size={17} strokeWidth={1.75} />{changes.length > 0 && <b className="tb-dot">{changes.length > 99 ? '99+' : changes.length}</b>}
+          <FileDiffIcon size={17} weight={paneOpen.changes ? 'fill' : 'regular'} />{changes.length > 0 && <b className="tb-dot">{changes.length > 99 ? '99+' : changes.length}</b>}
         </button>
-        <button type="button" className="titlebar-button" disabled={busy || responding || Boolean(pending)} onClick={reviewCode} aria-label={t('Review code')} title={t('Ask Neru to review the current changes')}><ScanSearch size={17} strokeWidth={1.75} /></button>
-        <button type="button" className={`titlebar-button${paneOpen.browser ? ' on' : ''}`} onClick={() => togglePane('browser')} aria-label={t('Browser')} aria-pressed={paneOpen.browser} title={t('Browser preview')}><Globe size={17} strokeWidth={1.75} /></button>
+        <button type="button" className="titlebar-button" disabled={busy || responding || Boolean(pending)} onClick={reviewCode} aria-label={t('Review code')} title={t('Ask Neru to review the current changes')}><ScanSearch size={17} /></button>
+        <button type="button" className={`titlebar-button${paneOpen.browser ? ' on' : ''}`} onClick={() => togglePane('browser')} aria-label={t('Browser')} aria-pressed={paneOpen.browser} title={t('Browser preview')}><Globe size={17} weight={paneOpen.browser ? 'fill' : 'regular'} /></button>
       </>}
-      <IconMenu icon={<EllipsisVertical size={17} strokeWidth={1.75} />} label={t('More')} items={moreItems} />
+      <IconMenu icon={<EllipsisVertical size={17} />} label={t('More')} items={moreItems} />
     </div>
     <WindowControls />
   </header>
   <div className="app-body">{sidebarOpen
     ? sidebar(false)
-    : sidebarHover && <>
+    // With "Show sidebar on hover" on, a collapsed sidebar leaves the edge empty; it only appears on hover.
+    : !sidebarHover && <SidebarRail surface={surface} section={settingsOpen ? 'settings' : section} newDisabled={busy || (surface === 'code' && !project)} hasProject={Boolean(project)} queued={queuedCount} profileName={profile.name}
+      onToggle={() => dockSidebar(true)} onNew={() => { if (surface === 'chat') void newLooseChat(); else void newChat() }} onSearch={() => surface === 'chat' ? setPalette(true) : setSection('search')}
+      onHistory={() => surface === 'chat' ? dockSidebar(true) : setSection('board')} onProjects={() => openProjects()} onTeam={() => setSection('team')} onTasks={() => setTasksView('queue')}
+      onSettings={() => setSection('settings')} onProfile={() => { setSettingsTab('general'); setSection('settings') }} />}
+  {!sidebarOpen && sidebarHover && <>
       <div className="sidebar-hotzone" aria-hidden onMouseEnter={() => showPeek(120)} onMouseLeave={() => { if (!peek) window.clearTimeout(peekTimer.current) }} />
       {peek && <div className="sidebar-peek" onMouseEnter={() => window.clearTimeout(peekTimer.current)} onMouseLeave={() => hidePeek(280)}>{sidebar(true)}</div>}
     </>}
   {appTour.open && <Tour label={t('Neru walkthrough')} steps={APP_TOUR} onClose={appTour.close} />}
   <div className="workspace-row"><div className="workspace">
-    {error && !settingsOpen && errorBanner}
-    {notice && !error && <div className="notice-banner" role="status"><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label={t('Dismiss')}><X size={14} /></button></div>}
-    {trust && !trust.trusted && trust.path === project?.path && (trust.mcpServers.length > 0 || trust.hookEvents.length > 0) && <div className="trust-banner" role="status">
-      <ShieldCheck size={16} aria-hidden />
-      <div className="trust-banner-body">
-        <strong>{t('This project wants to run its own tools')}</strong>
-        <span title={trustSummary(trust)}>{t('{summary}. Trust the folder only if you know where it came from.', { summary: trustSummary(trust) })}</span>
-      </div>
-      <div className="trust-banner-actions">
-        <button className="button subtle small" disabled={trustBusy} onClick={() => setTrust(null)}>{t('Not now')}</button>
-        <button className="button primary small" disabled={trustBusy} onClick={() => void trustOpenProject()}>{trustBusy ? t('Trusting…') : t('Trust this folder')}</button>
-      </div>
-    </div>}
     {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''} ${paperOpen && activeSessionId ? 'with-artifact' : docsShown && activeSessionId ? 'with-review' : ''}`}>
       {threadOpen
         ? <Conversation onErrorAction={errorAction} previewOffer={previewOffer && !responding} onOpenPreview={openPreview} onDismissPreview={() => setPreviewOffer(false)} messages={messages} live={live} phase={responding ? agentPhase(live, agentMode) : null} busy={responding || busy} pending={pending} pendingStatus={pendingStatus} resolved={resolved} progressNote={progressNote} failed={failed} projectPath={project?.path}
@@ -1745,6 +1795,17 @@ function App() {
         {filePicker && <FilePicker files={projectFiles} attached={contextPaths} onPick={attachFile} onClose={() => setFilePicker(false)} />}
         <TodoPanel todos={todos} />
         {queued.length > 0 && <QueueBar items={queued} onSteer={steerQueued} onEdit={editQueued} onRemove={id => activeSessionId && removeQueued(activeSessionId, id)} />}
+            {trust && !trust.trusted && trust.path === project?.path && (trust.mcpServers.length > 0 || trust.hookEvents.length > 0) && <div className="trust-card" role="region" aria-label={t('Folder trust')}>
+          <ShieldCheck size={16} aria-hidden />
+          <div className="trust-card-body">
+            <strong>{t('This project wants to run its own tools')}</strong>
+            <span title={trustSummary(trust)}>{t('{summary}. Trust the folder only if you know where it came from.', { summary: trustSummary(trust) })}</span>
+          </div>
+          <div className="trust-card-actions">
+            <button className="button subtle small" disabled={trustBusy} onClick={() => setTrust(null)}>{t('Not now')}</button>
+            <button className="button primary small" disabled={trustBusy} onClick={() => void trustOpenProject()}>{trustBusy ? t('Trusting…') : t('Trust this folder')}</button>
+          </div>
+        </div>}
         <Composer value={prompt} onValueChange={value => { setPrompt(value); if (/@[^\s@]*$/.test(value) && projectFiles.length === 0 && project) void api.listProjectFiles().then(setProjectFiles).catch(() => undefined); if (value.endsWith('@')) void api.mcpResources().then(setMcpResources).catch(() => undefined); if (value === '/') void api.mcpPrompts().then(setMcpPrompts).catch(() => undefined) }} onSubmit={value => void runChat(value)}
           projectFiles={projectFiles} onAttachFile={attachFile}
           resources={mcpResources.map(item => ({ key: `${item.server}\n${item.uri}`, name: item.name, server: item.server }))} onAttachResource={key => void attachResource(key)}
@@ -1759,14 +1820,17 @@ function App() {
           attachItems={attachItems} voiceEngine={voiceEngine} onVoiceStart={warmVoice} voiceReady={voiceEngine !== 'local' || Boolean(speech.active)} onVoiceUnavailable={localModelRequired} onTranscribe={transcribe} onError={setError}
           effort={effort} effortSupported={effortOk} onEffortChange={value => { setEffort(value); writeStored('neru.effort', value) }} context={context} />
         {docs.length > 0 && !docsShown && <button type="button" className="button subtle small docs-chip" onClick={() => setDocsShown(true)}><FileText size={13} /> {docs.length === 1 ? docs[0].title : t('{n} documents', { n: docs.length })}</button>}
-        {chatHome && <div className="chat-ideas">{CHAT_IDEAS.map(idea => <button key={idea.label} type="button" onClick={() => setPrompt(t(idea.prompt))}><idea.icon size={14} strokeWidth={1.75} />{t(idea.label)}</button>)}<button type="button" onClick={() => chooseSurface('code')}><CodeXml size={14} strokeWidth={1.75} />{t('Code')}</button></div>}
+        {chatHome && <div className="chat-ideas">{CHAT_IDEAS.map(idea => <button key={idea.label} type="button" onClick={() => setPrompt(t(idea.prompt))}><idea.icon size={14} />{t(idea.label)}</button>)}<button type="button" onClick={() => chooseSurface('code')}><CodeXml size={14} />{t('Code')}</button></div>}
       </div>
     </main>}
-    {section === 'home' && paperOpen && activeSessionId && <ArtifactPane key={paperOpen} sessionId={activeSessionId} id={paperOpen} onError={setError} onNotice={setNotice} />}
+    {section === 'home' && paperOpen && activeSessionId && <ArtifactPane key={paperOpen} sessionId={activeSessionId} id={paperOpen} onError={setError} onNotice={setNotice}
+      onAsk={quote => { setPrompt(current => `${quote.split('\n').map(line => `> ${line}`).join('\n')}\n\n${current}`); window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus(), 0) }} />}
     {section === 'home' && docsShown && !paperOpen && activeSessionId && <DocumentsPanel sessionId={activeSessionId} documents={docs} open={docOpen} onOpen={setDocOpen} onClose={() => setDocsShown(false)}
       onSend={message => sendReview(message)} onApprove={approveDocument} onError={setError} busy={responding || busy || Boolean(pending)} />}
     {section === 'home' && btw && <BtwPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} seed={btw.seed} onClose={() => setBtw(null)} />}
     {compare && <ComparePanel sessionId={activeSessionId} seed={compare.seed} provider={provider} models={composerModels} savedKeys={savedKeys} onKeep={(text, answer, target) => void keepCompared(text, answer, target)} onClose={() => setCompare(null)} onError={setError} />}
+    {section === 'projects' && <ChatProjects view={projectsView} onView={setProjectsView} sessions={sessions} busy={busy || responding} onChanged={() => { refreshChatProjects(); void refreshSessions() }}
+      onStartChat={(projectId, text) => void startProjectChat(projectId, text)} onOpenChat={id => openSession('', id)} onRenameChat={(id, title) => void renameSession(id, title)} onDeleteChat={id => void removeSession(id)} onMoveChat={(id, projectId) => void moveChat(id, projectId)} />}
     {section === 'team' && <TeamView project={project} onError={setError} voice={{ light, engine: voiceEngine, ready: voiceEngine !== 'local' || Boolean(speech.active), onStart: warmVoice, onUnavailable: localModelRequired, onTranscribe: transcribe }} onOpenSettings={tab => { setSettingsTab(tab); setSection('settings') }} onScope={setTeamScope} onOpenPane={id => openPane(id)} />}
     {section === 'board' && <main className="content-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <SessionBoard key={project.path} projectName={project.name} activeSessionId={activeSessionId} refreshKey={sessions} onOpen={id => { openSession(project.path, id); setSection('home') }} onError={setError} onNotice={setNotice} />}</main>}
     {section === 'search' && <main className="content-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <div className="content-column"><div className="section-intro"><h2>{t('Find what matters.')}</h2><p>{t('Search source text with Git ignore rules respected.')}</p></div><SearchPanel key={project.path} projectKey={project.path} onOpen={path => void showFile(path)} /></div>}</main>}
@@ -1781,18 +1845,17 @@ function App() {
             const query = settingsQuery.trim().toLowerCase()
             const tabs = group.tabs.filter(tab => (!query || `${t(tab.label)} ${tab.words}`.toLowerCase().includes(query)))
             return tabs.length > 0 && <div className="settings-nav-group" key={group.label}><span className="settings-nav-label">{t(group.label)}</span>
-              {tabs.map(tab => <button key={tab.id} className={settingsTab === tab.id ? 'active' : ''} aria-current={settingsTab === tab.id ? 'page' : undefined} onClick={() => setSettingsTab(tab.id)}><tab.icon size={18} strokeWidth={1.75} aria-hidden />{t(tab.label)}</button>)}</div>
+              {tabs.map(tab => <button key={tab.id} className={settingsTab === tab.id ? 'active' : ''} aria-current={settingsTab === tab.id ? 'page' : undefined} onClick={() => setSettingsTab(tab.id)}><tab.icon size={18} weight={settingsTab === tab.id ? 'fill' : 'regular'} aria-hidden />{t(tab.label)}</button>)}</div>
           })}</div>
         </nav>
         <div className="settings-panel">
           <button type="button" className="icon-button settings-close" onClick={() => setSettingsOpen(false)} aria-label={t('Close settings')} title={t('Close (Esc)')}><X size={18} /></button>
           {/* The settings backdrop covers the main banner, so errors from settings show here. */}
-          {error && errorBanner}
           {settingsTab === 'general' && <>
             <section className="settings-section"><h2>{t('You')}</h2>
-              <div className="settings-row"><div><strong>{t('Language')}</strong><p>{t("Neru's interface. Arabic and Darija read right to left. Neru reloads to switch.")}</p></div><select className="settings-select" value={languageSetting()} aria-label={t('Language')} onChange={event => setLanguage(event.target.value as LanguageSetting)}>{languages.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div>
+              <div className="settings-row"><div><strong>{t('Language')}</strong><p>{t("Neru's interface. Neru reloads to switch.")}</p></div><Select className="settings-select" value={languageSetting()} aria-label={t('Language')} onChange={event => setLanguage(event.target.value as LanguageSetting)}>{languages.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></div>
               <div className="settings-row"><div><strong>{t('Name')}</strong><p>{t('Every model you work with uses it now and then.')}</p></div><input className="settings-select" value={profile.name} maxLength={80} placeholder={t('First name')} autoComplete="given-name" aria-label={t('Your name')} onChange={event => setProfile({ ...profile, name: event.target.value })} onBlur={() => void api.setProfile(profile.name, profile.gender).catch(cause => setError(errorText(cause)))} /></div>
-              <div className="settings-row"><div><strong>{t('Gender')}</strong><p>{t('For pronouns, and masculine or feminine forms in languages that have them.')}</p></div><select className="settings-select" value={profile.gender} aria-label={t('Gender')} onChange={event => { const next = { ...profile, gender: event.target.value as Profile['gender'] }; setProfile(next); void api.setProfile(next.name, next.gender).catch(cause => setError(errorText(cause))) }}><option value="">{t('Not set')}</option><option value="male">{t('Male')}</option><option value="female">{t('Female')}</option></select></div>
+              <div className="settings-row"><div><strong>{t('Gender')}</strong><p>{t('For pronouns, and masculine or feminine forms in languages that have them.')}</p></div><Select className="settings-select" value={profile.gender} aria-label={t('Gender')} onChange={event => { const next = { ...profile, gender: event.target.value as Profile['gender'] }; setProfile(next); void api.setProfile(next.name, next.gender).catch(cause => setError(errorText(cause))) }}><option value="">{t('Not set')}</option><option value="male">{t('Male')}</option><option value="female">{t('Female')}</option></Select></div>
             </section>
             <section className="settings-section"><h2>{t('Personalization')}</h2>
               <div className="settings-row"><div><strong>{t('Use About you')}</strong><p>{t('Every model, in Chat and Code, tailors its answers to what you write here. Turn off to keep the text but stop sending it.')}</p></div><button type="button" className={cn('switch', profile.personalize && 'on')} role="switch" aria-checked={profile.personalize} aria-label={t('Use About you')} onClick={() => { const next = { ...profile, personalize: !profile.personalize }; setProfile(next); savePersonalization(next) }} /></div>
@@ -1824,12 +1887,12 @@ function App() {
           </>}
           {settingsTab === 'appearance' && <section className="settings-section"><h2>{t('Appearance')}</h2>
             <div className="settings-row"><div><strong>{t('Color mode')}</strong><p>{t('Quiet surfaces for long sessions.')}</p></div><div className="theme-toggle"><button className={!light ? 'active' : ''} onClick={() => setLight(false)}><Moon size={15} /> {t('Dark')}</button><button className={light ? 'active' : ''} onClick={() => setLight(true)}><Sun size={15} /> {t('Light')}</button></div></div>
-            <div className="settings-row"><div><strong>{t('Show sidebar on hover')}</strong><p>{t('When the sidebar is collapsed, move the pointer to the left edge to peek at it.')}</p></div><button type="button" className={cn('switch', sidebarHover && 'on')} role="switch" aria-checked={sidebarHover} aria-label={t('Show sidebar on hover')} onClick={() => { const on = !sidebarHover; setSidebarHover(on); writeStored('neru.sidebar.hover', on); if (!on) setPeek(false) }} /></div>
+            <div className="settings-row"><div><strong>{t('Show sidebar on hover')}</strong><p>{t('When the sidebar is collapsed, nothing stays on the side: move the pointer to the left edge to show it. Off keeps a slim column of icons instead.')}</p></div><button type="button" className={cn('switch', sidebarHover && 'on')} role="switch" aria-checked={sidebarHover} aria-label={t('Show sidebar on hover')} onClick={() => { const on = !sidebarHover; setSidebarHover(on); writeStored('neru.sidebar.hover', on); if (!on) setPeek(false) }} /></div>
           </section>}
           {settingsTab === 'voice' && <section className="settings-section provider-settings"><h2>{t('Voice')}</h2><p className="settings-lede">{t('Dictate with the microphone in the message box. On-device models never send audio anywhere.')}</p>
             <div className="settings-row"><div><strong>{t('Speech engine')}</strong><p>{voiceEngine === 'local' ? t('Runs a speech model on this machine. Private and works offline once downloaded.') : voiceEngine === 'system' ? t('Uses the window’s built-in recognition and types as you speak.') : t('Sends the recording to a Whisper-compatible API you choose.')}</p></div><div className="theme-toggle"><button className={voiceEngine === 'local' ? 'active' : ''} onClick={() => chooseVoiceEngine('local')}>{t('On this device')}</button><button className={voiceEngine === 'transcription' ? 'active' : ''} onClick={() => chooseVoiceEngine('transcription')}><Mic size={15} /> {t('Endpoint')}</button><button disabled={!systemSpeechAvailable} title={systemSpeechAvailable ? undefined : t('This window has no built-in speech recognition')} className={voiceEngine === 'system' ? 'active' : ''} onClick={() => chooseVoiceEngine('system')}>{t('System')}</button></div></div>
             {voiceEngine === 'local' && <>
-              <div className="settings-row"><div><strong>{t('Dictation language')}</strong><p>{t('Choosing your language improves accuracy. English-only models ignore this.')}</p></div><select className="settings-select" value={dictationLanguage} onChange={event => { setDictationLanguage(event.target.value); writeStored('neru.voice.language', event.target.value) }}>{dictationLanguages.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div>
+              <div className="settings-row"><div><strong>{t('Dictation language')}</strong><p>{t('Choosing your language improves accuracy. English-only models ignore this.')}</p></div><Select className="settings-select" value={dictationLanguage} onChange={event => { setDictationLanguage(event.target.value); writeStored('neru.voice.language', event.target.value) }}>{dictationLanguages.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></div>
               <div className="settings-subhead"><strong>{t('Speech models')}</strong><span>{speech.active ? t('Using {name}', { name: findSpeechModel(speech.active)?.name ?? '' }) : t('Download one to start dictating')}</span></div>
               <SpeechModelCatalog />
               <p className="settings-note"><ShieldCheck size={14} /> {t('Models download once from Hugging Face and are stored in Neru’s data folder on D:.')}</p>
@@ -1846,28 +1909,20 @@ function App() {
           {settingsTab === 'shortcuts' && <ShortcutsSettings />}
           {settingsTab === 'styles' && <OutputStyles hasProject={Boolean(project)} onError={setError} />}
           {settingsTab === 'privacy' && <PrivacySettings projectOpen={Boolean(project)} onError={setError} onNotice={setNotice} />}
+          {settingsTab === 'memory' && <MemorySettings onError={setError} onNotice={setNotice} />}
           {settingsTab === 'skills' && <Skills onError={setError} onNotice={setNotice} />}
           {settingsTab === 'cli' && <CliSettings onError={setError} onNotice={setNotice} />}
           {settingsTab === 'agents' && <AgentsSettings onError={setError} onNotice={setNotice} />}
           {settingsTab === 'imports' && <ImportsSettings project={project} onError={setError} onNotice={setNotice} onOpenTeam={() => setSection('team')} />}
-          {settingsTab === 'model' && <section className="settings-section provider-settings"><h2>{t('Model provider')}</h2><p className="settings-lede">{t('Free keys for everyday frontend and backend work, a model on this PC, or your own API key.')}</p>
-            <label>{t('Provider')}<select value={providerId} onChange={event => selectProvider(event.target.value)}>{providerPresets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            {(() => { const preset = providerPresets.find(item => item.id === providerId); return <div className="provider-description"><p>{preset?.description ? t(preset.description) : null}</p>{preset && <p className="provider-meta"><PrivacyTag privacy={preset.privacy} /><span className="provider-privacy-detail">{t(privacyLabels[preset.privacy].detail)}</span></p>}{(preset?.freeLimit || preset?.keyUrl) && <p className="provider-meta">{preset.freeLimit && <span className="provider-free">{t('Free: {limit}', { limit: t(preset.freeLimit) })}</span>}{preset.keyUrl && <a className="provider-key-link" href={preset.keyUrl} target="_blank" rel="noreferrer"><KeyRound size={13} /> {t('Get a {name} API key', { name: preset.name })} <ExternalLink size={12} /></a>}</p>}</div> })()}
-            <div className="settings-grid"><label>{t('API format')}<select value={providerFormat} onChange={event => setProviderFormat(event.target.value as ApiFormat)}><option value="openai-chat">Chat Completions</option><option value="openai-responses">Responses</option><option value="anthropic">Anthropic Messages</option></select></label><label>{t('Base URL')}<input value={providerUrl} onChange={event => setProviderUrl(event.target.value)} placeholder="https://provider.example/v1" autoComplete="url" /></label></div>
-            <label>{t('API key')}<input type="password" autoComplete="off" value={providerKey} onChange={event => setProviderKey(event.target.value)} placeholder={(provider.hasKey && provider.providerId === providerId) || savedKeys.includes(providerId) ? t('Key saved on this PC — models load from it. Paste a new one to replace it.') : t('Paste your provider key')} /></label>
-            <div className="model-field"><span className="model-field-label">{t('Model')}</span>
-              <SettingsModelPicker providerId={providerId} baseUrl={providerUrl} apiKey={providerKey} models={models} onModels={update => setModels(update)} value={providerModel} onSelect={chooseModel} loading={modelsLoading}
-                formatFor={model => formatForModel(providerId, model, providerFormat, providerUrl)} emptyText={t('Models from this key appear here')} /></div>
-            <p className="settings-note">{modelsLoading ? t('Looking up the models this key can use…') : modelsError ? modelsError : models.length ? (models.length === 1 ? t('1 chat model from this key. Format set to {format}.', { format: formatLabel(providerFormat) }) : t('{n} chat models from this key. Format set to {format}.', { n: models.length, format: formatLabel(providerFormat) })) : t('Paste a key and Neru lists the models it can use.')}</p>
-            <div className="settings-actions"><button className="button primary" onClick={() => void saveProvider()} disabled={!providerModel.trim() || !models.some(info => info.id === providerModel)}>{t('Use provider')}</button></div>
-            <p className="settings-note"><ShieldCheck size={14} /> {t('Keys are encrypted with your Windows account, saved in Neru’s data folder on D:, and sent only to the selected API endpoint.')}</p>
-            <div className="settings-row"><div><strong>{t('Architect and editor')}</strong><p>{t('The chosen model plans each change and a faster model on its own quota writes it. After two failed edits the chosen model edits again. Auto turns it on for free plans.')}</p></div><select value={engine?.architectEditor ?? 'auto'} disabled={!engine} onChange={event => { const next = { architectEditor: event.target.value as EngineSettings['architectEditor'] }; void api.setEngineSettings(next).then(setEngine).catch(cause => setError(errorText(cause))) }}><option value="auto">{t('Auto')}</option><option value="on">{t('On')}</option><option value="off">{t('Off')}</option></select></div>
-            <div className="settings-row"><div><strong>{t('Saved keys')}</strong><p>{t('Remove every provider and voice key from this PC. You will need to paste them again.')}</p></div><button className="button subtle" onClick={() => { if (window.confirm(t('Forget all saved API keys?'))) void api.forgetKeys().then(async () => { setSavedKeys([]); setProvider(await api.providerStatus()); setVoice(await api.voiceStatus()); setNotice(t('Saved keys removed.')) }).catch(cause => setError(errorText(cause))) }}><KeyRound size={15} /> {t('Forget saved keys')}</button></div>
-          </section>}
+          {settingsTab === 'model' && <ProviderSettings provider={provider} savedKeys={savedKeys} providerId={providerId} onProvider={selectProvider}
+            format={providerFormat} onFormat={setProviderFormat} baseUrl={providerUrl} onBaseUrl={setProviderUrl} apiKey={providerKey} onApiKey={setProviderKey}
+            model={providerModel} onModel={chooseModel} models={models} onModels={update => setModels(update)} loading={modelsLoading} error={modelsError}
+            engine={engine} onEngine={architectEditor => void api.setEngineSettings({ architectEditor }).then(setEngine).catch(cause => setError(errorText(cause)))}
+            onSave={() => void saveProvider()} onForgetKeys={() => { if (window.confirm(t('Forget all saved API keys?'))) void api.forgetKeys().then(async () => { setSavedKeys([]); setProvider(await api.providerStatus()); setVoice(await api.voiceStatus()); setNotice(t('Saved keys removed.')) }).catch(cause => setError(errorText(cause))) }} />}
         </div>
       </div>
     </div>}
-  </div>{dockElement}</div></div>{cloneOpen && <div className="modal-backdrop" onMouseDown={() => !busy && setCloneOpen(false)}><form className="clone-dialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); void cloneProject() }}><h2>{t('Clone a repository.')}</h2><p>{t('Paste a Git URL and choose where the new folder goes.')}</p><label>{t('Repository URL')}<input autoFocus value={cloneUrl} onChange={event => changeCloneUrl(event.target.value)} placeholder="https://github.com/owner/repository.git" /></label><label>{t('Destination folder')}<span className="path-field"><input value={cloneDestination} onChange={event => setCloneDestination(event.target.value)} placeholder="D:\\Neru\\projects\\repository" /><button type="button" className="icon-button" onClick={() => void chooseCloneFolder()} disabled={busy} aria-label={t('Choose destination folder')} title={t('Choose folder')}><FolderOpen size={16} /></button></span></label>{error && <p className="clone-error">{error}</p>}<div className="clone-actions"><button type="button" className="button subtle" onClick={() => setCloneOpen(false)} disabled={busy}>{t('Cancel')}</button><button type="submit" className="button primary" disabled={busy || !cloneUrl.trim() || !cloneDestination.trim()}>{busy ? t('Cloning…') : t('Clone project')}</button></div></form></div>}{palette && <div className="modal-backdrop" onMouseDown={() => setPalette(false)}><div className="palette" onMouseDown={event => event.stopPropagation()}><div className="palette-search"><Command size={17} /><input autoFocus value={paletteQuery} onChange={event => setPaletteQuery(event.target.value)} placeholder={t('Search commands…')} /><span>Esc</span></div><div className="palette-results">{paletteActions.filter(item => item.label.toLowerCase().includes(paletteQuery.toLowerCase())).map(item => <button key={item.label} onClick={() => { void item.action(); setPalette(false); setPaletteQuery('') }}><ChevronRight size={14} />{item.label}<ArrowRight size={13} /></button>)}</div></div></div>}{updateLayer}</div>
+  </div>{dockElement}</div></div>{cloneOpen && <div className="modal-backdrop" onMouseDown={() => !busy && setCloneOpen(false)}><form className="clone-dialog" onMouseDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); void cloneProject() }}><h2>{t('Clone a repository.')}</h2><p>{t('Paste a Git URL and choose where the new folder goes.')}</p><label>{t('Repository URL')}<input autoFocus value={cloneUrl} onChange={event => changeCloneUrl(event.target.value)} placeholder="https://github.com/owner/repository.git" /></label><label>{t('Destination folder')}<span className="path-field"><input value={cloneDestination} onChange={event => setCloneDestination(event.target.value)} placeholder="D:\\Neru\\projects\\repository" /><button type="button" className="icon-button" onClick={() => void chooseCloneFolder()} disabled={busy} aria-label={t('Choose destination folder')} title={t('Choose folder')}><FolderOpen size={16} /></button></span></label>{cloneError && <p className="clone-error" role="alert">{cloneError}</p>}<div className="clone-actions"><button type="button" className="button subtle" onClick={() => setCloneOpen(false)} disabled={busy}>{t('Cancel')}</button><button type="submit" className="button primary" disabled={busy || !cloneUrl.trim() || !cloneDestination.trim()}>{busy ? t('Cloning…') : t('Clone project')}</button></div></form></div>}{palette && <div className="modal-backdrop palette-backdrop" onMouseDown={() => setPalette(false)}><div className="palette" onMouseDown={event => event.stopPropagation()}><div className="palette-search"><Command size={17} /><input autoFocus value={paletteQuery} onChange={event => setPaletteQuery(event.target.value)} placeholder={t('Search commands…')} /><span>Esc</span></div><div className="palette-results">{paletteActions.filter(item => item.label.toLowerCase().includes(paletteQuery.toLowerCase())).map(item => <button key={item.label} onClick={() => { void item.action(); setPalette(false); setPaletteQuery('') }}><ChevronRight size={14} />{item.label}<ArrowRight size={13} /></button>)}</div></div></div>}{updateLayer}</div>
 }
 
 export default App

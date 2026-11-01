@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { LISTING_IS_AUTHORITATIVE } from './ModelPicker'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { ArrowLeft, ArrowRight, ArrowUp, AudioLines, Bell, Brain, Check, ChevronDown, CircleAlert, FileText, Folder, FolderOpen, GitFork, GitPullRequest, Globe, History, KeyRound, Layers, ListChecks, LoaderCircle, Moon, MonitorPlay, Network, Paperclip, Pause, PenLine, Plug, Rocket, Search, Shuffle, ShieldCheck, Slash, Sparkles, SquareTerminal, Sun, Users, Webhook, ArrowRightLeft, Download, Undo2, X, CornerDownRight, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUp, AudioLines, Bell, Brain, Check, ChevronDown, CircleAlert, FileText, Folder, FolderOpen, GitFork, GitPullRequest, Globe, History, KeyRound, Layers, ListChecks, LoaderCircle, Moon, MonitorPlay, Network, Paperclip, Pause, PenLine, Plug, Rocket, Search, Shuffle, ShieldCheck, Slash, Sparkles, SquareTerminal, Sun, Users, Webhook, ArrowRightLeft, Download, Undo2, X, CornerDownRight, type LucideIcon } from '@/components/icons'
 import { ToolApproval, ToolApprovalCode } from '@/components/agents/tool-approval'
 import { dictationLanguages } from '@/lib/speech/catalog'
 import { EASE_OUT } from '@/lib/ease'
@@ -16,6 +16,7 @@ import { WindowControls } from './TitleBar'
 import { SpeechModelCatalog, useSpeechModels } from './SpeechModels'
 import { AgentMark } from './team/TeamView'
 import './Onboarding.css'
+import { Select } from '../ui/Select'
 
 type OnboardingProps = {
   project: ProjectInfo | null
@@ -304,7 +305,7 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
           return <li key={item.id} className={state}>
             <button type="button" aria-current={state === 'current' ? 'step' : undefined} onClick={() => moveTo(index)}>
               <span className="ob-bar"><i /></span>
-              <span className="ob-step-label"><b>{state === 'done' ? <Check size={11} strokeWidth={3} /> : index + 1}</b>{item.label}</span>
+              <span className="ob-step-label"><b>{state === 'done' ? <Check size={11} /> : index + 1}</b>{item.label}</span>
             </button>
           </li>
         })}
@@ -360,7 +361,7 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
                   tabIndex={providerId === item.id || !shownPresets.some(p => p.id === providerId) ? 0 : -1}>
                   <strong>{item.name}</strong><small>{item.description}</small>
                   {item.freeLimit && <span className="ob-provider-free">Free · {item.freeLimit}</span>}
-                  {providerId === item.id && <motion.span layoutId="provider-check" className="ob-provider-check" transition={{ duration: reduce ? 0 : 0.25, ease: EASE_OUT }}><Check size={12} strokeWidth={2.5} /></motion.span>}
+                  {providerId === item.id && <motion.span layoutId="provider-check" className="ob-provider-check" transition={{ duration: reduce ? 0 : 0.25, ease: EASE_OUT }}><Check size={12} /></motion.span>}
                 </button>)}
               </div>
               <button type="button" className="ob-link" onClick={() => setAllProviders(value => !value)}>{allProviders ? 'Show only free coding providers' : `More providers (${providerPresets.length - freePresets.length}): local models, OpenAI, Anthropic, DeepSeek…`}</button>
@@ -371,7 +372,7 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
                 <AnimatePresence initial={false}>{detailsOpen && <motion.div className="ob-details" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: reduce ? 0 : 0.25, ease: EASE_OUT }}>
                   <div className="ob-field-row">
                     <label className="ob-field"><span>Model</span><input value={model} onChange={event => { const next = event.target.value; setModel(next); setApiFormat(formatForModel(providerId, next, apiFormat, baseUrl)); setSaved(false) }} placeholder="Model ID, e.g. auto" /></label>
-                    <label className="ob-field"><span>API format</span><select value={apiFormat} onChange={event => { setApiFormat(event.target.value as ApiFormat); setSaved(false) }}><option value="openai-chat">Chat Completions</option><option value="openai-responses">Responses</option><option value="anthropic">Anthropic Messages</option></select></label>
+                    <label className="ob-field"><span>API format</span><Select value={apiFormat} onChange={event => { setApiFormat(event.target.value as ApiFormat); setSaved(false) }}><option value="openai-chat">Chat Completions</option><option value="openai-responses">Responses</option><option value="anthropic">Anthropic Messages</option></Select></label>
                   </div>
                   <label className="ob-field"><span>Base URL</span><input value={baseUrl} onChange={event => { setBaseUrl(event.target.value); setSaved(false) }} autoComplete="url" /></label>
                 </motion.div>}</AnimatePresence>
@@ -398,7 +399,7 @@ export function Onboarding({ project, provider, isDesktop, light, language, onLa
                   </div>
                 </div>
               </div>
-              <label className="ob-field ob-language"><span><Globe size={13} /> Dictation language</span><select value={language} onChange={event => onLanguageChange(event.target.value)}>{dictationLanguages.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+              <label className="ob-field ob-language"><span><Globe size={13} /> Dictation language</span><Select value={language} onChange={event => onLanguageChange(event.target.value)}>{dictationLanguages.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></label>
               <SpeechModelCatalog compact />
               <p className="ob-note">{speech.active ? 'Your model is ready. Change it any time in Settings, Voice.' : 'Whisper Base is a good start for English, French, and Spanish. Small or Turbo handle Arabic best. You can also add one later.'}</p>
             </>}

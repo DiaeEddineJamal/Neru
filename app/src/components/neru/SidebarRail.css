@@ -1,0 +1,23 @@
+/* The collapsed sidebar: a slim icon rail along the left edge, as in Claude's desktop app. */
+.sidebar-rail { position: relative; z-index: var(--z-pane); display: flex; flex: 0 0 52px; flex-direction: column; align-items: center; gap: var(--space-2); width: 52px; padding: var(--space-2) 0 var(--space-3); border-right: 1px solid var(--sidebar-border); background: var(--sidebar-bg); }
+.rail-group { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); }
+.rail-bottom { margin-top: auto; }
+.rail-button { position: relative; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: var(--r-md); background: transparent; color: var(--secondary); cursor: pointer; transition: background-color var(--dur-1) ease-out, color var(--dur-1) ease-out; }
+.rail-button:hover:not(:disabled) { background: var(--sidebar-hover); color: var(--text); }
+.rail-button:active:not(:disabled) { background: var(--state-pressed); }
+.rail-button.active { background: var(--sidebar-active); color: var(--text); }
+.rail-button:disabled { opacity: .4; cursor: default; }
+.rail-button:focus-visible { outline: 2px solid var(--sage); outline-offset: 1px; }
+/* Tooltip to the right of each icon, on hover and keyboard focus. */
+.rail-button::after { content: attr(data-tip); position: absolute; z-index: var(--z-dropdown); top: 50%; left: calc(100% + 10px); padding: 5px var(--space-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--menu-bg); box-shadow: var(--shadow-popover); color: var(--text); font-size: var(--fs-xs); font-weight: 500; line-height: 1.3; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-4px, -50%); transition: opacity var(--dur-1) ease-out, transform var(--dur-2) var(--ease-out); }
+.rail-button:hover::after, .rail-button:focus-visible::after { opacity: 1; transform: translate(0, -50%); transition-delay: 250ms; }
+.rail-button:focus-visible::after { transition-delay: 0ms; }
+.rail-badge { position: absolute; top: 3px; right: 2px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: var(--r-full); background: var(--moss-action); color: #f5f4ef; font-size: 10px; font-weight: 600; line-height: 15px; text-align: center; }
+.rail-avatar { display: grid; place-items: center; width: 26px; height: 26px; border-radius: var(--r-full); background: var(--moss-action); color: #f5f4ef; font-size: var(--fs-xs); font-weight: 600; }
+:root[data-theme='light'] .rail-avatar { background: var(--moss); }
+@media (prefers-reduced-motion: reduce) { .rail-button::after { transition: none; } }
+
+/* Sidebar (expanded): starred Chat projects and the project a recent chat belongs to. */
+.starred-projects .session-select { gap: var(--space-2); }
+.starred-icon { flex: 0 0 auto; color: #d9a441; }
+.chat-project-tag { flex: 0 1 auto; max-width: 45%; margin-left: auto; padding-left: var(--space-2); color: var(--muted); font-size: var(--fs-xs); }

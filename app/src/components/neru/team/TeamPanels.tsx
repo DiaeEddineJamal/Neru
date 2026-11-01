@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { save as saveDialog } from '@tauri-apps/plugin-dialog'
-import { ArrowDown, ArrowUp, BookOpen, Bug, Check, CheckCircle2, ChevronDown, CircleAlert, CircleDashed, Code2, Database, Download, ExternalLink, FlaskConical, GitPullRequest, Globe, LoaderCircle, Palette, Pause, Play, RefreshCw, Rocket, Send, Shield, Sparkles, Square, Trash2, Wrench, X, XCircle, Zap, type LucideIcon } from 'lucide-react'
+import { ArrowDown, ArrowUp, BookOpen, Bug, Check, CheckCircle2, ChevronDown, CircleAlert, CircleDashed, Code2, Database, Download, ExternalLink, FlaskConical, GitPullRequest, Globe, LoaderCircle, Palette, Pause, Play, RefreshCw, Rocket, Send, Shield, Sparkles, Square, Trash2, Wrench, X, XCircle, Zap, type LucideIcon } from '@/components/icons'
 import { FileDiff } from '@/components/agents/file-diff'
 import { languageForPath } from '@/components/agents/agent-code'
 import { parseUnifiedDiff } from '@/lib/diff'
@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { api } from '../../../api'
 import type { AgentModel, PrStatus, TeamAgent, TeamPost, TeamQueued, TeamTask, TeamTaskFile, TeamTaskSummary, TeamTreeInfo } from '../../../types'
 import './TeamPanels.css'
+import { Select } from '../../ui/Select'
 
 const errorText = (value: unknown) => value instanceof Error ? value.message : String(value)
 const tokens = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
@@ -21,7 +22,7 @@ export const TASK_COLORS = ['sage', 'sky', 'amber', 'rose', 'violet', 'teal', 's
 export function TaskGlyph({ icon, color, size = 13 }: { icon: string; color: string; size?: number }) {
   const Icon = TASK_ICONS[icon]
   if (!Icon && !color) return null
-  return <span className={cn('task-glyph', color && `task-${color}`)} aria-hidden>{Icon ? <Icon size={size} strokeWidth={2} /> : <i />}</span>
+  return <span className={cn('task-glyph', color && `task-${color}`)} aria-hidden>{Icon ? <Icon size={size} /> : <i />}</span>
 }
 
 /** The task list's group, icon and colour. */
@@ -84,9 +85,9 @@ export function FilterMenu({ tasks, filter, names, onChange, onClose }: { tasks:
     {group('Repository', 'projects', projects)}
     {group('Agent', 'agents', agents, names)}
     {group('Label', 'labels', labels)}
-    <label className="team-field">Sort by<select value={filter.sort} onChange={event => onChange({ ...filter, sort: event.target.value as TaskFilter['sort'] })}>
+    <label className="team-field">Sort by<Select value={filter.sort} onChange={event => onChange({ ...filter, sort: event.target.value as TaskFilter['sort'] })}>
       <option value="updated">Last activity</option><option value="created">Newest first</option><option value="title">Title</option><option value="activity">Most messages</option>
-    </select></label>
+    </Select></label>
     <div className="team-filter-foot"><button type="button" className="button subtle small" onClick={() => onChange(NO_FILTER)} disabled={!filterActive(filter) && filter.sort === 'updated'}>Clear</button><button type="button" className="button primary small" onClick={onClose}>Done</button></div>
   </div>
 }
@@ -186,7 +187,7 @@ export function ChangesPanel({ task, onError, onSend }: { task: TeamTask; onErro
     {files?.length === 0 && <p className="empty-small">Nothing changed yet. Turns that edit files show up here as one combined diff.</p>}
     {files && files.length > 0 && task.members.length > 0 && <div className="team-review-all">
       <span>Review everything with</span>
-      <select value={reviewer} onChange={event => setReviewer(event.target.value)} aria-label="Reviewer">{task.members.map(member => <option key={member.handle} value={member.handle}>@{member.handle}</option>)}</select>
+      <Select value={reviewer} onChange={event => setReviewer(event.target.value)} aria-label="Reviewer">{task.members.map(member => <option key={member.handle} value={member.handle}>@{member.handle}</option>)}</Select>
       <button type="button" className="button subtle small" onClick={() => onSend(`Review all of this task's changes (${files.length} files, +${added} −${removed}${places.length > 1 ? ` across ${places.join(', ')}` : ''}): correctness, risks, missing tests. Write the findings to artifacts/reviews/ (front matter kind: review), most severe first.`, [reviewer])}>Ask</button>
     </div>}
     {places.map(place => <section key={place} className="team-changes-place">
@@ -215,7 +216,7 @@ export function PrPanel({ task, onError, onSend }: { task: TeamTask; onError: (m
     } catch (cause) { onError(errorText(cause)) } finally { setFixing(false) }
   }
   return <div className="team-panel-body">
-    <div className="team-panel-tools"><select value={source} onChange={event => setSource(event.target.value)} aria-label="Branch">{sources.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+    <div className="team-panel-tools"><Select value={source} onChange={event => setSource(event.target.value)} aria-label="Branch">{sources.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</Select>
       <button className="icon-button small" onClick={load} aria-label="Refresh" title="Refresh"><RefreshCw size={13} /></button></div>
     {pr === undefined && <p className="empty-small"><LoaderCircle size={13} className="animate-spin" /> Looking for a pull request…</p>}
     {error && <p className={/no git remotes|not a git repository/i.test(error) ? 'empty-small' : 'team-member-error'}>{/no git remotes/i.test(error) ? 'This project has no Git remote yet, so there is no pull request to follow. Add a GitHub remote and push a branch first.' : /not a git repository/i.test(error) ? 'This folder is not a Git repository.' : error}</p>}
@@ -227,7 +228,7 @@ export function PrPanel({ task, onError, onSend }: { task: TeamTask; onError: (m
         {check.url ? <a href={check.url} target="_blank" rel="noreferrer" className="truncate">{check.name}</a> : <span className="truncate">{check.name}</span>}
       </li>)}</ul>
       {failing.length > 0 && <div className="team-review-all"><span>Fix in chat with</span>
-        <select value={fixer} onChange={event => setFixer(event.target.value)} aria-label="Who fixes it">{task.members.map(member => <option key={member.handle} value={member.handle}>@{member.handle}</option>)}</select>
+        <Select value={fixer} onChange={event => setFixer(event.target.value)} aria-label="Who fixes it">{task.members.map(member => <option key={member.handle} value={member.handle}>@{member.handle}</option>)}</Select>
         <button type="button" className="button primary small" onClick={() => void fix()} disabled={fixing}>{fixing ? 'Reading logs…' : 'Fix'}</button></div>}
     </>}
   </div>
@@ -267,8 +268,8 @@ export function ActivityPanel({ task, live, since, routing, onStop, onChange, on
     <section className="team-activity team-exec">
       <h3>Smart execution</h3>
       <p className="empty-small">An executor works through the open tickets in artifacts/tickets/ in order; a reviewer checks each one and can send it back.</p>
-      <label className="team-field">Executor<select value={executor} onChange={event => setExecutor(event.target.value)} disabled={plan.running}>{task.members.map(member => <option key={member.handle} value={member.handle}>@{member.handle} · {names(member.kind)}</option>)}</select></label>
-      <label className="team-field">Reviewer<select value={reviewer} onChange={event => setReviewer(event.target.value)} disabled={plan.running}><option value="">No review</option>{task.members.filter(member => member.handle !== executor).map(member => <option key={member.handle} value={member.handle}>@{member.handle} · {names(member.kind)}</option>)}</select></label>
+      <label className="team-field">Executor<Select value={executor} onChange={event => setExecutor(event.target.value)} disabled={plan.running}>{task.members.map(member => <option key={member.handle} value={member.handle}>@{member.handle} · {names(member.kind)}</option>)}</Select></label>
+      <label className="team-field">Reviewer<Select value={reviewer} onChange={event => setReviewer(event.target.value)} disabled={plan.running}><option value="">No review</option>{task.members.filter(member => member.handle !== executor).map(member => <option key={member.handle} value={member.handle}>@{member.handle} · {names(member.kind)}</option>)}</Select></label>
       <label className="team-field">Rounds per ticket<input type="number" min={0} max={5} value={rounds} disabled={plan.running} onChange={event => setRounds(Math.max(0, Math.min(5, Number(event.target.value) || 0)))} /></label>
       {plan.running
         ? <button type="button" className="button subtle" onClick={() => void api.stopTeamExecution(task.id).then(() => onChange({ ...task, execution: { ...plan, running: false } })).catch(cause => onError(errorText(cause)))}><Square size={13} />Stop after this turn</button>
@@ -337,7 +338,7 @@ export function Checklist({ agents, tasks, toured, onAction, onDismiss }: { agen
   return <section className="team-checklist" aria-label="Getting started with Team">
     <header><strong>Get started</strong><span>{done} of {items.length}</span><div className="team-checklist-bar" aria-hidden><i style={{ width: `${(done / items.length) * 100}%` }} /></div><button type="button" className="icon-button small" onClick={onDismiss} aria-label="Hide the checklist" title="Hide"><X size={13} /></button></header>
     <ol>{items.map(item => <li key={item.id} className={cn(item.done && 'done')}>
-      <span className="team-checklist-mark" aria-hidden>{item.done ? <Check size={12} strokeWidth={3} /> : null}</span>
+      <span className="team-checklist-mark" aria-hidden>{item.done ? <Check size={12} /> : null}</span>
       <div><strong>{item.title}</strong><small>{item.text}</small></div>
       {!item.done && <button type="button" className="button subtle small" onClick={() => onAction(item.id)}>{item.action}</button>}
     </li>)}</ol>

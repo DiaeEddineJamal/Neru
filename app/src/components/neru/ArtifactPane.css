@@ -26,7 +26,7 @@
 .artifact-menu small { color: var(--muted); font-size: 11px; }
 .artifact-menu em { color: var(--muted); font-size: 11.5px; font-style: normal; }
 
-.artifact-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 28px 24px 48px; background: color-mix(in srgb, var(--bg) 82%, #000); }
+.artifact-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 28px 24px 48px; background: color-mix(in srgb, var(--bg) 82%, #000); }
 :root[data-theme='light'] .artifact-scroll { background: #ebeae4; }
 .artifact-loading { display: grid; height: 100%; place-items: center; color: var(--muted); }
 
@@ -68,3 +68,76 @@
 
 @media (max-width: 1100px) { .paper-page { padding: 40px 36px; } }
 @media (prefers-reduced-motion: reduce) { .artifact-pane { animation: none; } }
+
+/* Live writing: the section being drafted, planned sections still to come, and the quill. */
+.paper-section.planned h2 { color: #b7b6ae; font-weight: 600; }
+.is-writing-part > :last-child { margin-bottom: 10px; }
+.paper-quill { display: inline-block; margin-left: 4px; color: #4d6b55; vertical-align: -2px; }
+.paper-status { display: flex; align-items: center; gap: 8px; max-width: 680px; margin: 0 auto 16px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); color: var(--secondary); font-size: var(--fs-sm); }
+.paper-status .quill { color: var(--sage); }
+.paper-status.paused { color: var(--text); }
+.paper-status.paused svg { flex: 0 0 auto; color: var(--sage); }
+
+.quill { display: inline-grid; flex: 0 0 auto; place-items: center; }
+.quill svg { overflow: visible; }
+.quill-feather { transform-box: view-box; transform-origin: 6px 18px; animation: quill-write 1.1s cubic-bezier(.45, 0, .55, 1) infinite; }
+.quill-ink { stroke-dasharray: 12; stroke-dashoffset: 12; animation: quill-ink 1.1s linear infinite; opacity: .7; }
+@keyframes quill-write { 0%, 100% { transform: translate(0, 0) rotate(0deg); } 25% { transform: translate(1px, -.6px) rotate(-6deg); } 50% { transform: translate(2px, 0) rotate(2deg); } 75% { transform: translate(1px, -.4px) rotate(-4deg); } }
+@keyframes quill-ink { 0% { stroke-dashoffset: 12; opacity: 0; } 15% { opacity: .7; } 70% { stroke-dashoffset: 0; opacity: .7; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .quill-feather, .quill-ink { animation: none; } .quill-ink { stroke-dashoffset: 0; } }
+
+/* The page never scrolls sideways: long words, links and stray code wrap inside it. */
+.paper-page { overflow: hidden; overflow-wrap: anywhere; }
+.paper-section pre, .paper-section code { white-space: pre-wrap; word-break: break-word; }
+.paper-section pre { max-width: 100%; margin: 10px 0; padding: 10px 12px; border-radius: 6px; background: #f3f2ec; font-size: 13px; }
+
+/* Live writing, as Claude writes an artifact: the block being written carries a soft light that sweeps
+   across its ink (left to right, or right to left in RTL papers); finished text is plain. */
+.is-writing-part > :last-child {
+  text-align: start;
+  background: linear-gradient(90deg, #1c1c1a 0%, #1c1c1a 38%, #9d9c94 50%, #1c1c1a 62%, #1c1c1a 100%);
+  background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: ink-shimmer 1.8s linear infinite;
+}
+.paper-page[dir='rtl'] .is-writing-part > :last-child { animation-direction: reverse; }
+@keyframes ink-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+/* Text appears softly as it streams in rather than popping. */
+.paper-section.is-writing { animation: none; }
+.is-writing-part > * { animation: ink-in var(--dur-3) var(--ease-out); }
+@keyframes ink-in { from { opacity: .35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .is-writing-part > :last-child { animation: none; color: #1c1c1a; background: none; } .is-writing-part > * { animation: none; } }
+
+/* The status line scrolls away with the page; it only says what is being written. The quill sits where
+   the writing has reached, and the page follows it down until the reader scrolls elsewhere. */
+.paper-page { position: relative; }
+.paper-pen { position: absolute; z-index: 1; color: #4d6b55; pointer-events: none; transition: left 90ms linear, top 120ms ease-out; }
+.paper-page[dir='rtl'] .paper-pen .quill svg { transform: scaleX(-1); }
+@media (prefers-reduced-motion: reduce) { .paper-pen { transition: none; } }
+
+/* Selected text: ask Neru about it in the chat. */
+.paper-ask { position: absolute; z-index: 3; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface-2); color: var(--text); font-size: var(--fs-xs); font-weight: 500; box-shadow: 0 8px 24px rgb(0 0 0 / .3); cursor: pointer; animation: artifact-in .16s ease-out; }
+.paper-ask:hover { background: var(--surface-3); }
+
+/* Plain documents (plans, reports, guides): set like Claude's documents, in a clean sans with left-aligned text. */
+.paper-page.is-document { font: 15px/1.65 Inter, 'Segoe UI', system-ui, sans-serif; }
+.paper-page.is-document .paper-title { margin-bottom: 22px; font-size: 26px; text-align: start; }
+.paper-page.is-document .paper-section p { text-align: start; text-indent: 0; hyphens: manual; }
+.paper-page.is-document .paper-section h2 { margin: 26px 0 8px; font-size: 19px; font-weight: 650; }
+.paper-page.is-document .paper-section h3 { margin: 20px 0 6px; font-size: 16px; font-style: normal; font-weight: 650; }
+.paper-page.is-document .paper-section h4 { font-style: normal; font-weight: 600; }
+.paper-page.is-document .paper-section li > input[type='checkbox'] { margin: 0 6px 0 -2px; vertical-align: -1px; accent-color: #4d6b55; }
+.paper-page.is-document .paper-section ul:has(> li > input[type='checkbox']) { padding-left: 1.1em; list-style: none; }
+.paper-title.is-writing { background: linear-gradient(90deg, #1c1c1a 0%, #1c1c1a 38%, #9d9c94 50%, #1c1c1a 62%, #1c1c1a 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: ink-shimmer 1.8s linear infinite; }
+
+/* Editing paragraph by paragraph, in the page's own type: a paragraph shows a faint wash on hover and
+   turns into a text box of the same size and font when clicked; it saves when focus leaves it. */
+.paper-block.is-editable { margin: 0 -6px; padding: 0 6px; border-radius: 4px; cursor: text; transition: background-color 120ms ease-out, box-shadow 120ms ease-out; }
+.paper-block.is-editable:hover { background: #f5f3ec; }
+.paper-title .paper-block.is-editable { display: inline-block; margin: 0; padding: 0 4px; }
+.paper-block > :last-child { margin-bottom: 10px; }
+.paper-abstract .paper-block > p { margin: 0 0 8px; }
+.paper-block-input { display: block; box-sizing: content-box; width: 100%; margin: 0 -6px 10px; padding: 2px 6px; overflow: hidden; border: 0; border-radius: 4px; outline: 0; background: #fbfaf5; color: #1c1c1a; box-shadow: inset 0 0 0 1px #c3cfc5, 0 0 0 3px rgb(77 107 85 / .12); font: inherit; line-height: inherit; text-align: start; resize: none; }
+.paper-block-input.is-single { margin: 0; text-align: center; }
+.paper-page.is-document .paper-block-input.is-single { text-align: start; }
+.paper-section > h2 + .paper-block p, .paper-block:has(> h3) + .paper-block p, .paper-block:has(> h2) + .paper-block p { text-indent: 0; }
+.artifact-saved { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-right: 4px; color: var(--sage); font-size: var(--fs-xs); animation: artifact-in .16s ease-out; }

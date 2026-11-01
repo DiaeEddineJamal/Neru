@@ -1,7 +1,7 @@
 "use client";
 // beui.dev/components/agents/prompt-input
 
-import { ArrowUp, Plus, Square } from "lucide-react";
+import { ArrowUp, Plus, Square } from "@/components/icons";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   type FormEvent,
@@ -398,7 +398,7 @@ export function PromptInput({
               className="grid place-items-center"
             >
               {loading && !steering ? (
-                <Square className="size-3 fill-current" />
+                <Square className="size-3" weight="fill" />
               ) : (
                 <ArrowUp className="size-4" />
               )}

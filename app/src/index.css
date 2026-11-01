@@ -50,15 +50,65 @@
   --fs-2xl: 24px;
   --fs-3xl: 28px;
   --fs-display: 40px;
+  /* Line heights paired with the type scale: single-line labels and multi-line copy. */
+  --lh-xs: 16px;
+  --lh-sm: 18px;
+  --lh-base: 20px;
+  --lh-md: 24px;
+  /* Spacing on a 4px grid (Fluent 2 ramp): 4–6 inside a control, 8 between related controls,
+     12–16 between groups, 24–32 between sections. */
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  /* Corner radii by role: chips, small controls, controls, floating surfaces, dialogs and the composer. */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-full: 999px;
+  /* Control heights. */
+  --h-sm: 28px;
+  --h-md: 32px;
+  --h-lg: 36px;
+  /* Motion: short, ease-out, transform and opacity only. */
+  --dur-1: 100ms;
+  --dur-2: 150ms;
+  --dur-3: 220ms;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  /* Stacking: panes, menus, overlays, modals, toasts, tours, context menus. */
+  --z-pane: 20;
+  --z-dropdown: 100;
+  --z-overlay: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+  --z-tour: 500;
+  --z-context: 600;
+  /* Elevation: in dark mode a raised surface is lighter, with a hairline border; shadows only support it. */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / .2);
+  --shadow-popover: 0 8px 24px -6px rgb(0 0 0 / .45), 0 1px 3px rgb(0 0 0 / .22);
+  --shadow-dialog: 0 24px 64px -12px rgb(0 0 0 / .55);
+  /* One recipe for hover and press on every control. */
+  --state-hover: color-mix(in oklch, var(--text) 6%, transparent);
+  --state-pressed: color-mix(in oklch, var(--text) 10%, transparent);
   --bg: #1a1a1a;
   --surface: #1a1a1a;
   --prompt: #262626;
   --surface-2: #232323;
-  --surface-3: #2c2c2c;
+  --surface-3: #282828;
   --text: #f2f0e9;
   --secondary: #b4b4b4;
   --muted: #8f8f8f;
   --border: #363636;
+  /* Inputs and toggles: a border strong enough to find the field. */
+  --border-strong: #4a4a4a;
   --moss: #64806a;
   --moss-action: #486b51;
   --moss-action-hover: #54745b;
@@ -102,8 +152,9 @@
   --surface-3: #eeeee9;
   --text: #191a18;
   --secondary: #676a64;
-  --muted: #5e665d;
+  --muted: #7a7d76;
   --border: #dddcd5;
+  --border-strong: #c9c8bf;
   --moss: #54745b;
   --moss-action: #54745b;
   --moss-action-hover: #476a4f;
@@ -131,6 +182,9 @@
   --sidebar-border: oklch(0.86 0.04 128);
   --plus-fill: oklch(0.99 0.006 110);
   --plus-ring: rgb(0 0 0 / 0.08);
+  --shadow-sm: 0 1px 2px rgb(40 50 35 / .1);
+  --shadow-popover: 0 10px 28px -8px rgb(40 50 35 / .2), 0 1px 3px rgb(40 50 35 / .1);
+  --shadow-dialog: 0 24px 64px -12px rgb(40 50 35 / .28);
 }
 
 .mascot { display: inline-block; position: relative; flex: 0 0 auto; vertical-align: middle; }
@@ -140,7 +194,8 @@
 .mascot-eye { fill: var(--mascot-eye); transform-box: fill-box; transform-origin: center; animation: mascot-blink 6.8s infinite; }
 .mascot-sparkle { fill: var(--mascot-eye); opacity: 0; transform-box: fill-box; transform-origin: center; }
 .mascot-control { display: inline-grid; place-items: center; flex: 0 0 auto; padding: 0; border: 0; background: transparent; }
-.mascot-control:focus, .mascot-control:focus-visible { outline: none; }
+.mascot-control:focus { outline: none; }
+.mascot-control:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; border-radius: var(--r-md); }
 .mascot-control .mascot { pointer-events: none; }
 .mascot.is-look-left .mascot-face { animation: mascot-look-left 1.3s ease-in-out both; }
 .mascot.is-look-right .mascot-face { animation: mascot-look-right 1.3s ease-in-out both; }
@@ -163,7 +218,7 @@ body { overflow: hidden; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .5; }
-button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+:is(button, a, input, textarea, select, summary, [role='option'], [role='menuitem'], [role='tab'], [role='radio'], [tabindex]):focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
 ::selection { background: var(--moss-deep); }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border: 2px solid var(--surface); border-radius: 10px; }
@@ -176,3 +231,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .neru-prose a { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--link) 45%, transparent); text-underline-offset: 3px; transition: text-decoration-color .15s ease-out; }
 .neru-prose a:hover { text-decoration-color: var(--link); }
 .mention { padding: .05em .38em; border-radius: 6px; background: var(--mention-bg); color: var(--mention); font-weight: 500; white-space: nowrap; }
+
+/* One reduced-motion rule for the whole window: animations end at once, transitions are instant. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
+}

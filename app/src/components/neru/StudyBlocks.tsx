@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Download, RotateCcw, X } from 'lucide-react'
+import { Check, Download, RotateCcw, X } from '@/components/icons'
 import { CodeBlock } from '@/components/agents/code-block'
 import { cn } from '@/lib/utils'
 import { saveTextFile } from '@/lib/citations'

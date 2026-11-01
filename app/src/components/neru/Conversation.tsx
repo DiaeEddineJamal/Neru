@@ -1,5 +1,5 @@
 import { createContext, Fragment, isValidElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, ChevronDown, CircleAlert, Globe, History, ListChecks, LoaderCircle, MessageCircleQuestion, Paperclip, Play, ShieldCheck, X } from 'lucide-react'
+import { Check, ChevronDown, CircleAlert, Globe, History, ListChecks, LoaderCircle, MessageCircleQuestion, Paperclip, Play, ShieldCheck, X } from '@/components/icons'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -26,6 +26,8 @@ import { MermaidBlock, WireframeBlock } from './Diagrams'
 import { Bibliography, ResearchProgress } from './ResearchPanel'
 import { FlashcardsBlock, QuizBlock } from './StudyBlocks'
 import { DocumentCard } from './ArtifactPane'
+import { Quill } from './Quill'
+import { useLiveDraft } from '@/lib/artifactStore'
 import { ErrorNotice } from './ErrorNotice'
 import type { ErrorAction } from '@/lib/friendlyError'
 import type { AgentMode, ChatEntry, PendingView, ResearchStep, Source, SubagentApproval, SubagentProgress, ToolEventStatus } from '../../types'
@@ -104,7 +106,17 @@ export function AgentStatus({ phase }: { phase: AgentPhase }) {
   const reduce = useReducedMotion() ?? false
   const steady = useSteadyPhase(phase)
   const seconds = useElapsed()
+  const draft = useLiveDraft()
   const fade = { duration: reduce ? 0 : 0.5, ease: EASE_OUT }
+  // While a document is being written or edited, a quill writes in place of the orb, as in Claude.
+  if (draft) {
+    const label = draft.heading === 'Title' ? t('Editing the title…') : draft.heading === 'Abstract' ? t('Writing the abstract…') : t('Writing “{heading}”…', { heading: draft.heading })
+    return <div className="agent-status" role="status" aria-live="polite" aria-label={label}>
+      <span className="agent-orb agent-quill" aria-hidden><Quill size={18} /></span>
+      <span className="agent-label" aria-hidden><span className="agent-shimmer">{label}</span></span>
+      <span className="agent-elapsed">{elapsedText(seconds)}</span>
+    </div>
+  }
   return <div className="agent-status" role="status" aria-live="polite" aria-label={steady.label}>
     {/* The same orbs, cross-faded between states instead of swapped. */}
     <span className="agent-orb" aria-hidden>
@@ -470,7 +482,7 @@ export function QuestionCard({ pending, status, onAnswer }: { pending: PendingVi
           {question.options.map(option => {
             const on = picked[index]?.includes(option.label) ?? false
             return <button type="button" key={option.label} role={question.multiSelect ? 'checkbox' : 'radio'} aria-checked={on} className={cn('agent-question-option', on && 'on')} onClick={() => toggle(index, option.label, question.multiSelect)}>
-              <span className={cn('agent-question-mark', question.multiSelect ? 'box' : 'dot')} aria-hidden>{on && <Check size={11} strokeWidth={3} />}</span>
+              <span className={cn('agent-question-mark', question.multiSelect ? 'box' : 'dot')} aria-hidden>{on && <Check size={11} />}</span>
               <span className="agent-question-text"><strong>{option.label}</strong>{option.description && <span>{option.description}</span>}</span>
             </button>
           })}

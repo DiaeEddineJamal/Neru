@@ -182,8 +182,35 @@ pub fn until_daily_reset(provider_id: &str) -> std::time::Duration {
 }
 
 /// The start of the provider's next quota day, right across daylight-saving changes.
-fn next_day(provider_id: &str, unix: u64) -> u64 {
+pub(crate) fn next_day(provider_id: &str, unix: u64) -> u64 {
     day_start(provider_id, day_start(provider_id, unix) + 26 * 3_600)
+}
+
+/// The first of the next month, midnight UTC: when monthly allowances (Z.AI's plan limits, Mistral's
+/// and others' monthly quotas) start over.
+pub(crate) fn next_month(unix: u64) -> u64 {
+    let days = (unix / 86_400) as i64;
+    let year = civil_year(days);
+    // The month is the one whose first day is the latest not after today.
+    let month = (1..=12).rev().find(|month| days_from_civil(year, *month, 1) <= days).unwrap_or(1);
+    let (year, month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+    (days_from_civil(year, month, 1) * 86_400) as u64
+}
+
+/// How long until a monthly allowance starts over.
+pub fn until_monthly_reset() -> std::time::Duration {
+    let now = unix_now();
+    std::time::Duration::from_secs(next_month(now).saturating_sub(now).max(60))
+}
+
+/// Requests Neru sent to a provider today, over all its models and keys: how busy that free plan is.
+pub fn requests_today(provider_id: &str) -> u64 {
+    let today = day_start(provider_id, unix_now());
+    let prefix = format!("{provider_id}|");
+    COUNTS
+        .lock()
+        .map(|counts| counts.iter().filter(|(key, counters)| key.starts_with(&prefix) && counters.day.start == today).map(|(_, counters)| counters.day.requests).sum())
+        .unwrap_or(0)
 }
 
 // ---------- Neru's own counts ----------
@@ -249,6 +276,11 @@ pub fn note_daily_exhausted(config: &ProviderConfig) {
     block_until(config, next_day(&config.provider_id, unix_now()), "its quota per day is used up".into());
 }
 
+/// A monthly allowance is spent: nothing goes to this key until the month turns over.
+pub fn note_monthly_exhausted(config: &ProviderConfig) {
+    block_until(config, next_month(unix_now()), "its quota per month is used up".into());
+}
+
 fn block_until(config: &ProviderConfig, until: u64, reason: String) {
     if let Ok(mut blocked) = BLOCKED.lock() {
         let entry = blocked.entry(ledger_key(config)).or_insert((0, String::new()));
@@ -290,7 +322,7 @@ pub fn preflight(config: &ProviderConfig, tokens: usize) -> Preflight {
         if left <= 60 {
             return Preflight::Wait(std::time::Duration::from_secs(left) + std::time::Duration::from_millis(300));
         }
-        let daily = if reason.contains("per day") { "" } else { " (rate limit)" };
+        let daily = if reason.contains("per day") || reason.contains("per month") { "" } else { " (rate limit)" };
         return Preflight::Switch(format!("Provider HTTP 429 Too Many Requests: {} on this key: {reason}{daily}; resets in {}. Neru switched before sending.", config.model, human(left)));
     }
     if let Some((at, at_unix, list)) = QUOTAS.lock().ok().and_then(|quotas| quotas.get(&key).cloned()) {
@@ -470,6 +502,8 @@ pub fn parse_headers(provider_id: &str, headers: &HeaderMap) -> Vec<Quota> {
 
 /// Records the quota headers of a chat response; a per-minute token cap also bounds request size.
 pub fn record_headers(config: &ProviderConfig, headers: &HeaderMap) {
+    // The headers are the first byte of the answer: the model's latency (fallback.rs health).
+    crate::fallback::note_first_byte(config);
     let quotas = parse_headers(&config.provider_id, headers);
     if quotas.is_empty() {
         return;
@@ -538,6 +572,19 @@ pub async fn refresh(config: &ProviderConfig) {
 mod tests {
     use super::*;
     use reqwest::header::{HeaderName, HeaderValue};
+
+    #[test]
+    fn monthly_allowances_reset_on_the_first_of_the_next_month() {
+        let day = |y, m, d| (days_from_civil(y, m, d) * 86_400) as u64;
+        assert_eq!(next_month(day(2026, 11, 1) + 3_600), day(2026, 12, 1));
+        assert_eq!(next_month(day(2026, 12, 31) + 80_000), day(2027, 1, 1));
+        assert_eq!(next_month(day(2028, 2, 29)), day(2028, 3, 1));
+        assert!(until_monthly_reset().as_secs() >= 60);
+        let busy = config("test-busy-today", "busy/model", "k");
+        note_request(&busy, 10);
+        note_request(&ProviderConfig { model: "busy/other".into(), ..busy.clone() }, 10);
+        assert_eq!(requests_today("test-busy-today"), 2, "all of a provider's models count");
+    }
 
     #[test]
     fn reset_times_read_in_every_provider_format() {

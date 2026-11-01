@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { ArrowUpCircle, LoaderCircle, Sparkles, X } from 'lucide-react'
+import { ArrowUpCircle, LoaderCircle, Sparkles, X } from '@/components/icons'
 import { EASE_OUT } from '@/lib/ease'
 import changelog from '../../changelog.json'
 import { t } from '../../i18n'

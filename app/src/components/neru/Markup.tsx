@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
-import { Circle, MousePointer2, MoveUpRight, PenLine, Redo2, Send, Slash, Square, Trash2, Type, Undo2 } from 'lucide-react'
+import { Circle, MousePointer2, MoveUpRight, PenLine, Redo2, Send, Slash, Square, Trash2, Type, Undo2 } from '@/components/icons'
 import { SPRING_PANEL } from '@/lib/ease'
 import { t } from '../../i18n'
 

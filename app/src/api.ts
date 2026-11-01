@@ -2,8 +2,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CitationStyle, Source, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
-import type { BoardCard, CheckResult, Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
+import type { ChatProject, ChatProjectDetail, ChatProjectListItem, ChatProjectPatch } from './types'
+import type { Allowance, BoardCard, CheckResult, Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
 import type { OutputStyle, Paper, PaperCard, ServerPrompt, ServerResource, SessionDocument, SideAnswer } from './types'
+import type { MemoryCategory, MemoryPrefs, MemoryStore } from './types'
 import type { Route } from './lib/browser'
 
 export const api = {
@@ -74,7 +76,17 @@ export const api = {
   inlineComplete: (prefix: string, suffix: string, path: string) => invoke<string>('inline_complete', { prefix, suffix, path }),
   currentSession: () => invoke<SessionSnapshot | null>('current_session'),
   createSession: (worktree = false) => invoke<SessionSnapshot>('create_session', { worktree }),
-  createChatSession: () => invoke<SessionSnapshot>('create_chat_session'),
+  createChatSession: (chatProjectId?: string) => invoke<SessionSnapshot>('create_chat_session', { chatProjectId: chatProjectId ?? null }),
+  setSessionChatProject: (id: string, chatProjectId: string | null) => invoke<SessionSummary>('set_session_chat_project', { id, chatProjectId }),
+  listChatProjects: () => invoke<ChatProjectListItem[]>('list_chat_projects'),
+  getChatProject: (id: string) => invoke<ChatProjectDetail>('get_chat_project', { id }),
+  createChatProject: (name: string, description: string) => invoke<ChatProject>('create_chat_project', { name, description }),
+  updateChatProject: (id: string, patch: ChatProjectPatch) => invoke<ChatProject>('update_chat_project', { id, patch }),
+  deleteChatProject: (id: string) => invoke<void>('delete_chat_project', { id }),
+  addChatProjectText: (id: string, title: string, text: string) => invoke<ChatProjectDetail>('add_chat_project_text', { id, title, text }),
+  addChatProjectFile: (id: string, path: string, text?: string) => invoke<ChatProjectDetail>('add_chat_project_file', { id, path, text: text ?? null }),
+  readChatProjectKnowledge: (id: string, item: string) => invoke<string>('read_chat_project_knowledge', { id, item }),
+  removeChatProjectKnowledge: (id: string, item: string) => invoke<ChatProjectDetail>('remove_chat_project_knowledge', { id, item }),
   sessionSnapshot: (id: string) => invoke<SessionSnapshot>('session_snapshot', { id }),
   rewindSession: (userIndex: number, restoreCode: boolean) => invoke<RewindResult>('rewind_session', { userIndex, restoreCode }),
   sessionContext: (sessionId: string) => invoke<ContextUsage>('session_context', { sessionId }),
@@ -151,6 +163,12 @@ export const api = {
   projectMemoryFacts: () => invoke<string[]>('project_memory_facts'),
   forgetProjectFact: (fact: string) => invoke<string[]>('forget_project_fact', { fact }),
   rememberProjectFact: (fact: string) => invoke<string[]>('remember_project_fact', { fact }),
+  memoryStore: () => invoke<MemoryStore>('memory_state'),
+  setMemoryPrefs: (settings: MemoryPrefs) => invoke<MemoryStore>('set_memory_settings', { settings }),
+  addMemory: (text: string, category: MemoryCategory) => invoke<MemoryStore>('add_memory', { text, category }),
+  editMemory: (id: string, text: string, category: MemoryCategory) => invoke<MemoryStore>('edit_memory', { id, text, category }),
+  deleteMemory: (id: string) => invoke<MemoryStore>('delete_memory', { id }),
+  clearMemories: () => invoke<MemoryStore>('clear_memories'),
   privacyPrefs: () => invoke<PrivacyPrefs>('get_privacy_prefs'),
   setPrivacyPrefs: (prefs: PrivacyPrefs) => invoke<PrivacyPrefs>('set_privacy_prefs', { prefs }),
   projectPrivacy: () => invoke<{ rule: PrivacyRule | null; global: PrivacyRule }>('get_project_privacy'),
@@ -211,10 +229,13 @@ export const api = {
   saveExportFile: (path: string, base64: string) => invoke<void>('save_export_file', { path, base64 }),
   listPapers: (sessionId: string) => invoke<PaperCard[]>('list_session_papers', { sessionId }),
   readPaper: (sessionId: string, id: string) => invoke<Paper>('read_session_paper', { sessionId, id }),
+  /** Saves the user's own edit to a paper or document: 'title', 'abstract' or a section index. */
+  updatePaperPart: (sessionId: string, id: string, part: string, text: string) => invoke<Paper>('update_paper_part', { sessionId, id, part, text }),
   readImage: (path: string) => invoke<string>('read_image', { path }),
   effortSupported: () => invoke<boolean>('effort_supported'),
   forgetKeys: () => invoke<void>('forget_keys'),
   savedKeyProviders: () => invoke<string[]>('saved_key_providers'),
+  providerAllowance: (providerId: string, baseUrl: string, apiKey: string) => invoke<Allowance | null>('provider_allowance', { providerId, baseUrl, apiKey }),
   mcpServers: () => invoke<McpServer[]>('mcp_servers'),
   mcpSaveServer: (server: Pick<McpServer, 'name' | 'command' | 'args' | 'env' | 'url' | 'headers' | 'enabled' | 'transport'>, previous?: string) => invoke<McpServer[]>('mcp_save_server', { server, previous }),
   /** Resources of the running connectors, offered after @ in the composer. */

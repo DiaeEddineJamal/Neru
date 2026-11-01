@@ -61,6 +61,46 @@ pub struct ContextUsage {
     pub window_reported: bool,
     pub model: String,
     pub quotas: Vec<crate::limits::Quota>,
+    /// What `used` is made of, for the session panel. Estimated, then scaled to `used` when it was measured.
+    pub breakdown: Vec<ContextPart>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextPart {
+    /// "system", "tools", "messages" or "results".
+    pub kind: &'static str,
+    pub tokens: usize,
+}
+
+/// Tokens Neru counts for its tool definitions, which are sent with every request but are not messages.
+const TOOL_DEFINITION_TOKENS: usize = 3_000;
+
+/// Splits a conversation into the system prompt (instructions, memory, project map), tool definitions,
+/// the messages themselves and tool results, scaled so the parts add up to `used`.
+fn context_breakdown(messages: &[Value], model: &str, used: usize) -> Vec<ContextPart> {
+    let tokens = |kind: &str| -> usize {
+        let picked: Vec<Value> = messages.iter().filter(|message| match kind {
+            "system" => message["role"] == "system",
+            "results" => message["role"] == "tool",
+            _ => message["role"] != "system" && message["role"] != "tool",
+        }).cloned().collect();
+        estimate_tokens_for(&picked, model)
+    };
+    let mut parts = vec![
+        ContextPart { kind: "system", tokens: tokens("system") },
+        ContextPart { kind: "tools", tokens: TOOL_DEFINITION_TOKENS },
+        ContextPart { kind: "messages", tokens: tokens("messages") },
+        ContextPart { kind: "results", tokens: tokens("results") },
+    ];
+    let estimated: usize = parts.iter().map(|part| part.tokens).sum();
+    if estimated > 0 && estimated != used {
+        let scale = used as f64 / estimated as f64;
+        for part in &mut parts {
+            part.tokens = (part.tokens as f64 * scale).round() as usize;
+        }
+    }
+    parts
 }
 
 /// "835.6k tokens", the way the compaction line in the thread reports what it freed.
@@ -102,8 +142,10 @@ pub(crate) fn estimate_tokens_for(messages: &[Value], model: &str) -> usize {
 pub fn context_usage(messages: &[Value], config: &ProviderConfig) -> ContextUsage {
     let model = config.model.as_str();
     let measured = messages.iter().rev().find_map(|message| message.get("_prompt_tokens").and_then(|value| value.as_u64()));
+    let used = measured.map(|tokens| tokens as usize).unwrap_or_else(|| estimate_tokens_for(messages, model) + TOOL_DEFINITION_TOKENS);
     ContextUsage {
-        used: measured.map(|tokens| tokens as usize).unwrap_or_else(|| estimate_tokens_for(messages, model) + 3_000),
+        breakdown: context_breakdown(messages, model, used),
+        used,
         window: providers::context_window(model),
         limit: token_budget(config),
         measured: measured.is_some(),
@@ -115,7 +157,7 @@ pub fn context_usage(messages: &[Value], config: &ProviderConfig) -> ContextUsag
 
 /// Tokens one request to `model` may use: its context window, or a smaller cap the provider reported
 /// (e.g. Groq's free tokens-per-minute limit), which can be far below the advertised window.
-fn token_budget(config: &ProviderConfig) -> usize {
+pub(crate) fn token_budget(config: &ProviderConfig) -> usize {
     let window = providers::context_window(&config.model);
     let budget = crate::limits::request_cap(&config.provider_id, &config.model).map_or(window, |cap| cap.min(window));
     if crate::fallback::is_free_plan(config) { budget.min(ECONOMY_BUDGET) } else { budget }
@@ -125,6 +167,26 @@ fn token_budget(config: &ProviderConfig) -> usize {
 /// free quotas count tokens per minute and per day, and a 1M-token window filled every request
 /// would spend a day's quota in a few turns. Older context is summarized and aged out instead.
 const ECONOMY_BUDGET: usize = 64_000;
+
+#[cfg(test)]
+mod breakdown_tests {
+    use super::*;
+
+    #[test]
+    fn parts_add_up_to_what_was_used() {
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": "You are Neru. ".repeat(200)}),
+            serde_json::json!({"role": "user", "content": "Fix the login bug"}),
+            serde_json::json!({"role": "tool", "content": "fn login() {}
+".repeat(300)}),
+        ];
+        let parts = context_breakdown(&messages, "unknown-model", 20_000);
+        assert_eq!(parts.iter().map(|part| part.kind).collect::<Vec<_>>(), ["system", "tools", "messages", "results"]);
+        let total: usize = parts.iter().map(|part| part.tokens).sum();
+        assert!(total.abs_diff(20_000) <= 4, "{total}");
+        assert!(parts[3].tokens > parts[2].tokens);
+    }
+}
 
 /// How much of one tool result goes into the conversation.
 fn tool_output_chars(config: &ProviderConfig) -> usize {
@@ -463,7 +525,7 @@ pub(crate) fn provider_view(config: &ProviderConfig) -> ProviderView {
         api_format: config.api_format.clone(),
         base_url: config.base_url.clone(),
         model: config.model.clone(),
-        configured: !config.api_key.is_empty() || local,
+        configured: !config.api_key.is_empty() || local || providers::keyless(&config.provider_id),
         has_key: !config.api_key.is_empty(),
     }
 }
@@ -509,7 +571,7 @@ pub fn configure_provider(
         keys.insert(key_id, key.clone());
         key
     };
-    if !local && key.is_empty() {
+    if !local && key.is_empty() && !providers::keyless(&provider_id) {
         return Err("Enter an API key for this provider".into());
     }
     let config = ProviderConfig {
@@ -1189,6 +1251,9 @@ pub(crate) fn tool_label(name: &str, args: &Value) -> String {
         }
         "web_search" => format!("Searched the web for “{}”", text("query")),
         "search_papers" => format!("Searched papers for “{}”", text("query")),
+        "search_project_knowledge" => format!("Searched project knowledge for “{}”", text("query")),
+        "revise_paper" => format!("Revised the paper: {}", text("part")),
+        "create_document" => format!("Wrote “{}”", text("title")),
         "get_paper" => format!("Looked up paper {}", text("id")),
         "read_paper" => format!("Read paper {}", text("id")),
         "fetch_url" => format!("Opened {}", web::domain(&text("url"))),
@@ -1738,7 +1803,7 @@ pub(crate) async fn model_round_silent(
     let shown = visible.len();
     let mut reconnects = 0;
     loop {
-        match silent_attempt(client, config, cancel, messages, tools, visible).await {
+        match silent_attempt(client, config, cancel, messages, tools, visible, None).await {
             Err(error) if reconnects < 3 && (crate::fallback::is_transient(&error) || providers::stream_options_rejected(config, &error)) => {
                 visible.truncate(shown);
                 tokio::select! {
@@ -1752,6 +1817,34 @@ pub(crate) async fn model_round_silent(
     }
 }
 
+/// Like [`model_round_silent`] without tools, but hands each streamed piece of text to `sink` as it
+/// arrives, so a caller can show the writing live (Research mode's papers, paper.rs).
+pub(crate) async fn model_round_live(
+    client: &reqwest::Client,
+    config: &ProviderConfig,
+    cancel: &tokio::sync::Notify,
+    messages: &[Value],
+    sink: &(dyn Fn(&str) + Send + Sync),
+) -> Result<String, String> {
+    let mut visible = String::new();
+    let mut reconnects = 0;
+    loop {
+        visible.clear();
+        match silent_attempt(client, config, cancel, messages, &json!([]), &mut visible, Some(sink)).await {
+            Err(error) if reconnects < 3 && (crate::fallback::is_transient(&error) || providers::stream_options_rejected(config, &error)) => {
+                tokio::select! {
+                    _ = tokio::time::sleep(retry_delay(reconnects)) => {}
+                    _ = cancel.notified() => return Err("cancelled".into()),
+                }
+                reconnects += 1;
+            }
+            Err(error) => return Err(error),
+            Ok(Round::Cancelled) => return Err("cancelled".into()),
+            Ok(Round::Message(message)) => return Ok(message["content"].as_str().map(str::to_string).filter(|text| !text.trim().is_empty()).unwrap_or(visible)),
+        }
+    }
+}
+
 async fn silent_attempt(
     client: &reqwest::Client,
     config: &ProviderConfig,
@@ -1759,10 +1852,11 @@ async fn silent_attempt(
     messages: &[Value],
     tools: &Value,
     visible: &mut String,
+    sink: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<Round, String> {
     let (outgoing, vault) = crate::privacy::outgoing(config, messages);
     let shown_before = visible.len();
-    let round = silent_attempt_inner(client, config, cancel, &outgoing, tools, visible).await?;
+    let round = silent_attempt_inner(client, config, cancel, &outgoing, tools, visible, sink).await?;
     Ok(settle_round(config, &outgoing, tools, round, &vault, visible, shown_before))
 }
 
@@ -1773,6 +1867,7 @@ async fn silent_attempt_inner(
     messages: &[Value],
     tools: &Value,
     visible: &mut String,
+    sink: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<Round, String> {
     let request = providers::chat_request(client, config, messages, tools, None).send();
     let response = tokio::select! {
@@ -1805,9 +1900,33 @@ async fn silent_attempt_inner(
     } {
         for delta in stream.push_bytes(&chunk)? {
             visible.push_str(&delta);
+            if let Some(sink) = sink {
+                sink(&delta);
+            }
         }
     }
     Ok(Round::Message(stream.finish()?))
+}
+
+/// Ends a turn that wrote (or resumed) a research paper: the finished paper's card, or what was saved
+/// before it paused and how to go on. The whole paper stays in the conversation for follow-ups.
+fn paper_outcome(shared: &Shared, config: &ProviderConfig, mut messages: Vec<Value>, mut steps: Vec<String>, sources: Vec<Source>, written: Result<crate::paper::Paper, crate::paper::Stop>) -> Result<AgentResponse, String> {
+    match written {
+        Ok(paper) => {
+            steps.push(format!("Wrote “{}” · {} words, {} references", paper.title, paper.words, paper.references.len()));
+            messages.push(json!({"role":"assistant","content":paper.markdown()}));
+            finish(shared, config, messages, crate::paper::message(&paper), steps, sources, None)
+        }
+        Err(crate::paper::Stop::Paused(paper, reason)) => {
+            messages.push(json!({"role":"assistant","content":format!("(Paper paused part-way.)
+
+{}", paper.markdown())}));
+            finish(shared, config, messages, crate::paper::paused_message(&paper, &reason), steps, sources, None)
+        }
+        Err(crate::paper::Stop::Cancelled(paper)) if !paper.id.is_empty() => finish(shared, config, messages, crate::paper::paused_message(&paper, "Stopped"), steps, sources, None),
+        Err(crate::paper::Stop::Cancelled(_)) => finish(shared, config, messages, "Stopped.".into(), steps, sources, None),
+        Err(crate::paper::Stop::Failed(error)) => finish(shared, config, messages, if error == "cancelled" { "Stopped.".into() } else { format!("Neru could not continue the paper: {error}") }, steps, sources, None),
+    }
 }
 
 /// Summarizes a session's older turns now (the /compact command).
@@ -2064,8 +2183,19 @@ pub async fn ai_chat(
     let started_map = messages.first().filter(|message| message["role"] == "system").and_then(|message| message["_map"].as_str()).map(str::to_string);
     let mut fresh_map = String::new();
     let mut map_in_prompt = String::new();
+    // A chat filed under a Chat project carries the project's instructions and knowledge.
+    let chat_project = (if chat { sessions::lock(&shared)?.summary.chat_project_id.clone() } else { None })
+        .and_then(|id| crate::chat_projects::load_context(&id).ok());
+    let project_prompt = chat_project.as_ref().map(|(project, items)| crate::chat_projects::system_block(project, items, token_budget(&config)));
+    let project_retrieval = project_prompt.as_ref().is_some_and(|block| block.retrieval);
     let system_content = if chat {
-        format!("You are Neru, in chat. No project files, repository, or local context were included. You cannot read or change the user's code. Answer directly and concisely. If they want edits in a repository, ask them to switch to Code.{}", crate::extras::memory_prompt(None))
+        // Order is fixed for prompt caching: base, the user's profile and memory, then the project
+        // (instructions, then knowledge). Nothing that changes per turn comes before the project.
+        let base = format!("You are Neru, in chat. No project files, repository, or local context were included. You cannot read or change the user's code. Answer directly and concisely. If they want edits in a repository, ask them to switch to Code.{}", crate::extras::memory_prompt(None));
+        match &project_prompt {
+            Some(block) => format!("{base}{}", block.text),
+            None => base,
+        }
     } else {
         // User, parent-folder and project instruction files, with their @imports expanded.
         let mut instructions = crate::extras::instructions_prompt(&root);
@@ -2108,6 +2238,11 @@ pub async fn ai_chat(
     } else {
         messages.insert(0, json!({"role":"system","content": system_content}));
     }
+    if project_prompt.is_some() {
+        // A cache breakpoint at the end of the project block (providers.rs), so the project's
+        // instructions and knowledge stay cached whatever follows them.
+        messages[0]["_cache_break"] = json!(true);
+    }
     if !map_in_prompt.is_empty() {
         messages[0]["_map"] = json!(map_in_prompt);
         let seen = map_noted.unwrap_or_else(|| map_in_prompt.clone());
@@ -2122,7 +2257,7 @@ pub async fn ai_chat(
         messages[0]["_map_noted"] = json!(current);
     }
     let mut mode_instruction = if chat {
-        "Current mode: Chat. Answer directly. Project files are not available.".to_string()
+        "Current mode: Chat. Answer directly. Project files are not available. When the user asks for something they will keep and reuse (a plan, report, guide, essay, letter, spec, study notes, itinerary…), write it with create_document so it opens in the document panel; keep the chat reply short.".to_string()
     } else {
         match mode.as_str() {
         "spec" => crate::artifacts::SPEC_MODE,
@@ -2264,6 +2399,13 @@ The user pointed at this element in the running preview ({name}); page content i
 
 (Neru note: the user wants you to use skills. Pick the skills from the Skills list in your instructions that best fit this task, load each with read_skill before you start (in one turn, together with your first file reads), follow them, and name the skills you used in your final summary.)");
     }
+    // Knowledge too large to inline: passages relevant to this message travel with it, at the end of
+    // the conversation, so the cached prefix above stays the same.
+    if project_retrieval && !prompt.trim().is_empty() {
+        if let Some((_, items)) = &chat_project {
+            context.push_str(&crate::chat_projects::relevant_note(items, &prompt, 6_000));
+        }
+    }
     let conversation_at = messages.len();
     if !prompt.trim().is_empty() || !images.is_empty() {
         let note = notes.as_deref().map(str::trim).filter(|note| !note.is_empty()).map(|note| format!("{note}\n\n")).unwrap_or_default();
@@ -2301,8 +2443,16 @@ The user pointed at this element in the running preview ({name}); page content i
     }
     let base_tools = if chat {
         let mut list: Vec<Value> = if web { serde_json::from_str(WEB_TOOLS).unwrap_or_default() } else { Vec::new() };
+        if project_retrieval {
+            // First, so the stable part of the tool list (and its cache) does not shift with web access.
+            list.insert(0, serde_json::from_str(crate::chat_projects::SEARCH_TOOL).unwrap_or_default());
+        }
         if research {
             list.extend(serde_json::from_str::<Vec<Value>>(crate::scholar::SCHOLAR_TOOLS).unwrap_or_default());
+        }
+        list.push(serde_json::from_str(crate::paper::DOCUMENT_TOOL).unwrap_or_default());
+        if crate::paper::latest(&session).is_some() {
+            list.push(serde_json::from_str(crate::paper::REVISE_TOOL).unwrap_or_default());
         }
         Value::Array(list)
     } else {
@@ -2313,6 +2463,9 @@ The user pointed at this element in the running preview ({name}); page content i
             // Spec mode ends each phase with a document, not exit_plan_mode.
             list.retain(|spec_| !(spec && spec_["function"]["name"] == "exit_plan_mode"));
             list.push(serde_json::from_str(crate::artifacts::TOOL).unwrap_or_default());
+            // Saved memories and past chats (memory.rs), last so the list before them stays cached.
+            let memory_tools = crate::memory::tools(&list);
+            list.extend(memory_tools);
             Value::Array(list)
         }
         other => other,
@@ -2372,9 +2525,33 @@ The user pointed at this element in the running preview ({name}); page content i
     };
     let mut steps = Vec::new();
     let mut sources: Vec<Source> = Vec::new();
+    // The version revise_paper made in this reply; later revisions in the reply edit it in place.
+    let mut revision: Option<String> = None;
+    // Cards of documents written this turn (create_document), added under the reply.
+    let mut document_cards: Vec<String> = Vec::new();
     let mut visible = String::new();
     let mut switches = 0;
-    if research && !prompt.trim().is_empty() {
+    // A paper that stopped part-way picks up where it left off on Retry or "continue" (paper.rs).
+    let resumable = if research && crate::paper::wants_resume(&prompt) { crate::paper::paused(&session) } else { None };
+    if let Some(draft) = resumable {
+        let resuming = crate::paper::resume(&app, &session, &client, &config, draft, &cancel);
+        let written = tokio::select! {
+            written = resuming => written,
+            _ = cancel.notified() => Err(crate::paper::Stop::Cancelled(crate::paper::paused(&session).unwrap_or_default())),
+        };
+        return paper_outcome(&shared, &config, messages, steps, sources, written);
+    }
+    // A message about the document open in the panel (a finished paper, plan or report) edits it there:
+    // the model gets a map of its parts and paragraphs and calls revise_paper, with no new research.
+    let open_document = if chat && !prompt.trim().is_empty() { crate::paper::latest(&session) } else { None };
+    let editing_document = match &open_document {
+        Some(document) => crate::paper::is_edit_request(&client, &config, prompt.trim(), document, research).await,
+        None => false,
+    };
+    if let Some(document) = open_document.as_ref().filter(|_| editing_document) {
+        messages.push(json!({"role":"system","content":format!("{}\nThe user's message asks to change this document. Use revise_paper for each part to change: name the part, and pass quote (words copied exactly from the map or the document) when only some paragraphs change. Change only what they asked for. Do not start new research or a new document, and do not paste the document into your reply.", crate::paper::outline_for_edit(document))}));
+    }
+    if research && !editing_document && !prompt.trim().is_empty() {
         // Plan, search and read first; the model then writes from numbered notes (research.rs).
         let budget = crate::research::budget(crate::fallback::is_free_plan(&config));
         let about = crate::extras::memory_prompt(None);
@@ -2390,22 +2567,16 @@ The user pointed at this element in the running preview ({name}); page content i
                 emit(&app, &session, AgentEvent::Sources { sources: sources.clone() });
                 messages.push(json!({"role":"system","content":brief.notes.clone()}));
                 if brief.plan.deliverable.paper {
-                    // A real paper: outlined and written section by section (paper.rs), then opened in the document panel.
+                    // A real paper: outlined and written section by section, streaming into the document panel.
                     let free = crate::fallback::is_free_plan(&config);
-                    let writing = crate::paper::write(&app, &session, &client, &config, prompt.trim(), &brief, free, &about);
+                    let writing = crate::paper::write(&app, &session, &client, &config, prompt.trim(), &brief, free, &about, &cancel);
                     let written = tokio::select! {
                         written = writing => written,
-                        _ = cancel.notified() => return finish(&shared, &config, messages, "Stopped.".into(), steps, sources, None),
+                        _ = cancel.notified() => Err(crate::paper::Stop::Cancelled(crate::paper::paused(&session).unwrap_or_default())),
                     };
                     match written {
-                        Ok(paper) => {
-                            steps.push(format!("Wrote “{}” · {} words, {} references", paper.title, paper.words, paper.references.len()));
-                            // The whole paper stays in the conversation so follow-ups can revise it.
-                            messages.push(json!({"role":"assistant","content":paper.markdown()}));
-                            return finish(&shared, &config, messages, crate::paper::message(&paper), steps, sources, None);
-                        }
-                        Err(error) if error == "cancelled" => return finish(&shared, &config, messages, "Stopped.".into(), steps, sources, None),
-                        Err(error) => notice(&app, &session, &shared, format!("Neru could not finish the paper ({error}); it will answer in the chat instead.")),
+                        Err(crate::paper::Stop::Failed(error)) if error != "cancelled" => notice(&app, &session, &shared, format!("Neru could not write the paper ({error}); it will answer in the chat instead.")),
+                        written => return paper_outcome(&shared, &config, messages, steps, sources, written),
                     }
                 }
             }
@@ -2541,7 +2712,7 @@ The user pointed at this element in the running preview ({name}); page content i
                     switches += 1;
                     let reason = crate::fallback::reason(&error);
                     notice(&app, &session, &shared, format!("{} {reason}. Finding the next best model…", short_model(&config.model)));
-                    let Some(next) = crate::fallback::next_model(&state, &config, &error, &privacy_rule).await else {
+                    let Some(next) = crate::fallback::next_model_for(&state, &config, &error, &privacy_rule, crate::fallback::Needs::of(&messages, !chat, estimate_tokens_for(&messages, &config.model))).await else {
                         if preflighted {
                             // The ledger may be out of date; with nothing else to switch to, try anyway.
                             skip_preflight = true;
@@ -2624,6 +2795,11 @@ The user pointed at this element in the running preview ({name}); page content i
             .unwrap_or_default();
         if calls.is_empty() {
             let visible = if research { crate::citation::with_references(&visible, &sources, &crate::citation::get_citation_style()) } else { visible };
+            let visible = if document_cards.is_empty() { visible } else { format!("{}\n\n{}", visible.trim_end(), document_cards.join("\n\n")).trim_start().to_string() };
+            if chat {
+                // Picks out lasting facts about the user in the background; never delays the reply (memory.rs).
+                crate::memory::learn_after_turn(&app, &session, &config, &prompt, &visible);
+            }
             return finish(&shared, &config, messages, visible, steps, sources, None);
         }
         calls
@@ -2760,6 +2936,72 @@ The user pointed at this element in the running preview ({name}); page content i
                         sessions::lock(&shared)?.todos = todos.clone();
                         emit(&app, &session, AgentEvent::Todos { todos });
                         messages.push(json!({"role":"tool","tool_call_id":id,"content":summary}));
+                    }
+                    Err(error) => refuse(&mut messages, &error),
+                }
+                continue;
+            }
+            if name == "create_document" {
+                // The writer gets the last few turns as background, so a plan can use what was decided.
+                let context = messages.iter().rev().filter(|message| message["role"] == "user" || message["role"] == "assistant").filter_map(|message| message["content"].as_str().map(|text| format!("{}: {}", message["role"].as_str().unwrap_or(""), crate::scholar::clip(text, 1_500)))).take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n\n");
+                let writing = crate::paper::create_document(&app, &session, &client, &config, args["title"].as_str().unwrap_or(""), args["kind"].as_str().unwrap_or(""), args["instructions"].as_str().unwrap_or(""), &context, &cancel);
+                let written = tokio::select! {
+                    written = writing => written,
+                    _ = cancel.notified() => Err("Stopped".to_string()),
+                };
+                match written {
+                    Ok((text, card)) => {
+                        event("done");
+                        steps.push(label.clone());
+                        document_cards.push(card);
+                        messages.push(json!({"role":"tool","tool_call_id":id,"content":text}));
+                    }
+                    Err(error) => refuse(&mut messages, &error),
+                }
+                continue;
+            }
+            if name == "revise_paper" {
+                let revising = crate::paper::revise(&app, &session, &client, &config, args["part"].as_str().unwrap_or(""), args["quote"].as_str().unwrap_or(""), args["instructions"].as_str().unwrap_or(""), revision.as_deref(), &cancel);
+                let revised = tokio::select! {
+                    revised = revising => revised,
+                    _ = cancel.notified() => Err("Stopped".to_string()),
+                };
+                match revised {
+                    Ok((text, version)) => {
+                        event("done");
+                        steps.push(label.clone());
+                        revision = Some(version);
+                        messages.push(json!({"role":"tool","tool_call_id":id,"content":text}));
+                    }
+                    Err(error) => refuse(&mut messages, &error),
+                }
+                continue;
+            }
+            if name == "search_project_knowledge" {
+                match chat_project.as_ref().filter(|_| project_retrieval) {
+                    Some((_, items)) => {
+                        event("done");
+                        steps.push(label.clone());
+                        let limit = args["limit"].as_u64().unwrap_or(5) as usize;
+                        let text = crate::chat_projects::search_result(items, args["query"].as_str().unwrap_or(""), limit);
+                        messages.push(json!({"role":"tool","tool_call_id":id,"content":text}));
+                    }
+                    None => refuse(&mut messages, "This chat has no project knowledge to search."),
+                }
+                continue;
+            }
+            // Saved memories about the user and past-chat search (memory.rs); a project save_memory goes on below.
+            if name == "forget_memory" || name == "search_past_chats" || (name == "save_memory" && (chat || args["scope"] == "user")) {
+                let result = match name.as_str() {
+                    "search_past_chats" => crate::memory::search_past(args["query"].as_str().unwrap_or(""), args["limit"].as_u64().unwrap_or(5) as usize, &session).await,
+                    "forget_memory" => crate::memory::forget_tool(&args),
+                    _ => crate::memory::save_tool(&args, Some(session.as_str())),
+                };
+                match result {
+                    Ok(text) => {
+                        event("done");
+                        steps.push(label.clone());
+                        messages.push(json!({"role":"tool","tool_call_id":id,"content":text}));
                     }
                     Err(error) => refuse(&mut messages, &error),
                 }

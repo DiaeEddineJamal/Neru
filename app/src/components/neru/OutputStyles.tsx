@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, LoaderCircle, PenLine } from 'lucide-react'
+import { Check, LoaderCircle, PenLine } from '@/components/icons'
 import { api } from '../../api'
 import { t } from '../../i18n'
 import { cn } from '@/lib/utils'

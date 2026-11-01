@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CaseSensitive, ChevronDown, FileText, LoaderCircle, Regex, Search, WholeWord } from 'lucide-react'
+import { CaseSensitive, ChevronDown, FileText, LoaderCircle, Regex, Search, WholeWord } from '@/components/icons'
 import { api } from '../../api'
 import type { SearchHit } from '../../types'
 import { formatCount } from '../../lib/useIndex'
@@ -49,9 +49,9 @@ export function SearchPanel({ projectKey, onOpen }: { projectKey: string; onOpen
       <Search size={17} aria-hidden />
       <input ref={input} value={query} onChange={event => setQuery(event.target.value)} placeholder={t('Search text across the project…')} aria-label={t('Search the project')} spellCheck={false} />
       {busy && <LoaderCircle size={15} className="animate-spin search-spinner" aria-label={t('Searching')} />}
-      <button type="button" className={cn('search-option', caseSensitive && 'on')} aria-pressed={caseSensitive} title={t('Match case')} onClick={toggle(caseSensitive, setCaseSensitive)}><CaseSensitive size={16} /></button>
-      <button type="button" className={cn('search-option', wholeWord && 'on')} aria-pressed={wholeWord} title={t('Whole word')} onClick={toggle(wholeWord, setWholeWord)}><WholeWord size={16} /></button>
-      <button type="button" className={cn('search-option', regex && 'on')} aria-pressed={regex} title={t('Regular expression')} onClick={toggle(regex, setRegex)}><Regex size={16} /></button>
+      <button type="button" className={cn('search-option', caseSensitive && 'on')} aria-pressed={caseSensitive} title={t('Match case')} onClick={toggle(caseSensitive, setCaseSensitive)}><CaseSensitive size={16} weight={caseSensitive ? 'fill' : 'regular'} /></button>
+      <button type="button" className={cn('search-option', wholeWord && 'on')} aria-pressed={wholeWord} title={t('Whole word')} onClick={toggle(wholeWord, setWholeWord)}><WholeWord size={16} weight={wholeWord ? 'fill' : 'regular'} /></button>
+      <button type="button" className={cn('search-option', regex && 'on')} aria-pressed={regex} title={t('Regular expression')} onClick={toggle(regex, setRegex)}><Regex size={16} weight={regex ? 'fill' : 'regular'} /></button>
     </div>
     <div className="search-scope"><input value={glob} onChange={event => setGlob(event.target.value)} placeholder={t('Files to include, e.g. src/**/*.tsx')} aria-label={t('Files to include')} spellCheck={false} /></div>
     <p className="search-summary" aria-live="polite">

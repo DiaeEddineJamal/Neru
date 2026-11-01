@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { FileText, LoaderCircle, MousePointer2, Paperclip, X } from 'lucide-react'
+import { FileText, LoaderCircle, MousePointer2, Paperclip, X } from '@/components/icons'
 import type { AttachedDocument } from '../../types'
 import { t } from '../../i18n'
 
@@ -33,7 +33,7 @@ export function Attachments({ paths, documents, reading, onRemovePath, onRemoveD
         <button type="button" className="attach-open" onClick={() => setOpen(index)} aria-label={t('Preview {name}', { name: doc.name })} title={doc.name}>
           <img src={doc.dataUrl} alt="" decoding="async" draggable={false} />
         </button>
-        <button type="button" className="attach-remove" onClick={() => onRemoveDocument(doc.path)} aria-label={t('Remove {name}', { name: doc.name })}><X size={11} strokeWidth={2.4} /></button>
+        <button type="button" className="attach-remove" onClick={() => onRemoveDocument(doc.path)} aria-label={t('Remove {name}', { name: doc.name })}><X size={11} /></button>
       </div>)}
       {others.map(doc => doc.kind === 'element'
         // An element picked in the in-app browser: a compact tag chip, like Claude's. The full

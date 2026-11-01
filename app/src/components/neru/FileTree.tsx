@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Copy, CopyPlus, ExternalLink, FileCode2, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, FolderSearch, LoaderCircle, MessageSquarePlus, Paperclip, Pencil, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, CopyPlus, ExternalLink, FileCode2, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, FolderSearch, LoaderCircle, MessageSquarePlus, Paperclip, Pencil, RefreshCw, Search, Trash2, X } from '@/components/icons'
 import { api } from '../../api'
 import type { FileEntry } from '../../types'
 import { t } from '../../i18n'
@@ -99,7 +99,7 @@ function TreeNode({ entry, depth, onSelect, selected, changed }: TreeProps & { e
       {renaming ? <div style={{ paddingLeft: 4 + depth * 14 }}><NameInput /></div>
         : <button className={`tree-row ${selected === entry.path ? 'selected' : ''} ${touched ? 'changed' : ''} ${flashing ? 'fresh' : ''}`} style={{ paddingLeft: 12 + depth * 14 }} onClick={toggle} onContextMenu={event => menu(event, entry)} onKeyDown={event => { if (event.key === 'F2') { event.preventDefault(); setEditing({ mode: 'rename', path: entry.path, value: entry.name }) } if (event.key === 'Delete') { event.preventDefault(); remove(entry) } }} title={touched ? t('{path} · changed by Neru', { path: entry.path }) : entry.path}>
           {entry.isDir ? (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="tree-spacer" />}
-          <Icon size={14} strokeWidth={1.7} />
+          <Icon size={14} />
           <span className="truncate">{entry.name}</span>
           {touched && <i className="tree-dot" aria-label={t('Changed')} />}
         </button>}
@@ -271,7 +271,7 @@ export function FileTree({ projectKey, onSelect, selected, version = 0, changed 
       {rootError && <div className="inline-error">{rootError}</div>}
       {filtering ? <>
         {matches?.map(path => <button type="button" key={path} className={`tree-row tree-hit ${selected === path ? 'selected' : ''}`} style={{ paddingLeft: 12 }} onClick={() => onSelect(path)} title={path}>
-          {CODE_FILE.test(path) ? <FileCode2 size={14} strokeWidth={1.7} /> : <FileText size={14} strokeWidth={1.7} />}
+          {CODE_FILE.test(path) ? <FileCode2 size={14} /> : <FileText size={14} />}
           <span className="truncate">{nameOf(path)}</span>
           <span className="tree-hit-dir truncate">{parentOf(path)}</span>
         </button>)}

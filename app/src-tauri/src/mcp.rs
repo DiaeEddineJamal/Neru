@@ -282,8 +282,51 @@ pub fn function_name(server: &str, tool: &str) -> String {
     format!("mcp__{server}__{tool}").chars().take(64).collect()
 }
 
+/// Finds a program the way the shell would: an explicit path, or a name on PATH (with PATHEXT on Windows).
+fn find_program(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(name);
+    if path.components().count() > 1 || path.is_absolute() {
+        return path.is_file().then(|| path.to_path_buf());
+    }
+    let extensions: Vec<String> = if cfg!(windows) {
+        let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+        std::iter::once(String::new()).chain(pathext.split(';').filter(|ext| !ext.is_empty()).map(str::to_lowercase)).collect()
+    } else {
+        vec![String::new()]
+    };
+    let dirs = std::env::var_os("PATH")?;
+    std::env::split_paths(&dirs).find_map(|dir| {
+        extensions.iter().map(|ext| dir.join(format!("{name}{ext}"))).find(|candidate| candidate.is_file())
+    })
+}
+
+/// A plain sentence for a local connector whose program is not installed, naming what installs it.
+fn missing_program(name: &str) -> String {
+    let program = std::path::Path::new(name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    let (runtime, url) = match program.as_str() {
+        "npx" | "npm" | "node" => ("Node.js", "https://nodejs.org/en/download"),
+        "uvx" | "uv" => ("uv", "https://docs.astral.sh/uv/getting-started/installation/"),
+        "python" | "python3" | "py" | "pip" => ("Python", "https://www.python.org/downloads/"),
+        "docker" => ("Docker Desktop", "https://docs.docker.com/get-started/get-docker/"),
+        "bun" | "bunx" => ("Bun", "https://bun.sh"),
+        "deno" => ("Deno", "https://deno.com"),
+        _ => return format!("{name} was not found on this PC. Check the command, or install the program that provides it, then restart Neru."),
+    };
+    format!("{name} was not found on this PC. This connector needs {runtime}: install it from {url}, then restart Neru and reconnect.")
+}
+
 impl Client {
     async fn start(config: &ServerConfig) -> Result<Arc<Client>, String> {
+        // Check the usual runtimes up front, so a missing Node.js or uv reads as such rather than as a
+        // stopped server. Others (python can be a Store alias PATH lookups miss) are left to the shell.
+        let stem = std::path::Path::new(&config.command).file_stem().and_then(|stem| stem.to_str()).unwrap_or_default().to_ascii_lowercase();
+        if matches!(stem.as_str(), "npx" | "npm" | "node" | "uvx" | "uv" | "docker" | "bun" | "bunx" | "deno") && find_program(&config.command).is_none() {
+            return Err(missing_program(&config.command));
+        }
         #[cfg(windows)]
         let mut command = {
             // npx, uvx and friends are .cmd shims on Windows, so go through cmd.
@@ -377,7 +420,15 @@ impl Client {
                 }),
                 Duration::from_secs(90),
             )
-            .await?;
+            .await
+            .map_err(|error| {
+                // cmd /C reports an unknown program on stderr and exits; say that plainly.
+                if client.last_error().contains("is not recognized as an internal or external command") {
+                    missing_program(&config.command)
+                } else {
+                    error
+                }
+            })?;
         client.notify("notifications/initialized", json!({})).await?;
         client.refresh_tools().await?;
         Ok(client)
@@ -1531,6 +1582,17 @@ mod tests {
         assert!(function_name("server", &"x".repeat(100)).len() <= 64);
         assert!(valid_name("my-server_1"));
         assert!(!valid_name("bad name"));
+    }
+
+    #[test]
+    fn missing_programs_read_plainly() {
+        assert!(find_program("neru-no-such-program-xyz").is_none());
+        assert!(missing_program("npx").contains("Node.js") && missing_program("npx").contains("https://nodejs.org"));
+        assert!(missing_program("uvx").contains("https://docs.astral.sh/uv/"));
+        if cfg!(windows) {
+            assert!(missing_program(r"C:\tools\UVX.cmd").contains(" uv:"));
+        }
+        assert!(missing_program("mytool").starts_with("mytool was not found on this PC"));
     }
 
     #[test]

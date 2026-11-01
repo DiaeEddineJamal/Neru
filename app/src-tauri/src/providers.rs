@@ -80,13 +80,49 @@ pub fn probe_request(client: &Client, config: &ProviderConfig) -> RequestBuilder
             json!({"model":model,"messages":[{"role":"user","content":"Hi"}],"max_tokens":8,"stream":false}),
         ),
     };
-    let mut request = client
-        .post(format!("{}{}", config.base_url, path))
-        .json(&payload);
+    post_json(client, config, path, &payload)
+}
+
+fn post_json(client: &Client, config: &ProviderConfig, path: &str, payload: &Value) -> RequestBuilder {
+    let mut request = client.post(format!("{}{}", config.base_url, path)).json(payload);
     if config.api_format == ANTHROPIC {
         request = request.header("anthropic-version", "2023-06-01");
     }
     authorized(request, config)
+}
+
+/// Providers that serve requests without a key, at low rate limits. OVHcloud documents anonymous
+/// access (2 requests a minute per IP and model, checked 2026-11-01); LLM7's docs now ask for a free
+/// token, so it is no longer here.
+pub fn keyless(provider_id: &str) -> bool {
+    provider_id == "ovhcloud"
+}
+
+/// The tool test: a short request with one trivial tool (`get_time`, no arguments) whose answer should
+/// be a call to it. `forced` asks for a tool call outright (`tool_choice`), which a few providers refuse.
+pub fn tool_probe_request(client: &Client, config: &ProviderConfig, forced: bool) -> RequestBuilder {
+    let model = if config.provider_id == "gemini" { config.model.trim_start_matches("models/") } else { config.model.as_str() };
+    let prompt = "What time is it? Call the get_time tool.";
+    let description = "Returns the current time.";
+    let schema = json!({"type":"object","properties":{}});
+    let (path, mut payload) = match config.api_format.as_str() {
+        ANTHROPIC => (
+            "/messages",
+            json!({"model":model,"max_tokens":256,"messages":[{"role":"user","content":prompt}],"tools":[{"name":"get_time","description":description,"input_schema":schema}]}),
+        ),
+        RESPONSES => (
+            "/responses",
+            json!({"model":model,"input":prompt,"max_output_tokens":256,"store":false,"tools":[{"type":"function","name":"get_time","description":description,"parameters":schema}]}),
+        ),
+        _ => (
+            "/chat/completions",
+            json!({"model":model,"messages":[{"role":"user","content":prompt}],"max_tokens":256,"stream":false,"tools":[{"type":"function","function":{"name":"get_time","description":description,"parameters":schema}}]}),
+        ),
+    };
+    if forced {
+        payload["tool_choice"] = if config.api_format == ANTHROPIC { json!({"type":"any"}) } else { json!("required") };
+    }
+    post_json(client, config, path, &payload)
 }
 
 /// Replaces image parts with a note when the provider said the model cannot read images, so a
@@ -121,6 +157,12 @@ pub fn chat_request(
     tools: &Value,
     effort: Option<&str>,
 ) -> RequestBuilder {
+    // The leading system message asked for its own cache breakpoint (a Chat project's block).
+    let cache_break = messages
+        .first()
+        .filter(|message| message["role"] == "system" && message["_cache_break"] == true)
+        .and_then(|message| message["content"].as_str())
+        .map(str::to_string);
     let messages = without_images_for_text_models(config, public_messages(messages));
     // A model without native tool calls gets the tools in its prompt instead (toolproto.rs).
     let text_protocol = tools.as_array().is_some_and(|list| !list.is_empty()) && crate::toolproto::uses_text(config);
@@ -133,13 +175,17 @@ pub fn chat_request(
     let session = session_key(&messages);
     if let Some(root) = ollama_root(config) {
         let payload = ollama_payload(config, &messages, tools);
+        crate::fallback::note_sent(config);
         return client.post(format!("{root}/api/chat")).json(&payload);
     }
     let (path, mut payload) = match config.api_format.as_str() {
-        ANTHROPIC => (
-            "/messages",
-            anthropic_payload(&config.model, &messages, tools),
-        ),
+        ANTHROPIC => {
+            let mut payload = anthropic_payload(&config.model, &messages, tools);
+            if let Some(leading) = cache_break.as_deref().filter(|_| !text_protocol) {
+                split_system_cache(&mut payload, leading);
+            }
+            ("/messages", payload)
+        }
         RESPONSES => (
             "/responses",
             responses_payload(&config.model, &messages, tools),
@@ -162,6 +208,8 @@ pub fn chat_request(
     if config.api_format == ANTHROPIC {
         request = request.header("anthropic-version", "2023-06-01");
     }
+    // Starts the clock for the model's latency (fallback.rs health).
+    crate::fallback::note_sent(config);
     if config.provider_id == "openrouter" && !session.is_empty() {
         request = request.header("x-session-id", &session);
     }
@@ -364,7 +412,11 @@ pub fn max_tokens_rejected(model: &str, error: &str) -> bool {
     if !lower.contains("max_tokens") && !lower.contains("max tokens") && !lower.contains("max_completion_tokens") {
         return false;
     }
+    // The provider's error code ("(code 1214)", response_error) is not a token count.
     let named = lower
+        .split(" (code ")
+        .next()
+        .unwrap_or_default()
         .split(|c: char| !c.is_ascii_digit())
         .filter_map(|part| part.parse::<usize>().ok())
         .filter(|n| (256..=200_000).contains(n))
@@ -393,6 +445,7 @@ fn public_messages(messages: &[Value]) -> Vec<Value> {
                 object.remove("_cached_tokens");
                 object.remove("_map");
                 object.remove("_map_noted");
+                object.remove("_cache_break");
             }
             copy
         })
@@ -572,6 +625,23 @@ fn anthropic_payload(model: &str, messages: &[Value], tools: &Value) -> Value {
     payload
 }
 
+/// Gives the leading system message its own cache breakpoint: Anthropic's system becomes the stable
+/// leading block (base prompt, profile, Chat project) and the rest (the mode line, notes), each marked.
+/// With the tools and the newest message that makes four breakpoints, Anthropic's maximum.
+/// OpenRouter's Claude route needs nothing: each system message stays its own message there and
+/// `mark_cache_points` already marks the leading one.
+fn split_system_cache(payload: &mut Value, leading: &str) {
+    let Some(text) = payload["system"][0]["text"].as_str().map(str::to_string) else { return };
+    let Some(rest) = text.strip_prefix(leading).map(|rest| rest.trim_start_matches("\n\n").to_string()) else { return };
+    if rest.trim().is_empty() || leading.trim().is_empty() {
+        return;
+    }
+    payload["system"] = json!([
+        {"type":"text","text":leading,"cache_control":ephemeral()},
+        {"type":"text","text":rest,"cache_control":ephemeral()},
+    ]);
+}
+
 fn ephemeral() -> Value {
     json!({"type":"ephemeral"})
 }
@@ -662,13 +732,20 @@ pub fn normalize_message(format: &str, body: &Value) -> Result<Value, String> {
     }
 }
 
+/// "Provider HTTP 429 Too Many Requests: <message> (code 1113)". The provider's own error code is kept
+/// when it sends one: Z.AI's numeric codes and OpenAI's `insufficient_quota` say more than the status.
 pub fn response_error(status: reqwest::StatusCode, body: &Value) -> String {
     let message = body["error"]["message"]
         .as_str()
         .or_else(|| body["message"].as_str())
         .unwrap_or("request failed");
+    let code = match &body["error"]["code"] {
+        Value::String(code) if !code.is_empty() && !message.contains(code.as_str()) => format!(" (code {code})"),
+        Value::Number(code) => format!(" (code {code})"),
+        _ => String::new(),
+    };
     format!(
-        "Provider HTTP {status}: {}",
+        "Provider HTTP {status}: {}{code}",
         message.chars().take(300).collect::<String>()
     )
 }
@@ -703,6 +780,32 @@ mod tests {
             json!({"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\"\"}"}}]}),
             json!({"role":"tool","tool_call_id":"call_1","content":"src/"}),
         ]
+    }
+
+    #[test]
+    fn project_block_gets_its_own_breakpoint_within_four() {
+        let leading = "You are Neru.\n\n# Project: Thesis\n<project_knowledge>\nbody\n</project_knowledge>";
+        let mut messages = vec![
+            json!({"role":"system","content":leading,"_cache_break":true}),
+            json!({"role":"system","content":"Current mode: Chat."}),
+            json!({"role":"user","content":"Hello"}),
+        ];
+        let public = public_messages(&messages);
+        assert!(public[0].get("_cache_break").is_none(), "private fields never reach a provider");
+        let tools = json!([{"type":"function","function":{"name":"search_project_knowledge","description":"d","parameters":{"type":"object"}}}]);
+        let mut payload = anthropic_payload("claude-test", &public, &tools);
+        split_system_cache(&mut payload, leading);
+        assert_eq!(payload["system"][0]["text"], leading);
+        assert_eq!(payload["system"][1]["text"], "Current mode: Chat.");
+        assert_eq!(payload["system"][0]["cache_control"]["type"], "ephemeral");
+        let marks = payload.to_string().matches("cache_control").count();
+        assert!(marks <= 4, "Anthropic allows at most four breakpoints, got {marks}");
+        // The same project block on a later turn gives the same leading bytes.
+        messages.push(json!({"role":"assistant","content":"Hi"}));
+        messages.push(json!({"role":"user","content":"More"}));
+        let mut later = anthropic_payload("claude-test", &public_messages(&messages), &tools);
+        split_system_cache(&mut later, leading);
+        assert_eq!(later["system"][0], payload["system"][0]);
     }
 
     #[test]

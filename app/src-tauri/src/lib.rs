@@ -5,6 +5,7 @@ mod agents;
 mod artifacts;
 mod automations;
 mod board;
+mod chat_projects;
 mod checks;
 mod citation;
 mod cli;
@@ -24,6 +25,7 @@ mod index;
 mod limits;
 mod lsp;
 mod mcp;
+mod memory;
 mod models;
 mod notebook;
 mod oauth;
@@ -351,6 +353,12 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             extras::project_memory_facts,
             extras::forget_project_fact,
             extras::remember_project_fact,
+            memory::memory_state,
+            memory::set_memory_settings,
+            memory::add_memory,
+            memory::edit_memory,
+            memory::delete_memory,
+            memory::clear_memories,
             privacy::get_privacy_prefs,
             privacy::set_privacy_prefs,
             privacy::get_project_privacy,
@@ -377,6 +385,16 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             sessions::current_session,
             sessions::create_session,
             sessions::create_chat_session,
+            sessions::set_session_chat_project,
+            chat_projects::list_chat_projects,
+            chat_projects::get_chat_project,
+            chat_projects::create_chat_project,
+            chat_projects::update_chat_project,
+            chat_projects::delete_chat_project,
+            chat_projects::add_chat_project_text,
+            chat_projects::add_chat_project_file,
+            chat_projects::read_chat_project_knowledge,
+            chat_projects::remove_chat_project_knowledge,
             sessions::fork_session,
             sessions::select_session,
             sessions::rename_session,
@@ -427,6 +445,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             subagent::answer_subagent_approval,
             models::check_models,
             models::cancel_check_models,
+            models::provider_allowance,
             agent::ai_chat,
             documents::inspect_documents,
             agent::stop_chat,
@@ -444,6 +463,7 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             extras::set_personalization,
             paper::list_session_papers,
             paper::read_session_paper,
+            paper::update_paper_part,
             citation::save_export_file,
             agent::run_task_command,
             agent::allow_pending_always,

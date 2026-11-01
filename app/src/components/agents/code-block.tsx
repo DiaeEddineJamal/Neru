@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Check, Copy, FileCode2, LoaderCircle } from 'lucide-react'
+import { Check, Copy, FileCode2, LoaderCircle } from '@/components/icons'
 import { useReducedMotion } from 'motion/react'
 import { AgentCodeLine, type AgentCodeLanguage, type AgentCodeToken, useAgentCodeTokens } from './agent-code'
 import { cn } from '@/lib/utils'

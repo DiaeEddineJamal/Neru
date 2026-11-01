@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
-import { Brain, Lock, PiggyBank, ShieldAlert, ShieldCheck, ShieldQuestion, Trash2 } from 'lucide-react'
+import { Brain, Lock, PiggyBank, ShieldAlert, ShieldCheck, ShieldQuestion, Trash2 } from '@/components/icons'
 import { api, type PrivacyPrefs } from '../../api'
 import { privacyLabels, providerPresets, type Privacy, type PrivacyRule } from '../../providerCatalog'
 import type { UsageTotals } from '../../types'
 import { cn } from '@/lib/utils'
 import { dollars, referenceCost, REFERENCE, tokens } from '@/lib/savings'
 import { t } from '../../i18n'
+import { Select } from '../ui/Select'
 
 const RULES: { value: PrivacyRule; label: string }[] = [
   { value: 'any', label: 'Any provider' },
@@ -65,10 +66,10 @@ export function PrivacySettings({ projectOpen, onError, onNotice }: { projectOpe
 
     <h3 className="cli-heading">{t('Who sees your code')}</h3>
     <div className="settings-row"><div><strong>{t('Providers Neru may use')}</strong><p>{t('For chats and for projects without their own rule. Model switching follows it too.')}</p></div>
-      <select className="settings-select" aria-label={t('Providers Neru may use')} value={prefs?.privacy ?? 'any'} disabled={!prefs} onChange={event => prefs && void save({ ...prefs, privacy: event.target.value as PrivacyRule })}>{RULES.map(rule => <option key={rule.value} value={rule.value}>{t(rule.label)}</option>)}</select></div>
+      <Select className="settings-select" aria-label={t('Providers Neru may use')} value={prefs?.privacy ?? 'any'} disabled={!prefs} onChange={event => prefs && void save({ ...prefs, privacy: event.target.value as PrivacyRule })}>{RULES.map(rule => <option key={rule.value} value={rule.value}>{t(rule.label)}</option>)}</Select></div>
     {projectOpen && <div className="settings-row"><div><strong>{t('This project')}</strong><p>{t('Saved in .neru/privacy.json, so a team can commit it: "this repo only uses local models".')}</p></div>
-      <select className="settings-select" aria-label={t('Privacy rule for this project')} value={projectRule ?? ''} onChange={event => { const value = (event.target.value || null) as PrivacyRule | null; void api.setProjectPrivacy(value).then(result => { setProjectRule(result.rule); onNotice(result.rule ? t('This project now has its own privacy rule.') : t('This project follows the global rule again.')) }).catch(cause => onError(String(cause))) }}>
-        <option value="">{t('Same as global')}</option>{RULES.map(rule => <option key={rule.value} value={rule.value}>{t(rule.label)}</option>)}</select></div>}
+      <Select className="settings-select" aria-label={t('Privacy rule for this project')} value={projectRule ?? ''} onChange={event => { const value = (event.target.value || null) as PrivacyRule | null; void api.setProjectPrivacy(value).then(result => { setProjectRule(result.rule); onNotice(result.rule ? t('This project now has its own privacy rule.') : t('This project follows the global rule again.')) }).catch(cause => onError(String(cause))) }}>
+        <option value="">{t('Same as global')}</option>{RULES.map(rule => <option key={rule.value} value={rule.value}>{t(rule.label)}</option>)}</Select></div>}
     <div className="settings-row"><div><strong>{t('Hide secrets before sending')}</strong><p>{t('API keys, tokens, passwords and private keys leave as placeholders like «secret:OpenAI key:1a2b3c». Neru puts the real values back in the edits and commands it runs.')}</p></div>
       <button type="button" className={cn('switch', prefs?.redact && 'on')} role="switch" aria-checked={Boolean(prefs?.redact)} aria-label={t('Hide secrets before sending')} disabled={!prefs} onClick={() => prefs && void save({ ...prefs, redact: !prefs.redact })} /></div>
     <ul className="privacy-providers">

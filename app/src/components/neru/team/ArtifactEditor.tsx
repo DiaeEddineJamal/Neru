@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { Bold, Code, Columns2, Eye, Heading, Italic, Link, List, ListChecks, ListOrdered, Minus, PenLine, Quote, Redo2, SquareCode, Table, Undo2 } from 'lucide-react'
+import { Bold, Code, Columns2, Eye, Heading, Italic, Link, List, ListChecks, ListOrdered, Minus, PenLine, Quote, Redo2, SquareCode, Table, Undo2 } from '@/components/icons'
 import { cn } from '@/lib/utils'
 import { continueList, cycleHeading, indentList, insertRule, insertTable, splitFrontMatter, toggleCodeBlock, toggleLinePrefix, toggleLink, toggleWrap, type EditState } from '@/lib/markdownEdit'
 import './ArtifactEditor.css'

@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
-import { CircleCheck, Clock, LoaderCircle, Moon, PiggyBank, Sun, TriangleAlert, X } from 'lucide-react'
+import { CircleCheck, Clock, LoaderCircle, Moon, PiggyBank, Sun, TriangleAlert, X } from '@/components/icons'
 import { api } from '../../api'
 import type { AgentMode, Digest, DigestItem, QueuedTask } from '../../types'
 import { cn } from '@/lib/utils'
 import { dollars, referenceCost, REFERENCE } from '@/lib/savings'
 import { t } from '../../i18n'
+import { Select } from '../ui/Select'
 
 const SEEN = 'neru.digest.seen'
 /** Since the last "Mark as read", or the last 12 hours the first time. */
@@ -116,21 +117,21 @@ export function TasksDialog({ open, view, projects, onClose, onOpenSession, onEr
           <form className="task-form" onSubmit={event => { event.preventDefault(); void add() }}>
             <textarea rows={3} value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={t('Write tests for the billing module and fix what they find')} aria-label={t('Task')} />
             <div className="task-form-row">
-              <select className="settings-select" value={project} onChange={event => setProject(event.target.value)} aria-label={t('Project')}>{projects.length === 0 && <option value="">{t('Open a project first')}</option>}{projects.map(path => <option key={path} value={path}>{baseName(path)}</option>)}</select>
-              <select className="settings-select" value={mode} onChange={event => setMode(event.target.value as AgentMode)} aria-label={t('What Neru may do')}>{MODES.map(item => <option key={item.value} value={item.value}>{t(item.label)}</option>)}</select>
-              <select className="settings-select" value={when} onChange={event => setWhen(event.target.value as typeof when)} aria-label={t('When')}>
+              <Select className="settings-select" value={project} onChange={event => setProject(event.target.value)} aria-label={t('Project')}>{projects.length === 0 && <option value="">{t('Open a project first')}</option>}{projects.map(path => <option key={path} value={path}>{baseName(path)}</option>)}</Select>
+              <Select className="settings-select" value={mode} onChange={event => setMode(event.target.value as AgentMode)} aria-label={t('What Neru may do')}>{MODES.map(item => <option key={item.value} value={item.value}>{t(item.label)}</option>)}</Select>
+              <Select className="settings-select" value={when} onChange={event => setWhen(event.target.value as typeof when)} aria-label={t('When')}>
                 <option value="tonight">{t('Tonight')}{tonight ? `, ${new Date(tonight).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}` : ''}</option>
                 <option value="hour">{t('In an hour')}</option>
                 <option value="now">{t('Now')}</option>
-              </select>
+              </Select>
               <button type="submit" className="button primary" disabled={adding || !prompt.trim() || !project}>{adding ? t('Adding…') : t('Queue')}</button>
             </div>
             <div className="task-form-row">
-              <select className="settings-select" value={repeat} onChange={event => setRepeat(event.target.value as typeof repeat)} aria-label={t('Repeat')}>
+              <Select className="settings-select" value={repeat} onChange={event => setRepeat(event.target.value as typeof repeat)} aria-label={t('Repeat')}>
                 <option value="">{t('Once')}</option>
                 <option value="daily">{t('Every day')}</option>
                 <option value="weekly">{t('Every week')}</option>
-              </select>
+              </Select>
               <label className="task-meta"><input type="checkbox" checked={offline} onChange={event => setOffline(event.target.checked)} /> {t('Run even when Neru is closed')}</label>
             </div>
             {offline && <p className="task-meta">{t('Neru adds an entry to the system scheduler (Task Scheduler, launchd or cron) that runs neru -p with this task. Commands that need approval are skipped.')}</p>}

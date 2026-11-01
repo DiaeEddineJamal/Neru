@@ -18,7 +18,7 @@ use crate::workspace::data_dir;
 pub const EXTRA_TOOLS: &str = r#"[
     {"type":"function","function":{"name":"update_todos","description":"Keep a visible to-do list for work with three or more steps. Send the whole list each time, with exactly one item in_progress while you work. Mark items completed as soon as they are done.","parameters":{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["content","status"]}}},"required":["todos"]}}},
     {"type":"function","function":{"name":"task","description":"Hand a self-contained question to a read-only sub-agent that uses the project index and returns a short report (answer, key files with line numbers, open questions). agent_type explore finds and explains code (default, fastest); plan designs a change; general also uses the web. Call several in one turn to cover independent areas in parallel (up to 8). It cannot see this conversation, so put everything it needs in the prompt. Not for lookups you can finish in one or two calls.","parameters":{"type":"object","properties":{"description":{"type":"string","description":"3-6 word label"},"prompt":{"type":"string"},"agent_type":{"type":"string","enum":["explore","plan","general"]}},"required":["description","prompt"]}}},
-    {"type":"function","function":{"name":"save_memory","description":"Remember a durable fact for future sessions: a user preference, a project convention, or a decision. scope project is for this repository, user is for all projects. Not for things already in the code or for this conversation only.","parameters":{"type":"object","properties":{"fact":{"type":"string"},"scope":{"type":"string","enum":["project","user"]}},"required":["fact","scope"]}}}
+    {"type":"function","function":{"name":"save_memory","description":"Remember a durable fact for future sessions. scope user: a fact about the user (who they are, preferences, work, ongoing projects), shared by every chat and project; use it when they ask you to remember something or state a lasting preference. scope project: a convention or decision for this repository (Code only). Not for secrets, things already in the code, or this conversation only. To correct a saved fact, pass replaces with its id instead of adding a second one.","parameters":{"type":"object","properties":{"fact":{"type":"string","description":"A short third-person statement, like Prefers metric units"},"scope":{"type":"string","enum":["project","user"]},"category":{"type":"string","enum":["about","preferences","work","projects","other"],"description":"For scope user"},"replaces":{"type":"string","description":"Id of the saved memory this corrects"}},"required":["fact","scope"]}}}
 ]"#;
 
 /// Offered in Plan mode only: hands the finished plan to the user for approval.
@@ -167,17 +167,20 @@ pub fn user_memory_path() -> Result<PathBuf, String> {
     Ok(data_dir()?.join("memory.md"))
 }
 
-/// Both memory files, for the system prompt. Empty when there is nothing remembered.
+/// Both memory files and the saved memories, for the system prompt. Empty when there is nothing remembered.
 pub fn memory_prompt(root: Option<&Path>) -> String {
-    let mut text = String::new();
-    let mut add = |label: &str, path: Option<PathBuf>| {
-        if let Some(body) = path.and_then(|path| fs::read_to_string(path).ok()).map(|body| body.trim().to_string()).filter(|body| !body.is_empty()) {
-            text.push_str(&format!("\n\n{label}:\n{}", body.chars().take(8_000).collect::<String>()));
-        }
+    let file = |label: &str, path: Option<PathBuf>| {
+        path.and_then(|path| fs::read_to_string(path).ok())
+            .map(|body| body.trim().to_string())
+            .filter(|body| !body.is_empty())
+            .map(|body| format!("\n\n{label}:\n{}", body.chars().take(8_000).collect::<String>()))
+            .unwrap_or_default()
     };
-    add("Memory about the user (saved in earlier sessions)", user_memory_path().ok());
+    let mut text = file("Memory about the user (saved in earlier sessions)", user_memory_path().ok());
+    // Structured saved memories (memory.rs), sorted so the bytes only change when a memory does.
+    text.push_str(&crate::memory::prompt());
     if let Some(root) = root {
-        add("Memory about this project (saved in earlier sessions)", Some(project_memory_path(root)));
+        text.push_str(&file("Memory about this project (saved in earlier sessions)", Some(project_memory_path(root))));
     }
     let profile = profile_prompt(&get_profile());
     if !profile.is_empty() {
@@ -290,9 +293,10 @@ pub fn save_memory(root: Option<&Path>, fact: &str, scope: &str) -> Result<Strin
     if fact.is_empty() || fact.len() > 1_000 {
         return Err("fact must be 1–1000 characters".into());
     }
+    // Facts about the user go to the saved memories (memory.rs), shared by Chat and Code.
     let path = match (scope, root) {
         ("project", Some(root)) => project_memory_path(root),
-        _ => user_memory_path()?,
+        _ => return crate::memory::save_tool(&serde_json::json!({"fact": fact}), None),
     };
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -551,7 +555,7 @@ pub async fn doctor(app: AppHandle) -> Result<Vec<Check>, String> {
     let state = app.state::<crate::AppState>();
     let config = state.provider.lock().map_err(|e| e.to_string())?.clone();
     let mut checks = Vec::new();
-    let keyed = !config.api_key.is_empty() || matches!(config.provider_id.as_str(), "local" | "ollama");
+    let keyed = !config.api_key.is_empty() || matches!(config.provider_id.as_str(), "local" | "ollama") || crate::providers::keyless(&config.provider_id);
     checks.push(Check {
         name: "Model".into(),
         ok: keyed && !config.model.is_empty(),

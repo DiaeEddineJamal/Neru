@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
-import { FilePlus2, FolderOpen, FolderPlus, Sparkles, Trash2 } from 'lucide-react'
+import { FilePlus2, FolderOpen, FolderPlus, Sparkles, Trash2 } from '@/components/icons'
 import { api } from '../../api'
 import type { SkillView } from '../../types'
 import { t } from '../../i18n'

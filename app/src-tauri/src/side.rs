@@ -77,7 +77,7 @@ async fn answer(config: &ProviderConfig, messages: &[Value]) -> Result<SideAnswe
         return Err("Choose a model first".into());
     }
     let local = reqwest::Url::parse(&config.base_url).is_ok_and(|url| providers::is_local(&url));
-    if config.api_key.is_empty() && !local {
+    if config.api_key.is_empty() && !local && !providers::keyless(&config.provider_id) {
         return Err(format!("No key is saved for {}", crate::privacy::provider_name(&config.provider_id)));
     }
     if let Some(reason) = crate::privacy::blocked_reason(&crate::privacy::rule_for(None), config) {

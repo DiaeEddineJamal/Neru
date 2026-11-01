@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Brain, Check, ChevronDown, CircleAlert, Eye, Info, Search, Wrench } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Brain, Check, ChevronDown, CircleAlert, Eye, Info, Search, Wrench } from '@/components/icons'
 import { cn } from '@/lib/utils'
 import type { Effort, ModelInfo } from '../../types'
 import { t } from '../../i18n'
@@ -107,6 +108,9 @@ export function ModelSelector({ models, value, onChange, providerId, effort, eff
   const [preview, setPreview] = useState<string | null>(null)
   const [efforts, setEfforts] = useState(readEfforts)
   const root = useRef<HTMLDivElement>(null)
+  // Where the menu fits: above the trigger when there is room (the composer sits low), else below, never past the window.
+  const [place, setPlace] = useState<{ up: boolean; height: number; style: CSSProperties }>({ up: true, height: 460, style: {} })
+  const popup = useRef<HTMLDivElement>(null)
   const search = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const hoverTimer = useRef(0)
@@ -125,14 +129,28 @@ export function ModelSelector({ models, value, onChange, providerId, effort, eff
 
   useEffect(() => {
     if (!open) return
-    const away = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    const away = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node) && !popup.current?.contains(event.target as Node)) setOpen(false) }
+    const close = () => setOpen(false)
+    window.addEventListener('resize', close)
     document.addEventListener('mousedown', away)
-    return () => document.removeEventListener('mousedown', away)
+    return () => { document.removeEventListener('mousedown', away); window.removeEventListener('resize', close) }
   }, [open])
   useEffect(() => { list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' }) }, [active])
   useEffect(() => () => window.clearTimeout(hoverTimer.current), [])
 
   const toggle = (next: boolean) => {
+    if (next && root.current) {
+      // The menu is portaled and fixed, so no panel clips it. It opens above the trigger when that side
+      // has room below the title bar (and any banner), else below, and is only ever as tall as the room.
+      const rect = root.current.getBoundingClientRect()
+      const ceiling = Math.max(document.querySelector('.titlebar')?.getBoundingClientRect().bottom ?? 0, 0) + 8
+      const above = rect.top - 8 - ceiling
+      const below = window.innerHeight - rect.bottom - 16
+      const up = above >= 420 || above >= below
+      const height = Math.max(160, Math.min(460, up ? above : below))
+      const right = Math.max(8, window.innerWidth - rect.right)
+      setPlace({ up, height, style: up ? { bottom: window.innerHeight - rect.top + 8, right } : { top: rect.bottom + 8, right } })
+    }
     setOpen(next)
     setQuery(''); setFilter('all'); setPreview(null)
     if (next) setActive(Math.max(0, filterModels(models, { query: '', filter: 'all', showUnavailable, keep: value }).findIndex(info => info.id === value)))
@@ -172,14 +190,14 @@ export function ModelSelector({ models, value, onChange, providerId, effort, eff
       {triggerEffort && <span className="ms-badge">{t(EFFORTS.find(item => item.value === triggerEffort)?.label ?? '')}</span>}
       <ChevronDown size={13} className={cn('ms-chevron', open && 'open')} aria-hidden />
     </button>
-    {open && <div className="ms-popup" onKeyDown={key}>
-      <div className="ms-panel">
+    {open && createPortal(<div ref={popup} className={cn('ms-popup', !place.up && 'down')} style={place.style} onKeyDown={key}>
+      <div className="ms-panel" style={{ maxHeight: place.height }}>
         <label className="ms-search">
           <input ref={search} autoFocus value={query} onChange={event => { setQuery(event.target.value); setActive(0); setPreview(null) }} onFocus={() => setPreview(null)} placeholder={t('Search {n} models…', { n: models.length })}
             role="combobox" aria-expanded aria-controls="ms-list" aria-activedescendant={flat[active] ? `ms-${active}` : undefined} aria-label={t('Search models')} spellCheck={false} />
           <Search size={13} aria-hidden />
         </label>
-        {models.length > 6 && <div className="ms-filters"><ModelFilters models={models} filter={filter} onFilter={next => { setFilter(next); setActive(0) }} hidden={hidden} showUnavailable={showUnavailable} onShowUnavailable={setShowUnavailable} /></div>}
+        {(models.length > 6 || hidden > 0) && <div className="ms-filters"><ModelFilters models={models} filter={filter} onFilter={next => { setFilter(next); setActive(0) }} hidden={hidden} showUnavailable={showUnavailable} onShowUnavailable={setShowUnavailable} /></div>}
         <div ref={list} id="ms-list" className="ms-list" role="listbox" aria-label={t('Models')} onMouseLeave={() => hover(null, 180)}>
           {groups.map(group => <div key={group.key} role="group" aria-label={t(group.title)}>
             {groups.length > 1 && <p className="ms-group">{t(group.title)}<span>{group.items.length}</span></p>}
@@ -209,11 +227,11 @@ export function ModelSelector({ models, value, onChange, providerId, effort, eff
       </div>
       {previewInfo && (() => {
         const measured = measure(previewInfo)
-        return <div onMouseEnter={() => hover(previewInfo.id, 0)} onMouseLeave={() => hover(null, 180)}>
+        return <div className="ms-preview-wrap" style={{ maxHeight: place.height }} onMouseEnter={() => hover(previewInfo.id, 0)} onMouseLeave={() => hover(null, 180)}>
           <Preview info={previewInfo} providerId={providerId} metrics={measured.metrics} notes={measured.notes} current={previewInfo.id === value}
             effort={effortOf(previewInfo.id)} canReason={canReason(previewInfo)} onEffort={next => setEffortFor(previewInfo.id, next)} />
         </div>
       })()}
-    </div>}
+    </div>, document.body)}
   </div>
 }

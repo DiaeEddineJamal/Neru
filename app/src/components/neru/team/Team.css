@@ -99,7 +99,7 @@
 .team-model-row { display: flex; flex-wrap: wrap; gap: 6px 10px; }
 .team-model-row > .team-field:first-child { flex: 1 1 180px; min-width: 0; }
 .team-model-row > .team-field + .team-field { flex: 0 1 150px; }
-.team-field select:focus { border-color: var(--sage); outline: none; }
+.team-field .nselect:focus { border-color: var(--sage); outline: none; }
 .team-access { display: flex; }
 .team-access button { flex: 1; justify-content: center; padding: 0 4px; height: 26px; font-size: var(--fs-xs); white-space: nowrap; }
 .team-add { width: 100%; }
@@ -115,7 +115,7 @@
 .team-artifact-bar { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
 .team-artifact-bar span { flex: 1; min-width: 0; color: var(--secondary); }
 .team-versions { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: var(--fs-xs); }
-.team-versions select { flex: 1; min-width: 0; height: 26px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font-size: var(--fs-xs); }
+.team-versions .nselect { flex: 1; min-width: 0; height: 26px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font-size: var(--fs-xs); }
 .team-artifact-view { font-size: var(--fs-sm) !important; }
 .team-artifact-editor { flex: 1; min-height: 320px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); color: var(--text); font: var(--fs-sm)/1.6 'JetBrains Mono', monospace; resize: none; }
 .team-usage-total { margin: 0; color: var(--secondary); font-size: var(--fs-sm); }

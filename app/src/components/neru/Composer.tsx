@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, Check, ChevronDown, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, GraduationCap, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, FileCode2, FileSearch, FolderSearch, GitCompareArrows, Globe, GraduationCap, LoaderCircle, Mic, Pause, Play, Plus, Upload, X } from '@/components/icons'
 import { Liquid } from 'liquid-gooey'
 import { useReducedMotion } from 'motion/react'
 import { useMicrophone } from 'voice-glow'
@@ -44,7 +44,23 @@ function PlusMenu({ items, disabled }: { items: PlusMenuItem[]; disabled: boolea
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const timer = useRef<number | undefined>(undefined)
-  const show = () => { window.clearTimeout(timer.current); setMounted(true); requestAnimationFrame(() => requestAnimationFrame(() => setOpen(true))) }
+  // Where the pills go: up, clearing the prompt box when there is room under the title bar; up but
+  // closer when the window is short; down when even that would run past the top.
+  const [layout, setLayout] = useState<{ down: boolean; clearance: number; list?: { up: boolean; height: number } }>({ down: false, clearance: BOX_CLEARANCE })
+  const measure = () => {
+    const rect = root.current?.getBoundingClientRect()
+    if (!rect) return
+    const ceiling = (document.querySelector('.titlebar')?.getBoundingClientRect().bottom ?? 0) + 8
+    const above = rect.top - ceiling
+    const stack = ITEM_GAP * items.length + 4
+    const below = window.innerHeight - rect.bottom - 12
+    if (above >= stack + BOX_CLEARANCE) setLayout({ down: false, clearance: BOX_CLEARANCE })
+    else if (above >= stack) setLayout({ down: false, clearance: Math.max(0, above - stack) })
+    else if (below >= stack + 40) setLayout({ down: true, clearance: 0 })
+    // Too short a window for the pills either way: a plain list on the roomier side, scrolling if it must.
+    else setLayout({ down: false, clearance: 0, list: { up: above >= below, height: Math.max(80, Math.max(above, below) - 8) } })
+  }
+  const show = () => { window.clearTimeout(timer.current); measure(); setMounted(true); requestAnimationFrame(() => requestAnimationFrame(() => setOpen(true))) }
   const hide = () => { setOpen(false); window.clearTimeout(timer.current); timer.current = window.setTimeout(() => setMounted(false), reduce ? 0 : 480) }
   useEffect(() => {
     if (!open) return
@@ -64,11 +80,14 @@ function PlusMenu({ items, disabled }: { items: PlusMenuItem[]; disabled: boolea
   return <div className={cn('plus-menu', open && 'open')} ref={root}>
     <div className="plus-anchor" style={{ height: 32 + BOX_CLEARANCE + ITEM_GAP * items.length + 12 }}>
     <Liquid className="plus-liquid" blur={6} contrast={20} fill="var(--plus-fill)" shadow="0 10px 28px rgb(0 0 0 / 0.28), inset 0 0 0 1px var(--plus-ring)" filterPadding={48}>
-      {mounted && items.map((item, index) => <Liquid.Item key={item.id} className="plus-item-slot" x={open ? 0 : collapsedX(item.label)} y={open ? -(BOX_CLEARANCE + ITEM_GAP * (items.length - index)) : origin} scale={open ? 1 : 0} transition={transition} delay={open ? (items.length - 1 - index) * 40 : index * 30}>
+      {mounted && !layout.list && items.map((item, index) => <Liquid.Item key={item.id} className="plus-item-slot" x={open ? 0 : collapsedX(item.label)} y={open ? (layout.down ? 40 + ITEM_GAP * index : -(layout.clearance + ITEM_GAP * (items.length - index))) : origin} scale={open ? 1 : 0} transition={transition} delay={open ? (items.length - 1 - index) * 40 : index * 30}>
         <button type="button" role="menuitem" className="plus-item" tabIndex={open ? 0 : -1} aria-hidden={!open} disabled={item.disabled} title={item.hint} onClick={() => { hide(); item.onSelect() }}>{item.icon}<span>{item.label}</span></button>
       </Liquid.Item>)}
     </Liquid>
     </div>
+    {open && layout.list && <div className={cn('plus-list', !layout.list.up && 'down')} role="menu" style={{ maxHeight: layout.list.height }}>
+      {items.map(item => <button key={item.id} type="button" role="menuitem" className="plus-list-item" disabled={item.disabled} title={item.hint} onClick={() => { hide(); item.onSelect() }}>{item.icon}<span>{item.label}</span></button>)}
+    </div>}
     <button type="button" className="plus-trigger" aria-label={t('Add to message')} aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => open ? hide() : show()}><Plus size={17} /></button>
   </div>
 }
@@ -444,12 +463,29 @@ export function Composer(props: ComposerProps) {
 
   const micBusy = disabled || loading || !mic.supported || transcribing
 
-  return <div className={cn('composer', active && 'voice-active', props.roomy && 'roomy')}>
-    {mentionMatches.length + resourceMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t('Project files and connector resources')}>
+  // The command and file menus open above the composer, or below it when the composer sits high (the
+  // chat home screen), and are never taller than the room on that side, so nothing runs off the window.
+  const composerRoot = useRef<HTMLDivElement>(null)
+  const menuOpen = slashMatches.length > 0 || mentionMatches.length + resourceMatches.length > 0
+  const [menuRoom, setMenuRoom] = useState<{ up: boolean; height: number }>({ up: true, height: 320 })
+  useLayoutEffect(() => {
+    if (!menuOpen || !composerRoot.current) return
+    const rect = composerRoot.current.getBoundingClientRect()
+    const ceiling = (document.querySelector('.titlebar')?.getBoundingClientRect().bottom ?? 0) + 8
+    const above = rect.top - 8 - ceiling
+    const below = window.innerHeight - rect.bottom - 16
+    const up = above >= 200 || above >= below
+    const height = Math.max(96, Math.min(320, up ? above : below))
+    setMenuRoom(current => current.up === up && current.height === height ? current : { up, height })
+  }, [menuOpen])
+  const menuStyle = menuRoom.up ? { maxHeight: menuRoom.height } : { maxHeight: menuRoom.height, top: 'calc(100% + 8px)', bottom: 'auto' }
+
+  return <div ref={composerRoot} className={cn('composer', active && 'voice-active', props.roomy && 'roomy')}>
+    {mentionMatches.length + resourceMatches.length > 0 && <div className="slash-menu" style={menuStyle} role="listbox" aria-label={t('Project files and connector resources')}>
       {mentionMatches.map(path => <button key={path} type="button" className="slash-item" onMouseDown={event => { event.preventDefault(); pickFile(path) }}><span>{path}</span></button>)}
       {resourceMatches.map(item => <button key={item.key} type="button" className="slash-item" onMouseDown={event => { event.preventDefault(); pickResource(item.key) }}><span>{item.name}</span><small>{item.server}</small></button>)}
     </div>}
-    {slashMatches.length > 0 && <div ref={slashMenu} className="slash-menu" role="listbox" aria-label={t('Commands')}>
+    {slashMatches.length > 0 && <div ref={slashMenu} className="slash-menu" style={menuStyle} role="listbox" aria-label={t('Commands')}>
       {slashMatches.map((command, index) => <button key={command.name} type="button" role="option" aria-selected={index === Math.min(slashIndex, slashMatches.length - 1)} className={cn('slash-item', index === Math.min(slashIndex, slashMatches.length - 1) && 'active')} onMouseEnter={() => setSlashIndex(index)} onMouseDown={event => { event.preventDefault(); chooseCommand(command) }}>
         <code>/{command.name}</code><span>{command.description}</span>{command.source !== 'built-in' && <small>{command.source}</small>}
       </button>)}
@@ -507,11 +543,11 @@ export function Composer(props: ComposerProps) {
             onPointerDown={event => { if (event.button === 0 && holdToRecord) { event.currentTarget.setPointerCapture(event.pointerId); pressMic() } }}
             onPointerUp={releaseMic} onPointerCancel={releaseMic}
             // Pointer clicks are handled by press and release in hold mode; Enter and Space still toggle.
-            onClick={event => { if (holdToRecord && event.detail > 0) return; pressed.current = false; if (recording) finishVoice(false); else void startVoice() }}><Mic size={16} /></button>
+            onClick={event => { if (holdToRecord && event.detail > 0) return; pressed.current = false; if (recording) finishVoice(false); else void startVoice() }}><Mic size={16} weight={recording ? 'fill' : 'regular'} /></button>
           <MicMenu device={micDevice} onDevice={chooseMic} hold={holdToRecord} onHold={chooseHold} disabled={!mic.supported || recording || transcribing} systemEngine={props.voiceEngine === 'system'} />
         </div>
-        {props.showWeb !== false && <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? t('Web search on: Neru can search and cite public pages') : t('Web search off: answers from the project only')} aria-label={t('Web search')}><Globe size={15} /></button>}
-        {props.onResearchChange && <button type="button" className={cn('prompt-toggle', props.research && 'on')} aria-pressed={props.research} onClick={() => props.onResearchChange?.(!props.research)} disabled={disabled} title={props.research ? t('Research on: Neru plans, searches papers and writes a cited report') : t('Research: search papers and write a cited report')} aria-label={t('Research mode')}><GraduationCap size={15} /></button>}
+        {props.showWeb !== false && <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? t('Web search on: Neru can search and cite public pages') : t('Web search off: answers from the project only')} aria-label={t('Web search')}><Globe size={15} weight={web ? 'fill' : 'regular'} /></button>}
+        {props.onResearchChange && <button type="button" className={cn('prompt-toggle', props.research && 'on')} aria-pressed={props.research} onClick={() => props.onResearchChange?.(!props.research)} disabled={disabled} title={props.research ? t('Research on: Neru plans, searches papers and writes a cited report') : t('Research: search papers and write a cited report')} aria-label={t('Research mode')}><GraduationCap size={15} weight={props.research ? 'fill' : 'regular'} /></button>}
         {props.showMode !== false && <Select value={mode} onValueChange={value => props.onModeChange(value as AgentMode)} disabled={disabled || loading} className="composer-mode">
           <SelectTrigger className={cn('h-8 w-auto rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2', mode === 'bypass' && 'mode-danger')}>
             <span className="truncate text-muted-foreground" title={t(MODES.find(item => item.value === mode)?.hint ?? '')}>{t(MODES.find(item => item.value === mode)?.label ?? '')}</span>

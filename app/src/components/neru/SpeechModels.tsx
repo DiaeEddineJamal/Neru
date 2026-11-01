@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
-import { Check, Cpu, Download, Gauge, LoaderCircle, MonitorCog, Trash2 } from 'lucide-react'
+import { Check, Cpu, Download, Gauge, LoaderCircle, MonitorCog, Trash2 } from '@/components/icons'
 import { motion, useReducedMotion } from 'motion/react'
 import { findSpeechModel, speechModels, type SpeechModel } from '@/lib/speech/catalog'
 import { downloadModel, isModelCached, removeModel, type DownloadProgress } from '@/lib/speech/local'

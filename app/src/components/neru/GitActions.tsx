@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { GitFile, RemoteInfo } from '../../types'
 import { t } from '../../i18n'
+import { Select } from '../ui/Select'
 
 const conflict = (file: GitFile) => /U/.test(file.status) || file.status === 'AA' || file.status === 'DD'
 
@@ -34,15 +35,15 @@ export function GitActions({ busy, branch, branches, files, remote, onFetch, onP
       {remote?.remote && <button className="button subtle" disabled={busy || branch === 'detached HEAD'} onClick={onPush}>{t('Push')}{remote.ahead ? ` ${remote.ahead}` : ''}</button>}
     </div>
     <label className="git-select">{t('Switch branch')}
-      <select value={branch} disabled={busy} onChange={event => onCheckout(event.target.value)}>
+      <Select value={branch} disabled={busy} onChange={event => onCheckout(event.target.value)}>
         {branches.map(name => <option key={name} value={name}>{name}</option>)}
-      </select>
+      </Select>
     </label>
     <div className="field-row">
-      <select value={other} onChange={event => setOther(event.target.value)} disabled={busy}>
+      <Select value={other} onChange={event => setOther(event.target.value)} disabled={busy}>
         <option value="">{t('Another branch…')}</option>
         {others.map(name => <option key={name} value={name}>{name}</option>)}
-      </select>
+      </Select>
       <button className="button subtle" disabled={busy || !other} onClick={() => onMerge(other)}>{t('Merge')}</button>
       <button className="button subtle" disabled={busy || !other} onClick={() => onRebase(other)}>{t('Rebase')}</button>
     </div>

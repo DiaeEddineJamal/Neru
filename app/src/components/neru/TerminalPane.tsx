@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, SquareTerminal, X } from 'lucide-react'
+import { Plus, SquareTerminal, X } from '@/components/icons'
 import { listen } from '@tauri-apps/api/event'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
