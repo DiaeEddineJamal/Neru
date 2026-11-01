@@ -31,6 +31,7 @@ mod memory;
 mod models;
 mod notebook;
 mod oauth;
+mod ollama;
 mod paper;
 mod policy;
 mod preview;
@@ -393,6 +394,11 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             taskstats::task_stats,
             limits::free_capacity,
             hardware::local_advice,
+            ollama::ollama_status,
+            ollama::ollama_start,
+            ollama::ollama_pull,
+            ollama::ollama_cancel_pull,
+            ollama::ollama_delete,
             engine::engine_settings,
             engine::set_engine_settings,
             engine::generate_commit_message,

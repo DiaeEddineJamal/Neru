@@ -1,0 +1,28 @@
+/* Settings → Model provider → Ollama: the local model library. */
+.local-models { display: flex; flex-direction: column; gap: 10px; }
+.lm-machine { display: flex; gap: 10px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--surface-2); color: var(--secondary); font-size: var(--fs-sm); line-height: 1.55; }
+.lm-machine > svg { flex: 0 0 auto; margin-top: 2px; color: var(--sage); }
+.lm-machine p { margin: 0; }
+.lm-machine .lm-specs { color: var(--text); font-weight: 500; }
+.lm-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; color: var(--secondary); font-size: var(--fs-sm); }
+.lm-status > span { display: inline-flex; flex: 1 1 auto; align-items: center; gap: 6px; }
+.lm-status.is-running > span { color: var(--sage); }
+.lm-error { margin: 0; color: var(--danger); font-size: var(--fs-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.lm-subhead { margin: 6px 0 0; color: var(--text); font-size: var(--fs-xs); font-weight: 600; }
+.lm-empty { margin: 0; color: var(--muted); font-size: var(--fs-xs); }
+.lm-list { display: grid; gap: 1px; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-lg); list-style: none; }
+.lm-list li { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 9px 12px; background: var(--surface); }
+.lm-list li + li { box-shadow: 0 -1px 0 var(--border); }
+.lm-name { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 2px; }
+.lm-name code { color: var(--text); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.lm-name small { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
+.lm-installed { display: inline-flex; align-items: center; gap: 4px; color: var(--sage); font-size: var(--fs-xs); white-space: nowrap; }
+.lm-confirm { display: inline-flex; gap: 6px; }
+.lm-progress { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; width: min(240px, 50%); }
+.lm-progress small { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lm-bar { flex: 1 1 auto; height: 4px; overflow: hidden; border-radius: 999px; background: var(--border); }
+.lm-bar i { display: block; height: 100%; border-radius: inherit; background: var(--sage); transition: width .25s ease; }
+.lm-custom { display: flex; gap: 8px; }
+.lm-custom input { flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--fs-xs); }
+.lm-other { display: flex; align-items: center; gap: 12px; }
+.lm-other code { flex: 1 1 auto; font-size: var(--fs-xs); }

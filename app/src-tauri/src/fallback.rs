@@ -927,7 +927,7 @@ pub async fn small_model(state: &AppState, main: &ProviderConfig, rule: &str) ->
     // Ollama running beside a cloud model: its small models take the chores, which then cost no
     // cloud request and stay on this computer.
     if main.provider_id != "ollama" {
-        if let Some(base_url) = running_ollama().await {
+        if let Some(base_url) = crate::ollama::running().await {
             candidates.push(ProviderConfig { provider_id: "ollama".into(), api_format: "openai-chat".into(), base_url, api_key: String::new(), model: String::new() });
         }
     }
@@ -999,31 +999,16 @@ fn local_helper_score(model: &str) -> Option<i64> {
     Some(100 + quality - if thinks { 15 } else { 0 })
 }
 
-/// Ollama's address as Ollama itself reads it (OLLAMA_HOST, else 127.0.0.1:11434), when something
-/// answers there on this computer. Checked at most every half minute.
-async fn running_ollama() -> Option<String> {
-    static SEEN: LazyLock<Mutex<Option<(Instant, Option<String>)>>> = LazyLock::new(Default::default);
-    if let Some((at, found)) = SEEN.lock().ok().and_then(|seen| seen.clone()) {
-        if at.elapsed() < Duration::from_secs(30) {
-            return found;
-        }
+/// Forgets the cached model lists and helper choices for a provider whose models changed (a download
+/// or a removal in the local library), so the next chore sees them at once.
+pub fn models_changed(provider_id: &str) {
+    let prefix = format!("{provider_id}\n");
+    if let Ok(mut lists) = LISTS.lock() {
+        lists.retain(|key, _| !key.starts_with(&prefix));
     }
-    let host = std::env::var("OLLAMA_HOST").ok().map(|host| host.trim().to_string()).filter(|host| !host.is_empty()).unwrap_or_else(|| "127.0.0.1:11434".into());
-    let host = if host.contains("://") { host } else { format!("http://{host}") };
-    // 0.0.0.0 is how Ollama is told to listen everywhere; on this computer it answers on 127.0.0.1.
-    let base_url = format!("{}/v1", host.trim_end_matches('/').replace("0.0.0.0", "127.0.0.1"));
-    let found = match reqwest::Url::parse(&base_url) {
-        // Only this computer: an Ollama elsewhere is not private, whatever its provider id says.
-        Ok(url) if providers::is_local(&url) => {
-            let address = format!("{}:{}", url.host_str().unwrap_or("127.0.0.1"), url.port_or_known_default().unwrap_or(11434));
-            matches!(tokio::time::timeout(Duration::from_millis(300), tokio::net::TcpStream::connect(address)).await, Ok(Ok(_))).then_some(base_url)
-        }
-        _ => None,
-    };
-    if let Ok(mut seen) = SEEN.lock() {
-        *seen = Some((Instant::now(), found.clone()));
+    if let Ok(mut small) = SMALL.lock() {
+        small.clear();
     }
-    found
 }
 
 /// A bonus for models built to answer fast, a penalty for long-thinking ones.

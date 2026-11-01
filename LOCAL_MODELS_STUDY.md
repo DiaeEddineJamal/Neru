@@ -44,7 +44,14 @@ Original plan:
 - A curated local catalog in the model registry (`registry/models.json`, so it updates without a release): Ollama tag, download size, roles (helper, code, completion, embeddings) and the memory each needs.
 - `local_recommendations`: for each role, the best model that fits, plus a plain verdict (helpers only, or the agent runs locally).
 
-### L1. Model library in the app (M)
+### L1. Model library in the app (M) ✅ done
+
+- `ollama.rs`: `ollama_status` (installed, running, version, installed models from `/api/tags`), `ollama_pull` (streams `/api/pull`, adds up every layer's bytes, reports on `ollama://pull` a few times a second, checks the disk first when the catalog knows the size), `ollama_cancel_pull` (Ollama keeps what it got, so a later download resumes), `ollama_delete` and `ollama_start` (runs `ollama serve` when Ollama is installed but not running). The "is Ollama running" check moved here from `fallback.rs`. A download or a removal clears the helper lane's caches, so a new model takes chores at once.
+- Settings → Model provider → Ollama now shows the library instead of written steps: the machine and the verdict, Ollama's state (a link to ollama.com/download when it is missing, Start when it is installed but stopped), the recommended models with Download, a progress bar and Cancel, the installed models with Remove (asks first), and a field for any other tag. Step 3's model list refreshes after a download or removal. Only the roles Neru uses today show (For Code, Helper); completion and embeddings models stay hidden until they are wired in.
+- Checked: unit tests for the progress maths and the tag list, component tests for each state, and the panel in the browser preview with mocked data (32 GB, Iris Xe, `gemma3:4b` installed).
+- Not checked: a real download. Ollama is not installed on the development machine.
+
+Original plan:
 - Ollama status (installed, running, version), installed models with sizes, and the recommended models not yet installed.
 - Download with progress (`/api/pull` streams it), cancel and remove (`/api/delete`), with a disk-space check before each download.
 - When Ollama is missing, a link to ollama.com/download and a check that finds it once it is installed. Neru does not run the installer itself.

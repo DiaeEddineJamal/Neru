@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { t } from '../../i18n'
 import { ModelLogo } from './ModelSelector'
 import { SettingsModelPicker } from './ModelPicker'
+import { LocalModels } from './LocalModels'
 import { PrivacyTag } from './PrivacySettings'
 import './ProviderSettings.css'
 import { Select } from '../ui/Select'
@@ -118,8 +119,11 @@ export function ProviderSettings(props: Props) {
             <span className="provider-fact"><strong>{t('Your data')}</strong><PrivacyTag privacy={preset.privacy} /><span className="provider-privacy-detail">{t(privacyLabels[preset.privacy].detail)}</span></span>
           </p>
         </div>
-        {preset.keySteps && <ol className="provider-key-steps">{preset.keySteps.map(step => <li key={step}>{t(step)}</li>)}</ol>}
-        {preset.keyUrl && <a className="button subtle provider-key-button" href={preset.keyUrl} target="_blank" rel="noreferrer">{local ? <>{t('Open {name}', { name: preset.name })}</> : <><KeyRound size={14} />{t('Get a {name} key', { name: preset.name })}</>}<ExternalLink size={12} /></a>}
+        {/* Ollama gets the local model library instead of written steps: download, remove, start. */}
+        {preset.id === 'ollama'
+          ? <LocalModels onChanged={() => void api.listModels(providerId, props.format, props.baseUrl, '').then(list => props.onModels(() => list)).catch(() => undefined)} />
+          : preset.keySteps && <ol className="provider-key-steps">{preset.keySteps.map(step => <li key={step}>{t(step)}</li>)}</ol>}
+        {preset.keyUrl && preset.id !== 'ollama' && <a className="button subtle provider-key-button" href={preset.keyUrl} target="_blank" rel="noreferrer">{local ? <>{t('Open {name}', { name: preset.name })}</> : <><KeyRound size={14} />{t('Get a {name} key', { name: preset.name })}</>}<ExternalLink size={12} /></a>}
         {preset.id !== 'local' && preset.group !== 'local' && <label className="provider-key-field">{preset.keyOptional ? t('API key (optional)') : t('API key')}
           <span className="provider-key-input">
             <input type={showKey ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={props.apiKey} onChange={event => props.onApiKey(event.target.value)}

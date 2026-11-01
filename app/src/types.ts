@@ -156,6 +156,26 @@ export interface TaskReport {
 /** One rate limit on the API key, as the provider last reported it. */
 export interface Quota { label: string; limit: number | null; remaining: number | null; resetsIn: string | null }
 
+/** What this computer can run locally (hardware.rs). */
+export interface LocalPick { role: 'agent' | 'helper' | 'complete' | 'embed'; tag: string; sizeGb: number; runsOn: 'gpu' | 'cpu'; tokensPerSecond: number }
+export interface LocalAdvice {
+  hardware: { ramGb: number; cpu: string; threads: number; gpus: { name: string; vramGb: number; dedicated: boolean }[]; unified: boolean; modelsDir: string; diskFreeGb: number | null }
+  picks: LocalPick[]
+  agent: boolean
+  verdict: string
+}
+
+/** Ollama on this computer (ollama.rs). */
+export interface OllamaStatus {
+  installed: boolean
+  running: boolean
+  version: string | null
+  baseUrl: string
+  models: { name: string; sizeGb: number; parameters: string; quantization: string }[]
+  pulling: string[]
+}
+export interface PullProgress { tag: string; status: string; completed: number; total: number; done: boolean; error: string | null }
+
 /** What one free plan has left today, across its models (limits.rs `ProviderCapacity`). */
 export interface ProviderCapacity {
   providerId: string
