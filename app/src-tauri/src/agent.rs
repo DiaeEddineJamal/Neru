@@ -2448,11 +2448,21 @@ The user pointed at this element in the running preview ({name}); page content i
     }
     // The first request of a session in a small project carries the whole project with it.
     let first_turn = !messages.iter().any(|message| message["role"] == "user");
+    let mut snapshot = String::new();
     if !chat && first_turn && !prompt.trim().is_empty() && token_budget(&config) >= 64_000 {
         let (snapshot_root, skip) = (root.clone(), context_paths.clone());
         // On a free plan it travels with every request until compaction, so it is kept smaller.
         let bytes = if crate::fallback::is_free_plan(&config) { SNAPSHOT_BYTES / 2 } else { SNAPSHOT_BYTES };
-        context.push_str(&tauri::async_runtime::spawn_blocking(move || small_project_snapshot(&snapshot_root, &skip, bytes)).await.unwrap_or_default());
+        snapshot = tauri::async_runtime::spawn_blocking(move || small_project_snapshot(&snapshot_root, &skip, bytes)).await.unwrap_or_default();
+        context.push_str(&snapshot);
+    }
+    // Larger projects: the files and definitions the request names, looked up in the index (contextpack.rs),
+    // so the model starts on the task instead of spending requests on search and read calls.
+    if !chat && first_turn && !prompt.trim().is_empty() && snapshot.is_empty() {
+        let tokens = if lean { 2_000 } else if crate::fallback::is_free_plan(&config) { 4_000 } else { 8_000 };
+        let chars = tokens.min(token_budget(&config) / 12) * 4;
+        let (pack_root, skip, request) = (root.clone(), context_paths.clone(), prompt.trim().to_string());
+        context.push_str(&tauri::async_runtime::spawn_blocking(move || crate::contextpack::for_request(&pack_root, &request, &skip, chars, lean)).await.unwrap_or_default());
     }
     // "Use the skills you need" and similar: point the model at the skill list rather than
     // leaving it to guess that Neru has skills at all.

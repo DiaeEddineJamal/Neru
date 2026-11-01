@@ -73,7 +73,12 @@ Original plan:
 - Once P0 has data: an estimate before a large task ("about 15 requests; 140 left today").
 
 ### P3. Fewer requests per task
-- **3a. Context pack for medium and large projects (M).** Before the first request, run semantic search plus symbol search on the user's message and attach the top file ranges within a budget (about 4–8K tokens, scaled to the model's window). Give lean models a cut-down map plus the pack, since they need context most. Expected: 3–6 fewer exploration requests per task.
+- **3a. Context pack for medium and large projects (M).** ✅ done
+  - `contextpack.rs`: from the session's first request, in projects too large for the whole-project snapshot, it takes paths, identifiers (`snake_case`, `camelCase`, quoted code) and distinctive words. It looks them up in the project index: named files whole, symbol definitions with about 40 lines, and text matches for terms found in 12 files or fewer. The best six files go in as whole files or `read_file`-style ranges, within 2K tokens (lean), 4K (free plan) or 8K (paid). `.env` files, lockfiles and attached files are left out. Lean runs also get a short folder outline, since their prompt has no project map.
+  - It uses the index rather than semantic search, which embeds in the window: unavailable in the CLI and slow on first use.
+  - Eval: new `find-edit` scenario (a 31-file project, a request naming a function) went from 4 to 2 requests in both profiles; total 66→62.
+  - Cost: the pack travels with every request until compaction. It is capped, and it is empty when nothing in the request matches the project.
+  - Not yet: follow-up messages in a session get no pack; semantic search could add matches once its index is warm.
 - **3b. Failed edits and tool calls that need no extra request (S).** ✅ done
   - `toolproto::fill_aliases` renames misnamed arguments (`pattern`→`query`, `filePath`→`path`, `old`→`old_string`, …) before asking for a repair request. It only renames when exactly one argument fits and the name is not one of the tool's own parameters.
   - `tools::not_found_message` scores whole blocks, anchored on their first, last and longest lines, and returns the closest block with two lines either side, numbered, telling the model it can copy from there without reading the file.

@@ -62,6 +62,25 @@ SCENARIOS['edit-miss-block'] = {
   },
 }
 
+// find-edit: a project too large to send whole, and a request naming a function. Like a real model,
+// the script edits at once when the function's code is already in the conversation; otherwise it
+// searches for it, reads the file, then edits.
+const DISCOUNT = '  return total - total * rate'
+const moduleFiles = Object.fromEntries(Array.from({ length: 30 }, (_, n) => [`src/module${n}.js`, `// Module ${n}\nexport function helper${n}(value) {\n${'  value = value + 1\n'.repeat(40)}  return value\n}\n`]))
+SCENARIOS['find-edit'] = {
+  prompt: 'EVAL-find-edit: make applyDiscount round the result to cents',
+  files: { ...moduleFiles, 'src/billing/invoice.js': `import { tax } from './tax'\n\nexport function applyDiscount(total, rate) {\n${DISCOUNT}\n}\n` },
+  script: messages => {
+    const results = messages.filter(message => message.role === 'tool').map(text)
+    const edit = { tool: 'propose_edit', args: { path: 'src/billing/invoice.js', old_string: DISCOUNT, new_string: '  return Math.round((total - total * rate) * 100) / 100' } }
+    if (results.at(-1)?.startsWith('Applied')) return answer
+    if (messages.some(message => message.role !== 'tool' && text(message).includes(DISCOUNT))) return edit
+    if (!results.length) return { tool: 'search_text', args: { query: 'applyDiscount' } }
+    if (results.length === 1) return read('src/billing/invoice.js')
+    return edit
+  },
+}
+
 // Large: a name the lean check does not treat as small. Local servers otherwise always run lean.
 const PROFILES = { lean: 'eval-model', full: 'eval-coder-70b' }
 
@@ -169,9 +188,12 @@ try {
       mkdirSync(data, { recursive: true })
       writeFileSync(join(project, 'a.txt'), 'alpha\n')
       writeFileSync(join(project, 'b.txt'), 'beta\n')
-      for (const [file, content] of Object.entries(SCENARIOS[name].files ?? {})) writeFileSync(join(project, file), content)
+      for (const [file, content] of Object.entries(SCENARIOS[name].files ?? {})) {
+        mkdirSync(dirname(join(project, file)), { recursive: true })
+        writeFileSync(join(project, file), content)
+      }
       writeFileSync(join(data, 'settings.json'), JSON.stringify({ providerId: 'local', apiFormat: 'openai-chat', baseUrl: `http://127.0.0.1:${port}/v1`, model }))
-      const run = await neru(['-p', `EVAL-${name}: do the scripted task`, '--permission-mode', 'bypass', '--output-format', 'json'], project, { ...process.env, NERU_DATA_DIR: data, NO_COLOR: '1' })
+      const run = await neru(['-p', SCENARIOS[name].prompt ?? `EVAL-${name}: do the scripted task`, '--permission-mode', 'bypass', '--output-format', 'json'], project, { ...process.env, NERU_DATA_DIR: data, NO_COLOR: '1' })
       let result = {}
       try { result = JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}') } catch { /* reported below */ }
       const task = result.task

@@ -12,6 +12,7 @@ mod cli;
 mod cli_ui;
 mod cli_setup;
 mod commands;
+mod contextpack;
 mod diagnostics;
 mod documents;
 mod engine;
