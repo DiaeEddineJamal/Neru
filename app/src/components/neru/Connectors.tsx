@@ -80,8 +80,10 @@ const joinArgs = (args: string[]) => args.map(arg => /\s/.test(arg) ? `"${arg}"`
 const parsePairs = (text: string, separator: string) => Object.fromEntries(text.split('\n').map(line => line.trim()).filter(line => line.includes(separator)).map(line => [line.slice(0, line.indexOf(separator)).trim(), line.slice(line.indexOf(separator) + separator.length).trim()]))
 const formatPairs = (pairs: Record<string, string>, separator: string) => Object.entries(pairs).map(([key, value]) => `${key}${separator}${value}`).join('\n')
 
-interface Draft { previous?: string; kind: 'local' | 'hosted'; name: string; command: string; args: string; env: string; url: string; headers: string; enabled: boolean }
-const blank: Draft = { kind: 'hosted', name: '', command: 'npx', args: '', env: '', url: 'https://', headers: '', enabled: true }
+interface Draft { previous?: string; kind: 'local' | 'hosted'; name: string; command: string; args: string; env: string; url: string; headers: string; enabled: boolean; transport: 'http' | 'sse' }
+const blank: Draft = { kind: 'hosted', name: '', command: 'npx', args: '', env: '', url: 'https://', headers: '', enabled: true, transport: 'http' }
+/** Endpoints named …/sse are the older HTTP+SSE transport. */
+const transportFor = (url: string): Draft['transport'] => /\/sse\/?$/.test(url) ? 'sse' : 'http'
 
 const statusText = (server: McpServer) => server.status === 'connected' ? (server.tools.length === 1 ? t('1 tool') : t('{n} tools', { n: server.tools.length }))
   : server.status === 'starting' ? t('Connecting…') : server.status === 'off' ? t('Off') : server.status === 'needs_auth' ? t('Sign-in needed') : server.status === 'needs_trust' ? t('Waiting for trust') : t('Not running')
@@ -130,6 +132,7 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
         url: hosted ? draft.url.trim() : undefined,
         headers: hosted ? parsePairs(draft.headers, ':') : {},
         enabled: draft.enabled,
+        transport: hosted && draft.transport === 'sse' ? 'sse' : undefined,
       }, draft.previous)
       setServers(list)
       const saved = list.find(server => server.name === draft.name)
@@ -140,7 +143,7 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
   }
   const toggle = (server: McpServer) => act(server.name, () => api.mcpSaveServer({ ...server, enabled: !server.enabled }, server.name))
   const pick = (entry: CatalogEntry) => setDraft(entry.url
-    ? { ...blank, kind: 'hosted', name: entry.id, url: entry.url, headers: entry.auth === 'token' ? 'Authorization: Bearer ' : '' }
+    ? { ...blank, kind: 'hosted', name: entry.id, url: entry.url, headers: entry.auth === 'token' ? 'Authorization: Bearer ' : '', transport: transportFor(entry.url) }
     : { ...blank, kind: 'local', name: entry.id, command: entry.command ?? 'npx', args: entry.args ?? '', env: (entry.env ?? []).map(key => `${key}=`).join('\n') })
   const catalog = (tab === 'hosted' ? HOSTED : LOCAL).filter(entry => !servers?.some(server => server.name === entry.id))
 
@@ -158,13 +161,15 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
           {server.url && server.signedIn && <button className="icon-button small" disabled={working === server.name} onClick={() => void act(server.name, () => api.mcpSignOut(server.name))} title={t('Sign out')} aria-label={t('Sign out of {name}', { name: server.name })}><LogOut size={14} /></button>}
           {server.source !== 'project' && <button className="icon-button small" disabled={working === server.name} onClick={() => void toggle(server)} title={server.enabled ? t('Turn off') : t('Turn on')} aria-label={server.enabled ? t('Turn off {name}', { name: server.name }) : t('Turn on {name}', { name: server.name })}><span className={cn('switch', server.enabled && 'on')} /></button>}
           {server.status !== 'needs_trust' && <button className="icon-button small" disabled={!server.enabled || working === server.name} onClick={() => void act(server.name, () => api.mcpRestart(server.name))} title={t('Reconnect')} aria-label={t('Reconnect {name}', { name: server.name })}>{working === server.name && server.status !== 'needs_auth' ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCw size={14} />}</button>}
-          {server.source !== 'project' && <><button className="button subtle small" onClick={() => setDraft({ previous: server.name, kind: server.url ? 'hosted' : 'local', name: server.name, command: server.command || 'npx', args: joinArgs(server.args), env: formatPairs(server.env, '='), url: server.url ?? 'https://', headers: formatPairs(server.headers ?? {}, ': '), enabled: server.enabled })}>{t('Edit')}</button>
+          {server.source !== 'project' && <><button className="button subtle small" onClick={() => setDraft({ previous: server.name, kind: server.url ? 'hosted' : 'local', name: server.name, command: server.command || 'npx', args: joinArgs(server.args), env: formatPairs(server.env, '='), url: server.url ?? 'https://', headers: formatPairs(server.headers ?? {}, ': '), enabled: server.enabled, transport: server.transport === 'sse' ? 'sse' : 'http' })}>{t('Edit')}</button>
           <button className="icon-button small" onClick={() => { if (window.confirm(server.signedIn ? t('Remove the {name} connector and its sign-in?', { name: server.name }) : t('Remove the {name} connector?', { name: server.name }))) void act(server.name, () => api.mcpRemoveServer(server.name)) }} title={t('Remove')} aria-label={t('Remove {name}', { name: server.name })}><Trash2 size={14} /></button></>}
         </div>
       </div>
       {server.status === 'error' && server.error && <pre className="connector-error">{server.error}</pre>}
       {server.status === 'needs_trust' && <p className="connector-note">{t("Not started yet: this project's .mcp.json asks for it. Trust the folder if you know where the project came from.")}</p>}
       {server.status === 'connected' && server.tools.length > 0 && <div className="connector-tools">{server.tools.map(tool => <span key={tool.name} title={tool.description}>{tool.name}{tool.readOnly && <small>{t('read-only')}</small>}</span>)}</div>}
+      {server.status === 'connected' && (server.resources?.length ?? 0) > 0 && <div className="connector-tools" aria-label={t('Resources')}><small className="connector-kind">{t('Resources, attach with @')}</small>{server.resources!.map(resource => <span key={resource.uri} title={resource.description || resource.uri}>{resource.name}</span>)}</div>}
+      {server.status === 'connected' && (server.prompts?.length ?? 0) > 0 && <div className="connector-tools" aria-label={t('Prompts')}><small className="connector-kind">{t('Prompts, run as commands')}</small>{server.prompts!.map(prompt => <span key={prompt.name} title={prompt.description}>/mcp__{server.name}__{prompt.name}</span>)}</div>}
     </div>)}</div>}
 
     {draft ? <div className="connector-form">
@@ -174,7 +179,11 @@ export function Connectors({ onError }: { onError: (message: string) => void }) 
       </div>
       <label>{t('Name')}<input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="linear" /></label>
       {draft.kind === 'hosted' ? <>
-        <label>{t('Server URL')}<input value={draft.url} onChange={event => setDraft({ ...draft, url: event.target.value })} placeholder="https://mcp.example.com/mcp" /></label>
+        <label>{t('Server URL')}<input value={draft.url} onChange={event => setDraft({ ...draft, url: event.target.value, transport: draft.previous ? draft.transport : transportFor(event.target.value) })} placeholder="https://mcp.example.com/mcp" /></label>
+        <label>{t('Transport')}<select className="settings-select" value={draft.transport} onChange={event => setDraft({ ...draft, transport: event.target.value as Draft['transport'] })}>
+          <option value="http">{t('Streamable HTTP (current)')}</option>
+          <option value="sse">{t('HTTP + SSE (older servers)')}</option>
+        </select></label>
         <label>{t('Headers (optional, one Name: value per line)')}<textarea rows={2} value={draft.headers} onChange={event => setDraft({ ...draft, headers: event.target.value })} placeholder={t('Authorization: Bearer …   (leave empty to sign in with OAuth)')} spellCheck={false} /></label>
       </> : <>
         <div className="settings-grid"><label>{t('Command')}<input value={draft.command} onChange={event => setDraft({ ...draft, command: event.target.value })} placeholder={t('npx, uvx, node, python…')} /></label><label>{t('Arguments')}<input value={draft.args} onChange={event => setDraft({ ...draft, args: event.target.value })} placeholder="-y @modelcontextprotocol/server-filesystem D:\Neru\projects" /></label></div>

@@ -147,6 +147,7 @@ export const MODES: { value: AgentMode; label: string; hint: string }[] = [
   { value: 'manual', label: 'Ask permissions', hint: 'Neru asks before every edit and command' },
   { value: 'accept_edits', label: 'Accept edits', hint: 'Edits apply right away; commands still ask' },
   { value: 'plan', label: 'Plan mode', hint: 'Read-only: explores and proposes a plan' },
+  { value: 'spec', label: 'Spec mode', hint: 'Requirements, design and tasks you review, then the code' },
   { value: 'auto', label: 'Auto', hint: 'Edits, build, test and lint run; other commands ask' },
   { value: 'bypass', label: 'Bypass permissions', hint: 'Everything runs without asking. Use with care' },
 ]
@@ -244,6 +245,9 @@ export interface ComposerProps {
   context: ContextUsage | null
   projectFiles?: string[]
   onAttachFile?: (path: string) => void
+  /** Connector resources offered after @ next to project files; `key` comes back in onAttachResource. */
+  resources?: { key: string; name: string; server: string }[]
+  onAttachResource?: (key: string) => void
   /** Taller prompt card used on the empty chat page. */
   roomy?: boolean
   /** Team: agents bring their own web tools, so there is no web toggle. */
@@ -411,7 +415,9 @@ export function Composer(props: ComposerProps) {
   const slashMatches = slashQuery === undefined || slashClosed === value ? [] : props.commands.filter(command => command.name.startsWith(slashQuery.toLowerCase()))
   const mentionQuery = /@([^\s@]*)$/.exec(value)?.[1]
   const mentionMatches = mentionQuery === undefined ? [] : (props.projectFiles ?? []).filter(path => path.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8)
+  const resourceMatches = mentionQuery === undefined ? [] : (props.resources ?? []).filter(item => `${item.server} ${item.name}`.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
   const pickFile = (path: string) => { props.onAttachFile?.(path); onValueChange(value.replace(/@[^\s@]*$/, '')) }
+  const pickResource = (key: string) => { props.onAttachResource?.(key); onValueChange(value.replace(/@[^\s@]*$/, '')) }
   const chooseCommand = (command: SlashCommand) => {
     if (command.template.includes('$ARGUMENTS')) { onValueChange(`/${command.name} `); setSlashClosed(`/${command.name} `); return }
     if (props.onCommand(command, '')) onValueChange('')
@@ -439,8 +445,9 @@ export function Composer(props: ComposerProps) {
   const micBusy = disabled || loading || !mic.supported || transcribing
 
   return <div className={cn('composer', active && 'voice-active', props.roomy && 'roomy')}>
-    {mentionMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t('Project files')}>
+    {mentionMatches.length + resourceMatches.length > 0 && <div className="slash-menu" role="listbox" aria-label={t('Project files and connector resources')}>
       {mentionMatches.map(path => <button key={path} type="button" className="slash-item" onMouseDown={event => { event.preventDefault(); pickFile(path) }}><span>{path}</span></button>)}
+      {resourceMatches.map(item => <button key={item.key} type="button" className="slash-item" onMouseDown={event => { event.preventDefault(); pickResource(item.key) }}><span>{item.name}</span><small>{item.server}</small></button>)}
     </div>}
     {slashMatches.length > 0 && <div ref={slashMenu} className="slash-menu" role="listbox" aria-label={t('Commands')}>
       {slashMatches.map((command, index) => <button key={command.name} type="button" role="option" aria-selected={index === Math.min(slashIndex, slashMatches.length - 1)} className={cn('slash-item', index === Math.min(slashIndex, slashMatches.length - 1) && 'active')} onMouseEnter={() => setSlashIndex(index)} onMouseDown={event => { event.preventDefault(); chooseCommand(command) }}>
@@ -470,6 +477,7 @@ export function Composer(props: ComposerProps) {
           props.onKeyDown?.(event)
           if (event.defaultPrevented) return
           if (mentionMatches.length > 0 && event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); pickFile(mentionMatches[0]); return }
+          if (resourceMatches.length > 0 && event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); pickResource(resourceMatches[0].key); return }
           if (slashMatches.length > 0) {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setSlashIndex(index => (index + (event.key === 'ArrowDown' ? 1 : -1) + slashMatches.length) % slashMatches.length); return }
             if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') { event.preventDefault(); chooseCommand(slashMatches[Math.min(slashIndex, slashMatches.length - 1)]); return }

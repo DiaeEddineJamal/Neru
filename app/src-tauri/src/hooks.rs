@@ -97,6 +97,7 @@ pub fn claude_names(tool: &str) -> &'static [&'static str] {
         "run_shell_command" | "run_project_task" => &["Bash"],
         "propose_edit" => &["Edit", "MultiEdit"],
         "propose_write_file" => &["Write"],
+        "propose_notebook_edit" => &["NotebookEdit"],
         "propose_delete" | "propose_move" | "propose_create_folder" => &["Edit", "Write"],
         "read_file" | "read_files" => &["Read"],
         "list_directory" => &["LS"],

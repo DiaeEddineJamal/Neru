@@ -2,6 +2,7 @@ mod activity;
 mod acp;
 mod agent;
 mod agents;
+mod artifacts;
 mod automations;
 mod board;
 mod checks;
@@ -24,6 +25,7 @@ mod limits;
 mod lsp;
 mod mcp;
 mod models;
+mod notebook;
 mod oauth;
 mod policy;
 mod preview;
@@ -45,6 +47,7 @@ mod semantic;
 mod sessions;
 mod settings;
 mod shells;
+mod side;
 mod skills;
 mod styles;
 mod stream;
@@ -467,6 +470,18 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             mcp::mcp_sign_in,
             mcp::mcp_sign_out,
             mcp::mcp_sync_project,
+            mcp::mcp_resources,
+            mcp::mcp_read_resource,
+            mcp::mcp_prompts,
+            mcp::mcp_get_prompt,
+            artifacts::list_session_documents,
+            artifacts::read_session_document,
+            artifacts::write_session_document,
+            side::ask_side_question,
+            side::compare_model,
+            side::keep_compared_answer,
+            styles::list_output_styles,
+            styles::set_output_style,
             trust::commands::project_trust_status,
             trust::commands::trust_project,
             trust::commands::untrust_project,

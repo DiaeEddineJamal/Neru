@@ -70,7 +70,7 @@ export function agentPhase(live: LiveResponse | null, mode: string): AgentPhase 
   if (live?.text) return { state: 'composing', label: t('Composing…') }
   if (live && live.tools.length > 0) return { state: 'shaping', label: t('Shaping…') }
   if (live && live.reasoning > 0) return { state: 'solving', label: t('Reasoning…') }
-  return mode === 'plan' ? { state: 'solving', label: t('Planning…') } : { state: 'working', label: t('Thinking…') }
+  return mode === 'plan' || mode === 'spec' ? { state: 'solving', label: t('Planning…') } : { state: 'working', label: t('Thinking…') }
 }
 
 /** Holds each phase on screen for a moment, so quick tool calls do not make the orb flicker. */

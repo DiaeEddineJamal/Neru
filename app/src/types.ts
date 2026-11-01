@@ -167,18 +167,25 @@ export interface RewindResult { snapshot: SessionSnapshot; prompt: string; conte
 export interface RemoteInfo { branch: string; base: string; remote: string | null; ahead: number | null; behind: number | null; github: string | null; web: string | null; ghCli: boolean }
 
 export interface McpTool { name: string; description: string; readOnly: boolean }
-export interface McpServer { name: string; command: string; args: string[]; env: Record<string, string>; url?: string; headers: Record<string, string>; enabled: boolean; status: 'connected' | 'starting' | 'error' | 'off' | 'needs_auth' | 'needs_trust'; signedIn: boolean; error: string | null; tools: McpTool[]; source?: 'user' | 'project' }
+export interface McpResource { uri: string; name: string; description: string; mimeType?: string | null }
+export interface McpPromptArgument { name: string; description: string; required: boolean }
+export interface McpPrompt { name: string; description: string; arguments: McpPromptArgument[] }
+/** A resource of a running connector, for @-mentions. */
+export interface ServerResource extends McpResource { server: string }
+/** A prompt of a running connector, run as the slash command `command`. */
+export interface ServerPrompt extends McpPrompt { server: string; command: string }
+export interface McpServer { name: string; command: string; args: string[]; env: Record<string, string>; url?: string; headers: Record<string, string>; enabled: boolean; transport?: 'sse' | null; resources?: McpResource[]; prompts?: McpPrompt[]; status: 'connected' | 'starting' | 'error' | 'off' | 'needs_auth' | 'needs_trust'; signedIn: boolean; error: string | null; tools: McpTool[]; source?: 'user' | 'project' }
 /** Whether the open project folder is trusted, and what trusting it would turn on. */
 export interface TrustStatus { trusted: boolean; mcpServers: string[]; hookEvents: string[] }
 
 export type Effort = 'auto' | 'low' | 'medium' | 'high'
 
 /** How much Neru may do without asking. */
-export type AgentMode = 'manual' | 'accept_edits' | 'plan' | 'auto' | 'bypass'
+export type AgentMode = 'manual' | 'accept_edits' | 'plan' | 'spec' | 'auto' | 'bypass'
 
 export interface SessionChange { path: string; diff: string; additions: number; deletions: number; status: 'added' | 'modified' | 'deleted' }
 
-export interface SlashCommand { name: string; description: string; template: string; source: 'project' | 'personal' | 'built-in' | 'skill'; argumentHint?: string; model?: string; allowedTools?: string[] }
+export interface SlashCommand { name: string; description: string; template: string; source: 'project' | 'personal' | 'built-in' | 'skill' | 'mcp'; argumentHint?: string; model?: string; allowedTools?: string[] }
 
 export interface CiCheck { name: string; state: 'pending' | 'success' | 'failure' | 'skipped'; url: string | null }
 export interface PrStatus { number: number; url: string; title: string; state: string; checks: CiCheck[] }
@@ -232,7 +239,15 @@ export type AgentEvent = { sessionId: string } & (
   | { type: 'steered'; text: string }
   | ({ type: 'subagent' } & SubagentProgress)
   /** Added: a second model's review of the edit waiting for approval. */
-  | { type: 'review'; review: Review })
+  | { type: 'review'; review: Review }
+  /** The agent saved a reviewable document (plan, walkthrough, spec). */
+  | { type: 'document'; document: SessionDocument })
+
+/** A Markdown document the agent wrote for review in this session. */
+export interface SessionDocument { name: string; title: string; size: number; modified: number; done: number; total: number }
+/** An answer from beside the main conversation: /btw, or one column of a compare. */
+export interface SideAnswer { text: string; providerId: string; model: string; ms: number }
+export interface OutputStyle { name: string; description: string; source: string; current: boolean }
 
 /** Live state of one sub-agent, sent while it works and shown nested under its `task` tool call. */
 export interface SubagentProgress { id: string; role: string; description: string; status: 'running' | 'done'; tools: number; rounds: number; elapsedMs: number; current: string; steps: string[]; approval?: SubagentApproval }

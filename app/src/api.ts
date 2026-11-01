@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CitationStyle, Source, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
 import type { BoardCard, CheckResult, Digest, EngineSettings, Profile, QueuedTask, UsageTotals } from './types'
+import type { OutputStyle, ServerPrompt, ServerResource, SessionDocument, SideAnswer } from './types'
 import type { Route } from './lib/browser'
 
 export const api = {
@@ -212,7 +213,22 @@ export const api = {
   forgetKeys: () => invoke<void>('forget_keys'),
   savedKeyProviders: () => invoke<string[]>('saved_key_providers'),
   mcpServers: () => invoke<McpServer[]>('mcp_servers'),
-  mcpSaveServer: (server: Pick<McpServer, 'name' | 'command' | 'args' | 'env' | 'url' | 'headers' | 'enabled'>, previous?: string) => invoke<McpServer[]>('mcp_save_server', { server, previous }),
+  mcpSaveServer: (server: Pick<McpServer, 'name' | 'command' | 'args' | 'env' | 'url' | 'headers' | 'enabled' | 'transport'>, previous?: string) => invoke<McpServer[]>('mcp_save_server', { server, previous }),
+  /** Resources of the running connectors, offered after @ in the composer. */
+  mcpResources: () => invoke<ServerResource[]>('mcp_resources'),
+  mcpReadResource: (server: string, uri: string) => invoke<string>('mcp_read_resource', { server, uri }),
+  /** Prompts of the running connectors, offered as /mcp__server__prompt commands. */
+  mcpPrompts: () => invoke<ServerPrompt[]>('mcp_prompts'),
+  mcpGetPrompt: (server: string, name: string, args: Record<string, string>) => invoke<string>('mcp_get_prompt', { server, name, arguments: args }),
+  sessionDocuments: (sessionId: string) => invoke<SessionDocument[]>('list_session_documents', { sessionId }),
+  readSessionDocument: (sessionId: string, name: string) => invoke<string>('read_session_document', { sessionId, name }),
+  writeSessionDocument: (sessionId: string, name: string, content: string) => invoke<SessionDocument[]>('write_session_document', { sessionId, name, content }),
+  /** /btw: a side question to the session's model that stays out of the conversation. */
+  askSideQuestion: (question: string, sessionId: string | null) => invoke<SideAnswer>('ask_side_question', { question, sessionId }),
+  compareModel: (prompt: string, target: { providerId: string; apiFormat: ApiFormat; baseUrl: string; model: string }, sessionId: string | null) => invoke<SideAnswer>('compare_model', { prompt, ...target, sessionId }),
+  keepComparedAnswer: (sessionId: string, prompt: string, answer: string, model: string) => invoke<void>('keep_compared_answer', { sessionId, prompt, answer, model }),
+  outputStyles: () => invoke<OutputStyle[]>('list_output_styles'),
+  setOutputStyle: (name: string) => invoke<OutputStyle[]>('set_output_style', { name }),
   mcpRemoveServer: (name: string) => invoke<McpServer[]>('mcp_remove_server', { name }),
   mcpRestart: (name: string) => invoke<McpServer[]>('mcp_restart', { name }),
   mcpSyncProject: () => invoke<McpServer[]>('mcp_sync_project'),

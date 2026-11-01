@@ -1003,7 +1003,7 @@ fn verify_new(config: &ProviderConfig, models: &[ModelInfo]) {
     });
 }
 
-fn resolve(provider_id: String, api_format: String, base_url: String, api_key: String, model: String, app: &AppHandle) -> Result<ProviderConfig, String> {
+pub(crate) fn resolve(provider_id: String, api_format: String, base_url: String, api_key: String, model: String, app: &AppHandle) -> Result<ProviderConfig, String> {
     let base_url = base_url.trim().trim_end_matches('/').to_string();
     let url = reqwest::Url::parse(&base_url).map_err(|e| e.to_string())?;
     if url.scheme() != "https" && !(url.scheme() == "http" && providers::is_local(&url)) {

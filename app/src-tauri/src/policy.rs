@@ -445,7 +445,7 @@ impl<'a> Call<'a> {
         let (aliases, subject): (&'static [&'static str], Subject) = match tool {
             "run_shell_command" => (&["Bash"], Subject::Command(text("command"))),
             "run_project_task" => (&["Bash"], crate::tasks::command(root, args["task"].as_str().unwrap_or("")).map(Subject::Command).unwrap_or(Subject::Plain)),
-            "propose_edit" | "propose_write_file" | "propose_delete" | "propose_create_folder" | "propose_move" => (
+            "propose_edit" | "propose_write_file" | "propose_notebook_edit" | "propose_delete" | "propose_create_folder" | "propose_move" => (
                 &["Edit", "Write", "MultiEdit", "NotebookEdit"],
                 Subject::Paths(["path", "from", "to"].iter().map(|key| text(key)).filter(|path| !path.is_empty()).collect()),
             ),

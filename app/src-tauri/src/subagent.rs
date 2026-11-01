@@ -42,7 +42,7 @@ const MAX_RETRIES: u32 = 4;
 const ECONOMY_DEADLINE: Duration = Duration::from_secs(90);
 
 /// Tools that change the project. A custom agent gets them only when its definition lists them.
-pub const WRITE_TOOLS: &[&str] = &["propose_edit", "propose_write_file", "propose_delete", "propose_move", "propose_create_folder", "run_shell_command", "run_project_task"];
+pub const WRITE_TOOLS: &[&str] = &["propose_edit", "propose_write_file", "propose_notebook_edit", "propose_delete", "propose_move", "propose_create_folder", "run_shell_command", "run_project_task"];
 
 /// What the parent turn may do without asking; its sub-agents get the same.
 #[derive(Clone, Default)]

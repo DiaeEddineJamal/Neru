@@ -1,6 +1,9 @@
 //! Model Context Protocol connectors over stdio. Each configured server is a local process that
 //! speaks JSON-RPC 2.0, one message per line. Neru lists its tools, offers them to the model as
 //! `mcp__<server>__<tool>`, and runs a call only after the user approves it (or always allows it).
+//! Hosted connectors speak Streamable HTTP, or the older HTTP+SSE transport (a GET event stream
+//! that names a POST endpoint). A server's resources can be attached to a message with @, and its
+//! prompts run as `/mcp__<server>__<prompt>` commands.
 
 #[allow(unused_imports)] // .hidden() is called here only on some systems
 use crate::Hidden;
@@ -52,6 +55,9 @@ pub struct ServerConfig {
     pub env: HashMap<String, String>,
     #[serde(default = "enabled_default")]
     pub enabled: bool,
+    /// Hosted servers: "sse" for the legacy HTTP+SSE transport; Streamable HTTP otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -62,6 +68,40 @@ pub struct ToolInfo {
     pub read_only: bool,
     #[serde(skip)]
     pub schema: Value,
+}
+
+/// A document a server offers (`resources/list`).
+#[derive(Clone, Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceInfo {
+    pub uri: String,
+    pub name: String,
+    pub description: String,
+    pub mime_type: Option<String>,
+}
+
+#[derive(Clone, Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptArgument {
+    pub name: String,
+    pub description: String,
+    pub required: bool,
+}
+
+/// A prompt template a server offers (`prompts/list`).
+#[derive(Clone, Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptInfo {
+    pub name: String,
+    pub description: String,
+    pub arguments: Vec<PromptArgument>,
+}
+
+/// A server's resources and prompts, listed once it connects.
+#[derive(Clone, Default)]
+struct Catalog {
+    resources: Vec<ResourceInfo>,
+    prompts: Vec<PromptInfo>,
 }
 
 #[derive(Serialize)]
@@ -76,12 +116,14 @@ pub struct ServerView {
     pub signed_in: bool,
     pub error: Option<String>,
     pub tools: Vec<ToolInfo>,
+    pub resources: Vec<ResourceInfo>,
+    pub prompts: Vec<PromptInfo>,
     /// "user" for connectors saved in Settings, "project" for the open project's `.mcp.json`.
     pub source: String,
 }
 
 /// A connector from the open project's `.mcp.json`. `legacy_sse` marks `"type": "sse"` entries,
-/// which are tried as Streamable HTTP.
+/// which use the HTTP+SSE transport.
 #[derive(Clone, PartialEq, Debug)]
 pub struct ProjectServer {
     pub config: ServerConfig,
@@ -107,6 +149,7 @@ pub struct McpManager {
     auth_needed: Mutex<HashMap<String, Option<String>>>,
     errors: Mutex<HashMap<String, String>>,
     starting: Mutex<Vec<String>>,
+    catalogs: Mutex<HashMap<String, Catalog>>,
     /// Connectors from the open project's `.mcp.json`, as last synced; they win over saved ones
     /// with the same name and are never written to Neru's own `mcp.json`.
     project: Mutex<Vec<ProjectServer>>,
@@ -204,6 +247,7 @@ pub(crate) fn parse_project_config(value: &Value) -> Vec<ProjectServer> {
                 args: entry["args"].as_array().map(|args| args.iter().filter_map(Value::as_str).map(expand_env).collect()).unwrap_or_default(),
                 env: strings(&entry["env"]),
                 enabled: entry["disabled"].as_bool() != Some(true),
+                transport: (kind == "sse").then(|| "sse".to_string()),
             };
             (!config.command.is_empty() || config.url.as_deref().is_some_and(|url| !url.is_empty())).then_some(ProjectServer { config, legacy_sse: kind == "sse" })
         })
@@ -447,6 +491,316 @@ fn parse_tools(page: &Value) -> Vec<ToolInfo> {
         .collect()
 }
 
+fn parse_resources(page: &Value) -> Vec<ResourceInfo> {
+    page["resources"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let uri = item["uri"].as_str()?.to_string();
+            Some(ResourceInfo {
+                name: item["title"].as_str().or_else(|| item["name"].as_str()).unwrap_or(&uri).chars().take(200).collect(),
+                description: item["description"].as_str().unwrap_or("").chars().take(500).collect(),
+                mime_type: item["mimeType"].as_str().map(String::from),
+                uri,
+            })
+        })
+        .collect()
+}
+
+fn parse_prompts(page: &Value) -> Vec<PromptInfo> {
+    page["prompts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            Some(PromptInfo {
+                name: item["name"].as_str()?.to_string(),
+                description: item["description"].as_str().or_else(|| item["title"].as_str()).unwrap_or("").chars().take(500).collect(),
+                arguments: item["arguments"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|arg| {
+                        Some(PromptArgument {
+                            name: arg["name"].as_str()?.to_string(),
+                            description: arg["description"].as_str().unwrap_or("").to_string(),
+                            required: arg["required"].as_bool().unwrap_or(false),
+                        })
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+/// The text of `resources/read`; binary parts are named, not inlined.
+fn resource_text(result: &Value) -> String {
+    let parts: Vec<String> = result["contents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|part| match part["text"].as_str() {
+            Some(text) => text.to_string(),
+            None => format!(
+                "[binary {} resource {}, {} bytes]",
+                part["mimeType"].as_str().unwrap_or("application/octet-stream"),
+                part["uri"].as_str().unwrap_or(""),
+                part["blob"].as_str().map_or(0, |blob| blob.len() * 3 / 4)
+            ),
+        })
+        .collect();
+    parts.join("\n\n")
+}
+
+/// A content block of a prompt message, as text.
+fn content_text(content: &Value) -> String {
+    match content["type"].as_str() {
+        Some("text") => content["text"].as_str().unwrap_or("").to_string(),
+        Some("resource") => content["resource"]["text"].as_str().map(String::from).unwrap_or_else(|| format!("[resource {}]", content["resource"]["uri"].as_str().unwrap_or(""))),
+        Some("resource_link") => format!("[resource {}]", content["uri"].as_str().unwrap_or("")),
+        Some(other) => format!("[{other} content]"),
+        None => String::new(),
+    }
+}
+
+/// `prompts/get` as one message to send: the turns' text, labeled by role when an assistant turn
+/// is among them.
+fn prompt_text(result: &Value) -> String {
+    let messages = result["messages"].as_array().cloned().unwrap_or_default();
+    let only_user = messages.iter().all(|message| message["role"] != "assistant");
+    messages
+        .iter()
+        .map(|message| {
+            let text = content_text(&message["content"]);
+            if only_user { text } else { format!("[{}]\n{text}", message["role"].as_str().unwrap_or("user")) }
+        })
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Complete events at the front of an SSE buffer, as (event name, data); a partial event stays in
+/// the buffer for the next chunk.
+fn take_sse_events(buffer: &mut String) -> Vec<(String, String)> {
+    let mut events = Vec::new();
+    while let Some(end) = buffer.find("\n\n") {
+        let block: String = buffer.drain(..end + 2).collect();
+        let mut name = String::from("message");
+        let mut data = Vec::new();
+        for line in block.lines() {
+            if let Some(value) = line.strip_prefix("event:") {
+                name = value.trim().to_string();
+            } else if let Some(value) = line.strip_prefix("data:") {
+                data.push(value.strip_prefix(' ').unwrap_or(value));
+            }
+        }
+        if !data.is_empty() {
+            events.push((name, data.join("\n")));
+        }
+    }
+    events
+}
+
+/// The POST endpoint an SSE stream named. It must be on the stream's own origin, so headers and
+/// tokens never go to another host.
+fn sse_endpoint(stream: &str, data: &str) -> Result<String, String> {
+    let base = reqwest::Url::parse(stream).map_err(|e| e.to_string())?;
+    let endpoint = base.join(data.trim()).map_err(|_| "The connector sent an unreadable endpoint".to_string())?;
+    if endpoint.origin() != base.origin() {
+        return Err("The connector named an endpoint on another host".into());
+    }
+    Ok(endpoint.to_string())
+}
+
+/// A hosted connector over the legacy HTTP+SSE transport (MCP 2024-11-05): one long GET stream
+/// carries every answer, and requests go as POSTs to the endpoint its first event names.
+struct SseClient {
+    name: String,
+    headers: HashMap<String, String>,
+    http: reqwest::Client,
+    token: Option<oauth::Token>,
+    endpoint: Mutex<String>,
+    pending: Mutex<HashMap<u64, Reply>>,
+    next: AtomicU64,
+    tools: Mutex<Vec<ToolInfo>>,
+    alive: Arc<std::sync::atomic::AtomicBool>,
+    last: Mutex<String>,
+}
+
+impl SseClient {
+    async fn start(config: &ServerConfig) -> Result<Arc<Self>, HttpError> {
+        let url = config.url.clone().unwrap_or_default();
+        let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(20)).build().map_err(|e| HttpError::Other(e.to_string()))?;
+        let client = Arc::new(Self {
+            name: config.name.clone(),
+            headers: config.headers.clone(),
+            http,
+            token: oauth::load(&config.name),
+            endpoint: Mutex::new(String::new()),
+            pending: Mutex::new(HashMap::new()),
+            next: AtomicU64::new(1),
+            tools: Mutex::new(Vec::new()),
+            alive: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            last: Mutex::new(String::new()),
+        });
+        let mut request = client.http.get(&url).header("Accept", "text/event-stream");
+        request = client.authorize(request);
+        let response = request.send().await.map_err(|e| HttpError::Other(format!("Could not reach the connector: {e}")))?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            let www = response.headers().get(reqwest::header::WWW_AUTHENTICATE).and_then(|value| value.to_str().ok()).map(String::from);
+            return Err(HttpError::NeedsAuth(www));
+        }
+        if !response.status().is_success() {
+            return Err(HttpError::Other(format!("The connector's event stream answered {}", response.status())));
+        }
+        let (ready, endpoint) = oneshot::channel::<Result<String, String>>();
+        let reader = Arc::downgrade(&client);
+        let alive = client.alive.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut response = response;
+            let mut buffer = String::new();
+            let mut ready = Some(ready);
+            while let Ok(Some(chunk)) = response.chunk().await {
+                buffer.push_str(&String::from_utf8_lossy(&chunk).replace("\r\n", "\n"));
+                for (event, data) in take_sse_events(&mut buffer) {
+                    let Some(client) = reader.upgrade() else { return };
+                    if event == "endpoint" {
+                        if let Some(ready) = ready.take() {
+                            let _ = ready.send(sse_endpoint(&url, &data));
+                        }
+                    } else if let Ok(message) = serde_json::from_str::<Value>(&data) {
+                        client.handle(message).await;
+                    }
+                }
+            }
+            alive.store(false, Ordering::SeqCst);
+            if let Some(client) = reader.upgrade() {
+                let waiting: Vec<Reply> = client.pending.lock().map(|mut map| map.drain().map(|(_, reply)| reply).collect()).unwrap_or_default();
+                for reply in waiting {
+                    let _ = reply.send(Err("The connector closed its event stream".into()));
+                }
+            }
+        });
+        let endpoint = match tokio::time::timeout(Duration::from_secs(20), endpoint).await {
+            Ok(Ok(Ok(endpoint))) => endpoint,
+            Ok(Ok(Err(error))) => return Err(HttpError::Other(error)),
+            _ => return Err(HttpError::Other("The connector's event stream never named its message endpoint".into())),
+        };
+        if let Ok(mut slot) = client.endpoint.lock() {
+            *slot = endpoint;
+        }
+        let init = json!({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "Neru", "version": env!("CARGO_PKG_VERSION") }
+        });
+        client.request("initialize", init, Duration::from_secs(60)).await.map_err(HttpError::Other)?;
+        client.post(&json!({"jsonrpc":"2.0","method":"notifications/initialized"})).await.map_err(HttpError::Other)?;
+        let tools = list_all(|method, params| client.request(method, params, Duration::from_secs(30)), "tools/list", parse_tools).await.map_err(HttpError::Other)?;
+        if let Ok(mut slot) = client.tools.lock() {
+            *slot = tools;
+        }
+        Ok(client)
+    }
+
+    fn authorize(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (key, value) in &self.headers {
+            request = request.header(key, value);
+        }
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(&token.access_token);
+        }
+        request
+    }
+
+    async fn handle(&self, message: Value) {
+        let id = message.get("id").cloned();
+        if message.get("method").is_some() {
+            if let Some(id) = id {
+                let reply = if message["method"] == "ping" {
+                    json!({"jsonrpc":"2.0","id":id,"result":{}})
+                } else {
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Not supported by Neru"}})
+                };
+                let _ = self.post(&reply).await;
+            }
+            return;
+        }
+        let Some(id) = id.and_then(|id| id.as_u64()) else { return };
+        let Some(reply) = self.pending.lock().ok().and_then(|mut map| map.remove(&id)) else { return };
+        let result = match message.get("error") {
+            Some(error) => Err(error["message"].as_str().unwrap_or("MCP error").to_string()),
+            None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+        };
+        let _ = reply.send(result);
+    }
+
+    async fn post(&self, message: &Value) -> Result<(), String> {
+        let endpoint = self.endpoint.lock().map(|slot| slot.clone()).map_err(|e| e.to_string())?;
+        let response = self.authorize(self.http.post(&endpoint).json(message)).send().await.map_err(|e| format!("Could not reach the connector: {e}"))?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.alive.store(false, Ordering::SeqCst);
+            return Err(format!("The {} connector needs you to sign in again (Settings → Connectors)", self.name));
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("The connector answered {status}: {}", text.chars().take(300).collect::<String>()));
+        }
+        Ok(())
+    }
+
+    async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
+        if !self.alive.load(Ordering::SeqCst) {
+            return Err("The connector's event stream closed".into());
+        }
+        let id = self.next.fetch_add(1, Ordering::SeqCst);
+        let (sender, receiver) = oneshot::channel();
+        self.pending.lock().map_err(|e| e.to_string())?.insert(id, sender);
+        let sent = self.post(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})).await;
+        let result = match sent {
+            Err(error) => Err(error),
+            Ok(()) => match tokio::time::timeout(timeout, receiver).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err("The connector closed the request".into()),
+                Err(_) => Err(format!("{method} timed out after {} seconds", timeout.as_secs())),
+            },
+        };
+        if result.is_err() {
+            if let Ok(mut map) = self.pending.lock() {
+                map.remove(&id);
+            }
+        }
+        if let Err(error) = &result {
+            if let Ok(mut last) = self.last.lock() {
+                *last = error.clone();
+            }
+        }
+        result
+    }
+}
+
+/// Every page of a paginated list method (`tools/list`, `resources/list`, `prompts/list`).
+async fn list_all<T, F, Fut>(request: F, method: &'static str, parse: fn(&Value) -> Vec<T>) -> Result<Vec<T>, String>
+where
+    F: Fn(&'static str, Value) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let mut items = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..20 {
+        let params = cursor.as_ref().map(|cursor| json!({ "cursor": cursor })).unwrap_or_else(|| json!({}));
+        let page = request(method, params).await?;
+        items.extend(parse(&page));
+        cursor = page["nextCursor"].as_str().map(String::from);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(items)
+}
+
 enum HttpError {
     /// 401: the connector wants a sign-in; carries its WWW-Authenticate header.
     NeedsAuth(Option<String>),
@@ -637,6 +991,7 @@ impl HttpClient {
 enum Connection {
     Stdio(Arc<Client>),
     Http(Arc<HttpClient>),
+    Sse(Arc<SseClient>),
 }
 
 impl Connection {
@@ -644,6 +999,7 @@ impl Connection {
         match self {
             Self::Stdio(client) => client.alive.load(Ordering::SeqCst),
             Self::Http(client) => client.alive.load(Ordering::SeqCst),
+            Self::Sse(client) => client.alive.load(Ordering::SeqCst),
         }
     }
 
@@ -651,6 +1007,7 @@ impl Connection {
         let tools = match self {
             Self::Stdio(client) => client.tools.lock().map(|tools| tools.clone()),
             Self::Http(client) => client.tools.lock().map(|tools| tools.clone()),
+            Self::Sse(client) => client.tools.lock().map(|tools| tools.clone()),
         };
         tools.unwrap_or_default()
     }
@@ -659,6 +1016,7 @@ impl Connection {
         match self {
             Self::Stdio(client) => client.last_error(),
             Self::Http(client) => client.last.lock().map(|last| last.clone()).unwrap_or_default(),
+            Self::Sse(client) => client.last.lock().map(|last| last.clone()).unwrap_or_default(),
         }
     }
 
@@ -666,6 +1024,17 @@ impl Connection {
         match self {
             Self::Stdio(client) => client.request(method, params, timeout).await,
             Self::Http(client) => client.request(method, params, timeout).await,
+            Self::Sse(client) => client.request(method, params, timeout).await,
+        }
+    }
+
+    /// Resources and prompts, for servers that offer them; a server without them answers with an
+    /// error, which counts as none.
+    async fn catalog(&self) -> Catalog {
+        let request = |method: &'static str, params: Value| self.request(method, params, Duration::from_secs(15));
+        Catalog {
+            resources: list_all(request, "resources/list", parse_resources).await.unwrap_or_default(),
+            prompts: list_all(request, "prompts/list", parse_prompts).await.unwrap_or_default(),
         }
     }
 }
@@ -685,6 +1054,9 @@ impl McpManager {
         if let Ok(mut auth) = self.auth_needed.lock() {
             auth.remove(name);
         }
+        if let Ok(mut catalogs) = self.catalogs.lock() {
+            catalogs.remove(name);
+        }
     }
 
     pub(crate) async fn start(&self, config: &ServerConfig) {
@@ -693,21 +1065,36 @@ impl McpManager {
             starting.push(config.name.clone());
         }
         let result = if config.url.is_some() {
-            match HttpClient::start(config).await {
-                Ok(client) => Ok(Connection::Http(client)),
+            let legacy = config.transport.as_deref() == Some("sse") || self.is_legacy_sse(&config.name);
+            let attempt = if legacy {
+                SseClient::start(config).await.map(Connection::Sse)
+            } else {
+                match HttpClient::start(config).await {
+                    // Older servers only speak HTTP+SSE: fall back as the MCP spec suggests.
+                    Err(HttpError::Other(error)) => match SseClient::start(config).await {
+                        Ok(client) => Ok(Connection::Sse(client)),
+                        Err(HttpError::NeedsAuth(www)) => Err(HttpError::NeedsAuth(www)),
+                        Err(HttpError::Other(_)) => Err(HttpError::Other(error)),
+                    },
+                    other => other.map(Connection::Http),
+                }
+            };
+            match attempt {
+                Ok(client) => Ok(client),
                 Err(HttpError::NeedsAuth(www)) => {
                     if let Ok(mut auth) = self.auth_needed.lock() {
                         auth.insert(config.name.clone(), www);
                     }
                     Err("Sign in to connect this account".to_string())
                 }
-                Err(HttpError::Other(error)) if self.is_legacy_sse(&config.name) => Err(format!(
-                    "{error}. This connector is declared with \"type\": \"sse\" in .mcp.json; Neru only speaks Streamable HTTP, not the legacy SSE transport. Point it at the server's Streamable HTTP endpoint (often /mcp) and set \"type\": \"http\"."
-                )),
                 Err(HttpError::Other(error)) => Err(error),
             }
         } else {
             Client::start(config).await.map(Connection::Stdio)
+        };
+        let catalog = match &result {
+            Ok(client) => client.catalog().await,
+            Err(_) => Catalog::default(),
         };
         if let Ok(mut starting) = self.starting.lock() {
             starting.retain(|name| name != &config.name);
@@ -716,6 +1103,9 @@ impl McpManager {
             Ok(client) => {
                 if let Ok(mut clients) = self.clients.lock() {
                     clients.insert(config.name.clone(), client);
+                }
+                if let Ok(mut catalogs) = self.catalogs.lock() {
+                    catalogs.insert(config.name.clone(), catalog);
                 }
             }
             Err(error) => {
@@ -800,7 +1190,7 @@ impl McpManager {
             .map(|(config, source)| {
                 if source == "project" && config.enabled && !self.project_trusted.load(Ordering::SeqCst) {
                     let error = Some("Trust this project to start the connectors in its .mcp.json".to_string());
-                    return ServerView { config, status: "needs_trust".into(), signed_in: false, error, tools: vec![], source: source.into() };
+                    return ServerView { config, status: "needs_trust".into(), signed_in: false, error, tools: vec![], resources: vec![], prompts: vec![], source: source.into() };
                 }
                 let client = self.client(&config.name).filter(|client| client.alive());
                 let needs_auth = self.auth_needed.lock().map(|auth| auth.contains_key(&config.name)).unwrap_or(false);
@@ -822,7 +1212,8 @@ impl McpManager {
                     ("error", None) => Some(self.client(&config.name).map(|client| client.last_error()).filter(|text| !text.is_empty()).unwrap_or_else(|| "The server stopped".into())),
                     (_, error) => error,
                 };
-                ServerView { config, status: status.into(), signed_in, error, tools, source: source.into() }
+                let catalog = if status == "connected" { self.catalog(&config.name) } else { Catalog::default() };
+                ServerView { config, status: status.into(), signed_in, error, tools, resources: catalog.resources, prompts: catalog.prompts, source: source.into() }
             })
             .collect()
     }
@@ -852,6 +1243,39 @@ impl McpManager {
             }
         }
         (specs, names)
+    }
+
+    fn catalog(&self, name: &str) -> Catalog {
+        self.catalogs.lock().ok().and_then(|catalogs| catalogs.get(name).cloned()).unwrap_or_default()
+    }
+
+    /// Running servers with their catalogs, by name.
+    fn connected_catalogs(&self) -> Vec<(String, Catalog)> {
+        let mut names: Vec<String> = self.clients.lock().map(|clients| clients.iter().filter(|(_, client)| client.alive()).map(|(name, _)| name.clone()).collect()).unwrap_or_default();
+        names.sort();
+        names.into_iter().map(|name| (name.clone(), self.catalog(&name))).collect()
+    }
+
+    /// The text of one resource, for attaching to a message.
+    pub async fn read_resource(&self, server: &str, uri: &str) -> Result<String, String> {
+        let client = self.client(server).ok_or_else(|| format!("The {server} connector is not running"))?;
+        let result = client.request("resources/read", json!({ "uri": uri }), Duration::from_secs(60)).await?;
+        let mut text = resource_text(&result);
+        if text.len() > 60_000 {
+            text = text.chars().take(60_000).collect::<String>() + "\n[resource truncated]";
+        }
+        Ok(text)
+    }
+
+    /// A prompt filled in with `arguments`, as the text of one message.
+    pub async fn get_prompt(&self, server: &str, name: &str, arguments: HashMap<String, String>) -> Result<String, String> {
+        let client = self.client(server).ok_or_else(|| format!("The {server} connector is not running"))?;
+        let result = client.request("prompts/get", json!({ "name": name, "arguments": arguments }), Duration::from_secs(60)).await?;
+        let text = prompt_text(&result);
+        if text.trim().is_empty() {
+            return Err(format!("The {name} prompt came back empty"));
+        }
+        Ok(text)
     }
 
     /// Calls a tool and flattens its content to text for the model.
@@ -913,6 +1337,58 @@ pub async fn start_enabled(app: AppHandle) {
 #[tauri::command]
 pub fn mcp_servers(app: AppHandle) -> Vec<ServerView> {
     app.state::<AppState>().mcp.views()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerResource {
+    pub server: String,
+    #[serde(flatten)]
+    pub resource: ResourceInfo,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerPrompt {
+    pub server: String,
+    /// The slash command that runs it: `mcp__<server>__<prompt>`.
+    pub command: String,
+    #[serde(flatten)]
+    pub prompt: PromptInfo,
+}
+
+/// Resources of every running connector, for @-mentions in the composer.
+#[tauri::command]
+pub fn mcp_resources(app: AppHandle) -> Vec<ServerResource> {
+    app.state::<AppState>()
+        .mcp
+        .connected_catalogs()
+        .into_iter()
+        .flat_map(|(server, catalog)| catalog.resources.into_iter().map(move |resource| ServerResource { server: server.clone(), resource }))
+        .collect()
+}
+
+#[tauri::command]
+pub async fn mcp_read_resource(server: String, uri: String, app: AppHandle) -> Result<String, String> {
+    app.state::<AppState>().mcp.read_resource(&server, &uri).await
+}
+
+/// Prompts of every running connector, offered as slash commands.
+#[tauri::command]
+pub fn mcp_prompts(app: AppHandle) -> Vec<ServerPrompt> {
+    app.state::<AppState>()
+        .mcp
+        .connected_catalogs()
+        .into_iter()
+        .flat_map(|(server, catalog)| {
+            catalog.prompts.into_iter().map(move |prompt| ServerPrompt { command: function_name(&server, &prompt.name), server: server.clone(), prompt })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn mcp_get_prompt(server: String, name: String, arguments: HashMap<String, String>, app: AppHandle) -> Result<String, String> {
+    app.state::<AppState>().mcp.get_prompt(&server, &name, arguments).await
 }
 
 /// Brings the project connectors in line with the open project's `.mcp.json`; the window calls
@@ -1089,5 +1565,58 @@ mod tests {
         let messages = event_messages(stream);
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1]["id"], 3);
+    }
+
+    #[test]
+    fn legacy_sse_entries_keep_their_transport() {
+        let value = json!({"mcpServers": {"old": {"type": "sse", "url": "https://old.example.com/sse"}, "new": {"url": "https://new.example.com/mcp"}}});
+        let servers = parse_project_config(&value);
+        assert_eq!(servers[0].config.transport, None);
+        assert_eq!(servers[1].config.transport.as_deref(), Some("sse"));
+        // Saved connectors written before the field existed still load.
+        let saved: ServerConfig = serde_json::from_value(json!({"name": "x", "url": "https://x.example.com"})).unwrap();
+        assert_eq!(saved.transport, None);
+    }
+
+    #[test]
+    fn splits_sse_events_across_chunks() {
+        let mut buffer = String::from("event: endpoint\ndata: /messages?session=1\n\nevent: message\ndata: {\"id\":1,");
+        assert_eq!(take_sse_events(&mut buffer), vec![("endpoint".to_string(), "/messages?session=1".to_string())]);
+        buffer.push_str("\"result\":{}}\n\n: keep-alive\n\n");
+        let events = take_sse_events(&mut buffer);
+        assert_eq!(events, vec![("message".to_string(), "{\"id\":1,\"result\":{}}".to_string())]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn sse_endpoints_stay_on_the_streams_host() {
+        assert_eq!(sse_endpoint("https://mcp.example.com/sse", "/messages?s=1").unwrap(), "https://mcp.example.com/messages?s=1");
+        assert_eq!(sse_endpoint("https://mcp.example.com/a/sse", "messages").unwrap(), "https://mcp.example.com/a/messages");
+        assert!(sse_endpoint("https://mcp.example.com/sse", "https://evil.example.net/steal").is_err());
+        assert!(sse_endpoint("https://mcp.example.com/sse", "http://mcp.example.com/messages").is_err());
+    }
+
+    #[test]
+    fn reads_resources_and_prompts() {
+        let resources = parse_resources(&json!({"resources": [
+            {"uri": "file:///notes.md", "name": "notes", "title": "Team notes", "mimeType": "text/markdown"},
+            {"uri": "db://users", "name": "users"},
+            {"name": "no uri"}
+        ]}));
+        assert_eq!(resources.len(), 2);
+        assert_eq!(resources[0].name, "Team notes");
+        assert_eq!(resources[0].mime_type.as_deref(), Some("text/markdown"));
+        assert_eq!(resources[1].name, "users");
+        let text = resource_text(&json!({"contents": [{"uri": "file:///notes.md", "text": "hello"}, {"uri": "file:///logo.png", "mimeType": "image/png", "blob": "AAAA"}]}));
+        assert_eq!(text, "hello\n\n[binary image/png resource file:///logo.png, 3 bytes]");
+
+        let prompts = parse_prompts(&json!({"prompts": [{"name": "review", "description": "Review a PR", "arguments": [{"name": "pr", "required": true}, {"name": "focus"}]}]}));
+        assert_eq!(prompts[0].arguments.len(), 2);
+        assert!(prompts[0].arguments[0].required && !prompts[0].arguments[1].required);
+        assert_eq!(function_name("github", &prompts[0].name), "mcp__github__review");
+        let user_only = json!({"messages": [{"role": "user", "content": {"type": "text", "text": "Review PR 7"}}, {"role": "user", "content": {"type": "resource", "resource": {"uri": "x", "text": "diff"}}}]});
+        assert_eq!(prompt_text(&user_only), "Review PR 7\n\ndiff");
+        let dialog = json!({"messages": [{"role": "user", "content": {"type": "text", "text": "Hi"}}, {"role": "assistant", "content": {"type": "text", "text": "Hello"}}]});
+        assert_eq!(prompt_text(&dialog), "[user]\nHi\n\n[assistant]\nHello");
     }
 }

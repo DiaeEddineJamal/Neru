@@ -932,11 +932,12 @@ const MCP_HELP: &str = "Usage:
   neru mcp add [options] <name> <command> [args…] A local server started with a command
   neru mcp add [options] <name> -- <command> [args…]
   neru mcp add --transport http <name> <url>     A hosted (Streamable HTTP) server
+  neru mcp add --transport sse <name> <url>      A hosted server on the older HTTP+SSE transport
   neru mcp add-json <name> '<json>'              From JSON, as in .mcp.json
   neru mcp remove <name>                         Remove a connector
 
 Options:
-  -t, --transport <stdio|http>   How Neru talks to it (default: stdio, or http for a URL)
+  -t, --transport <stdio|http|sse>  How Neru talks to it (default: stdio, or http for a URL)
   -s, --scope <user|project>     user: every project (default); project: this project's .mcp.json
   -e, --env KEY=value            Environment variable (repeatable)
   -H, --header \"Name: value\"     Request header for hosted servers (repeatable)";
@@ -948,7 +949,7 @@ fn take(rest: &mut impl Iterator<Item = String>, inline: &Option<String>, name: 
 /// Reads `neru mcp add`'s arguments the way `claude mcp add` takes them. Returns the server and
 /// whether it goes in the project's .mcp.json.
 fn mcp_add_args(args: &[String]) -> Result<(crate::mcp::ServerConfig, bool), String> {
-    let mut server = crate::mcp::ServerConfig { name: String::new(), command: String::new(), url: None, headers: HashMap::new(), args: Vec::new(), env: HashMap::new(), enabled: true };
+    let mut server = crate::mcp::ServerConfig { name: String::new(), command: String::new(), url: None, headers: HashMap::new(), args: Vec::new(), env: HashMap::new(), enabled: true, transport: None };
     let mut transport = None;
     let mut project = false;
     let mut positional: Vec<String> = Vec::new();
@@ -998,7 +999,10 @@ fn mcp_add_args(args: &[String]) -> Result<(crate::mcp::ServerConfig, bool), Str
     let target: Vec<String> = positional.collect();
     let transport = transport.unwrap_or_else(|| if server.url.is_some() || target.first().is_some_and(|first| first.starts_with("http://") || first.starts_with("https://")) { "http".into() } else { "stdio".into() });
     match transport.as_str() {
-        "http" => {
+        "http" | "sse" => {
+            if transport == "sse" {
+                server.transport = Some("sse".into());
+            }
             if server.url.is_none() {
                 server.url = Some(target.first().cloned().ok_or("Give the server's URL")?);
             }
@@ -1008,8 +1012,7 @@ fn mcp_add_args(args: &[String]) -> Result<(crate::mcp::ServerConfig, bool), Str
             server.command = target.next().ok_or("Give the command that starts the server")?;
             server.args = target.collect();
         }
-        "sse" => return Err("Neru speaks Streamable HTTP, not the older SSE transport. Most servers offer it at /mcp: use --transport http.".into()),
-        other => return Err(format!("Unknown transport {other}: use stdio or http")),
+        other => return Err(format!("Unknown transport {other}: use stdio, http or sse")),
     }
     Ok((server, project))
 }
@@ -1022,7 +1025,7 @@ fn add_to_project(app: &tauri::AppHandle, server: &crate::mcp::ServerConfig) -> 
         config["mcpServers"] = json!({});
     }
     config["mcpServers"][&server.name] = match &server.url {
-        Some(url) => json!({"type": "http", "url": url, "headers": server.headers}),
+        Some(url) => json!({"type": if server.transport.as_deref() == Some("sse") { "sse" } else { "http" }, "url": url, "headers": server.headers}),
         None => json!({"command": server.command, "args": server.args, "env": server.env}),
     };
     std::fs::write(&file, serde_json::to_string_pretty(&config).map_err(|e| e.to_string())? + "\n").map_err(|e| format!("Could not write {}: {e}", file.display()))?;
@@ -1094,6 +1097,7 @@ fn mcp(app: &tauri::AppHandle, args: &[String]) -> i32 {
                             args: config["args"].as_array().map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect()).unwrap_or_default(),
                             env: strings(&config["env"]),
                             enabled: true,
+                            transport: (config["type"].as_str() == Some("sse")).then(|| "sse".to_string()),
                         };
                         if server.command.is_empty() && server.url.is_none() { Err("The JSON needs a \"command\" or a \"url\".".to_string()) } else { Ok((server, args.iter().any(|arg| arg == "--scope=project") || args.windows(2).any(|pair| matches!(pair[0].as_str(), "-s" | "--scope") && pair[1] == "project"))) }
                     }),
@@ -2771,7 +2775,7 @@ mod tests {
         assert_eq!(server.env.get("KEY").map(String::as_str), Some("1"));
         // The command's own flags stay with the command.
         assert_eq!(mcp_add_args(&args("git uvx mcp-git --repo .")).unwrap().0.args, vec!["mcp-git", "--repo", "."]);
-        assert!(mcp_add_args(&args("--transport sse old https://x/sse")).is_err());
+        assert_eq!(mcp_add_args(&args("--transport sse old https://x/sse")).unwrap().0.transport.as_deref(), Some("sse"));
         assert!(mcp_add_args(&args("--bogus x y")).is_err());
         assert!(mcp_add_args(&args("--scope team x y")).is_err());
     }

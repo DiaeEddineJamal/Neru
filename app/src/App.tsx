@@ -4,7 +4,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { cn } from '@/lib/utils'
-import { Bot, Cpu, Download, Palette, Plug, Search, Settings, FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, MessageCircle, Mic, Moon, Paperclip, PenLine, RotateCw, FolderSearch, Plus, ShieldCheck, Smartphone, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
+import { Bot, Cpu, Download, Keyboard, Palette, Plug, Search, Settings, FolderOpen, FolderTree, ArrowRight, BookOpen, ChevronRight, CodeXml, Command, ExternalLink, FileDiff as FileDiffIcon, FileText, FileSearch, Folder, GitBranch, GitCommitHorizontal, Globe, GraduationCap, KeyRound, Lightbulb, MessageCircle, Mic, Moon, Paperclip, PenLine, RotateCw, FolderSearch, Plus, ShieldCheck, Smartphone, Sparkles, SquareTerminal, Sun, Undo2, X } from 'lucide-react'
 import { FileDiff } from '@/components/agents/file-diff'
 import { languageForPath } from '@/components/agents/agent-code'
 import type { StreamingResponseFeedback } from '@/components/agents/streaming-response'
@@ -61,6 +61,13 @@ import { ProjectChecks } from './components/neru/ProjectChecks'
 import { expandCommand } from './components/neru/Composer'
 import { SettingsModelPicker, applyProbe, shortModelName, LISTING_IS_AUTHORITATIVE } from './components/neru/ModelPicker'
 import { notifyUser } from '@/lib/notify'
+import { actionFor, loadBindings } from '@/lib/shortcuts'
+import { BtwPanel, ComparePanel, type CompareTarget } from './components/neru/SidePanels'
+import { DocumentsPanel } from './components/neru/DocumentsPanel'
+import { SPEC_STEPS } from '@/lib/review'
+import { ShortcutsSettings } from './components/neru/ShortcutsSettings'
+import { OutputStyles } from './components/neru/OutputStyles'
+import type { ServerPrompt, ServerResource, SessionDocument, SideAnswer } from './types'
 import { extractDocumentText, imageDataUrl, isReadableDocument } from '@/lib/documents'
 import { STUDY_COMMANDS, studyPrompt } from '@/lib/study'
 import './App.css'
@@ -84,14 +91,30 @@ function trustSummary(status: TrustStatus) {
   return parts.join(' · ')
 }
 
+/** A connector prompt's arguments from what follows its command: `name=value` pairs, then the rest in order. */
+function promptArguments(prompt: ServerPrompt, text: string): Record<string, string> {
+  const values: Record<string, string> = {}
+  const loose: string[] = []
+  for (const match of text.matchAll(/(\w[\w-]*)=(?:"([^"]*)"|'([^']*)'|(\S+))|"([^"]*)"|'([^']*)'|(\S+)/g)) {
+    if (match[1] && prompt.arguments.some(arg => arg.name === match[1])) values[match[1]] = match[2] ?? match[3] ?? match[4] ?? ''
+    else loose.push(match[0].replace(/^["']|["']$/g, ''))
+  }
+  const open = prompt.arguments.filter(arg => !(arg.name in values))
+  // A single open argument takes the whole rest, spaces and all.
+  if (open.length === 1 && loose.length) values[open[0].name] = loose.join(' ')
+  else open.forEach((arg, index) => { if (loose[index] !== undefined) values[arg.name] = loose[index] })
+  return values
+}
+
 /** Overrides for one send: who it goes to, what it carries, and whether the message box is left alone (a queued message). */
 interface SendOptions { mode?: AgentMode; sessionId?: string; documents?: AttachedDocument[]; contextPaths?: string[]; keepComposer?: boolean; onStarted?: () => void }
-type SettingsTab = 'general' | 'appearance' | 'model' | 'privacy' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills' | 'phone'
+type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'model' | 'privacy' | 'agents' | 'cli' | 'imports' | 'voice' | 'connectors' | 'skills' | 'styles' | 'phone'
 // Grouped like Claude's settings: the app, this computer, and what you add to it. Words help the search find a tab.
 const settingsGroups: { label: string; tabs: { id: SettingsTab; label: string; icon: typeof Settings; words: string }[] }[] = [
   { label: 'Settings', tabs: [
     { id: 'general', label: 'General', icon: Settings, words: 'project guide tour notifications web search updates version credits keyboard shortcuts' },
     { id: 'appearance', label: 'Appearance', icon: Palette, words: 'color mode dark light theme sidebar hover' },
+    { id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard, words: 'keyboard shortcuts keys bindings hotkeys rebind' },
     { id: 'model', label: 'Model provider', icon: Cpu, words: 'api key provider model base url format free forget keys' },
     { id: 'privacy', label: 'Privacy and savings', icon: ShieldCheck, words: 'privacy secrets redact training data cost savings spent tokens second opinion review learned rules memory' },
     { id: 'voice', label: 'Voice', icon: Mic, words: 'dictation speech microphone whisper transcription language' },
@@ -103,6 +126,7 @@ const settingsGroups: { label: string; tabs: { id: SettingsTab; label: string; i
   ] },
   { label: 'Customize', tabs: [
     { id: 'skills', label: 'Skills', icon: BookOpen, words: 'skills commands slash' },
+    { id: 'styles', label: 'Output style', icon: PenLine, words: 'output style explanatory learning writing tone replies' },
     { id: 'connectors', label: 'Connectors', icon: Plug, words: 'mcp servers connectors tools' },
     { id: 'phone', label: 'Phone', icon: Smartphone, words: 'phone mobile remote pair qr code android iphone neru remote' },
   ] },
@@ -128,7 +152,7 @@ const writeStored = (key: string, value: unknown) => { try { localStorage.setIte
 const WEB_FILE = /\.(html?|css|scss|less|[cm]?[jt]sx?|vue|svelte|astro)$/i
 
 function applyAgentEvent(live: LiveResponse, event: AgentEvent): LiveResponse {
-  if (event.type === 'status' || event.type === 'notice' || event.type === 'context' || event.type === 'provider' || event.type === 'todos' || event.type === 'steered' || event.type === 'review') return live
+  if (event.type === 'status' || event.type === 'notice' || event.type === 'context' || event.type === 'provider' || event.type === 'todos' || event.type === 'steered' || event.type === 'review' || event.type === 'document') return live
   if (event.type === 'subagent') {
     const agent = { id: event.id, role: event.role, description: event.description, status: event.status, tools: event.tools, rounds: event.rounds, elapsedMs: event.elapsedMs, current: event.current, steps: event.steps, approval: event.approval, since: Date.now() - event.elapsedMs }
     const known = live.tools.some(tool => tool.id === event.id)
@@ -494,6 +518,12 @@ function App() {
       if (event.type === 'context') { if (event.sessionId === activeRef.current) setContext(event.usage); return }
       if (event.type === 'todos') { if (event.sessionId === activeRef.current) setTodos(event.todos); return }
       if (event.type === 'steered') return
+      if (event.type === 'document') {
+        // The agent saved a document for review: open it beside the conversation.
+        const { sessionId, document: saved } = event
+        void api.sessionDocuments(sessionId).then(list => { if (activeRef.current === sessionId) { setDocs(list); setDocOpen(saved.name); setDocsShown(true) } }).catch(() => undefined)
+        return
+      }
       // A second model finished (or started) reviewing the edit that waits for approval.
       if (event.type === 'review') { if (event.sessionId === activeRef.current) setPending(current => current && current.kind !== 'question' && current.kind !== 'plan' ? { ...current, review: event.review } : current); return }
       if (event.type === 'provider') {
@@ -578,6 +608,23 @@ function App() {
   // The project chip in the title bar offers “Open repository” once the remote is known.
   useEffect(() => { if (isTauri() && project) void api.gitRemoteInfo().then(setRemote).catch(() => setRemote(null)) }, [project])
   useEffect(() => { if (isTauri() && project) void api.listCommands().then(setCustomCommands).catch(() => setCustomCommands([])) }, [project, activeSessionId])
+  // Connector prompts (slash commands) and resources (@ mentions); refreshed as the menus open.
+  const [mcpPrompts, setMcpPrompts] = useState<ServerPrompt[]>([])
+  const [mcpResources, setMcpResources] = useState<ServerResource[]>([])
+  useEffect(() => { if (isTauri()) void api.mcpPrompts().then(setMcpPrompts).catch(() => setMcpPrompts([])) }, [project, activeSessionId])
+  // Side panels: /btw questions, model compare, and the documents the agent wrote for review.
+  const [btw, setBtw] = useState<{ seed: string } | null>(null)
+  const [compare, setCompare] = useState<{ seed: string } | null>(null)
+  const [docs, setDocs] = useState<SessionDocument[]>([])
+  const [docOpen, setDocOpen] = useState<string | null>(null)
+  const [docsShown, setDocsShown] = useState(false)
+  useEffect(() => {
+    setDocOpen(null); setDocsShown(false)
+    if (isTauri() && activeSessionId) void api.sessionDocuments(activeSessionId).then(setDocs).catch(() => setDocs([]))
+    else setDocs([])
+  }, [activeSessionId])
+  const [shortcuts, setShortcuts] = useState(loadBindings)
+  useEffect(() => { const update = () => setShortcuts(loadBindings()); window.addEventListener('neru-shortcuts', update); return () => window.removeEventListener('neru-shortcuts', update) }, [])
   const loadSession = useCallback((snapshot: SessionSnapshot) => {
     const id = snapshot.session.id
     setActiveSessionId(id); activeRef.current = id
@@ -971,6 +1018,11 @@ function App() {
     { name: 'compact', description: t('Summarize older messages to free up context'), template: '', source: 'built-in' },
     { name: 'review', description: t('Open the changes Neru made in this session'), template: '', source: 'built-in' },
     { name: 'plan', description: t('Switch to Plan mode, optionally with a task'), template: '$ARGUMENTS', source: 'built-in' },
+    ...(project ? [{ name: 'spec', description: t('Spec mode: requirements, design and tasks you review before any code'), template: '$ARGUMENTS', source: 'built-in' as const }] : []),
+    { name: 'docs', description: t('Show the documents Neru wrote in this session'), template: '', source: 'built-in' },
+    { name: 'btw', description: t('Ask a quick side question that stays out of the conversation'), template: '$ARGUMENTS', source: 'built-in' },
+    { name: 'compare', description: t('Send one prompt to two or three models side by side'), template: '$ARGUMENTS', source: 'built-in' },
+    { name: 'output-style', description: t('Show or choose how Neru writes, e.g. /output-style explanatory'), template: '$ARGUMENTS', source: 'built-in' },
     { name: 'init', description: t('Write an AGENTS.md that explains this project to Neru'), template: '', source: 'built-in' },
     { name: 'connectors', description: t('Manage MCP connectors'), template: '', source: 'built-in' },
     { name: 'settings', description: t('Open settings'), template: '', source: 'built-in' },
@@ -991,7 +1043,7 @@ function App() {
   ]
   /** A local note in the conversation (like Claude Code's command output); never sent to the model. */
   const say = (markdown: string) => setMessages(current => [...current, { id: uid(), role: 'assistant', content: markdown, steps: [] }])
-  const MODE_NAMES: Record<string, AgentMode> = { review: 'manual', manual: 'manual', plan: 'plan', edits: 'accept_edits', accept: 'accept_edits', accept_edits: 'accept_edits', auto: 'auto', bypass: 'bypass' }
+  const MODE_NAMES: Record<string, AgentMode> = { review: 'manual', manual: 'manual', plan: 'plan', spec: 'spec', edits: 'accept_edits', accept: 'accept_edits', accept_edits: 'accept_edits', auto: 'auto', bypass: 'bypass' }
   const HOOKS_TEMPLATE = JSON.stringify({ postEdit: [], preToolUse: [{ matcher: 'run_shell_command', command: '' }], postToolUse: [], userPromptSubmit: [], sessionStart: [], stop: [] }, null, 2) + '\n'
   const runLocal = async (name: string, args: string) => {
     try {
@@ -1005,7 +1057,7 @@ function App() {
         }
         case 'mode': {
           const next = MODE_NAMES[args.toLowerCase()]
-          if (!next) { say(t('Modes: `review` (ask before every change), `plan` (read only), `edits` (apply edits, ask for commands), `auto` (run routine commands too), `bypass` (run everything except destructive commands).')); return }
+          if (!next) { say(t('Modes: `review` (ask before every change), `plan` (read only), `spec` (requirements, design and tasks before code), `edits` (apply edits, ask for commands), `auto` (run routine commands too), `bypass` (run everything except destructive commands).')); return }
           setAgentMode(next); say(t('Mode set to **{mode}**.', { mode: args.toLowerCase() })); return
         }
         case 'resume': {
@@ -1054,12 +1106,76 @@ function App() {
           setMessages(current => current.slice(0, -1))
           say(`${checks.every(check => check.ok) ? t('**Everything looks good.**') : t('**Some things need attention.**')}\n\n${checks.map(check => `- ${check.ok ? '✅' : '⚠️'} **${check.name}:** ${check.detail}${check.ok ? '' : ` — ${check.fix}`}`).join('\n')}`); return
         }
+        case 'output-style': {
+          if (!project) { say(t('Open a project to choose its output style.')); return }
+          const styles = args ? await api.setOutputStyle(args) : await api.outputStyles()
+          const current = styles.find(style => style.current)?.name ?? 'default'
+          say(args ? t('Output style set to **{name}**. It applies from the next reply.', { name: current }) : `${t('**Output style:** {name}', { name: current })}\n\n${styles.map(style => `- \`${style.name}\`${style.description ? ` — ${style.description}` : ''}`).join('\n')}\n\n${t('Choose one with `/output-style <name>`, or in Settings → Output style.')}`); return
+        }
         case 'help': say(`${t('**Commands**')}\n\n${slashCommands.map(item => `- \`/${item.name}\` — ${item.description}`).join('\n')}\n\n${t('Add your own as Markdown files in `.neru/commands/`. While Neru works, type and press Enter to send it a message it reads before its next step.')}`); return
       }
     } catch (cause) { say(t('**That did not work.** {error}', { error: errorText(cause) })) }
   }
-  const slashCommands = [...builtInCommands, ...customCommands.filter(command => !builtInCommands.some(item => item.name === command.name))]
+  const promptCommands: SlashCommand[] = mcpPrompts.map(prompt => ({ name: prompt.command.toLowerCase(), description: `${prompt.description || t('Connector prompt')} (${prompt.server})`, template: prompt.arguments.length ? '$ARGUMENTS' : '', source: 'mcp', argumentHint: prompt.arguments.map(arg => arg.required ? `<${arg.name}>` : `[${arg.name}]`).join(' ') }))
+  const slashCommands = [...builtInCommands, ...customCommands.filter(command => !builtInCommands.some(item => item.name === command.name)), ...promptCommands]
+  /** Runs a connector prompt (`/mcp__server__prompt args`) and sends what it returns. */
+  const runMcpPrompt = async (name: string, args: string) => {
+    const prompt = mcpPrompts.find(item => item.command.toLowerCase() === name)
+    if (!prompt) return
+    const values = promptArguments(prompt, args)
+    const missing = prompt.arguments.filter(arg => arg.required && !values[arg.name])
+    if (missing.length) { say(t('`/{command}` needs {names}. Write them in order, or as `name=value`.', { command: prompt.command, names: missing.map(arg => `\`${arg.name}\`${arg.description ? ` (${arg.description})` : ''}`).join(', ') })); return }
+    try { await runChat(await api.mcpGetPrompt(prompt.server, prompt.name, values)) } catch (cause) { say(t('**That did not work.** {error}', { error: errorText(cause) })) }
+  }
+  /** Attaches a connector resource picked after @ as a document. */
+  const attachResource = async (key: string) => {
+    const resource = mcpResources.find(item => `${item.server}\n${item.uri}` === key)
+    if (!resource) return
+    try {
+      const text = await api.mcpReadResource(resource.server, resource.uri)
+      const path = `mcp:${resource.server}:${resource.uri}`
+      setDocuments(current => [...current.filter(doc => doc.path !== path), { name: `${resource.server}: ${resource.name}`, path, size: text.length, kind: 'text' as const, text }].slice(-ATTACH_LIMIT))
+    } catch (cause) { setError(errorText(cause)) }
+  }
+  /** Keeps one compared answer: it joins the session, and Neru continues on that model. */
+  const keepCompared = async (text: string, answer: SideAnswer, target: CompareTarget) => {
+    if (responding || busy) { setError(t('Wait for the reply to finish, then keep an answer.')); return }
+    let sessionId = activeSessionId
+    try {
+      if (surface === 'chat' && (!sessionId || sessions.find(item => item.id === sessionId)?.projectPath)) {
+        const snapshot = await api.createChatSession()
+        chatSessionRef.current = snapshot.session.id
+        loadSession(snapshot)
+        sessionId = snapshot.session.id
+      }
+      if (!sessionId) { setError(t('Open a session first.')); return }
+      await api.keepComparedAnswer(sessionId, text, answer.text, answer.model)
+      setMessages(current => [...current, { id: uid(), role: 'user', content: text }, { id: uid(), role: 'assistant', content: answer.text, steps: [t('Chosen from a comparison · {model}', { model: answer.model })] }])
+      if (target.providerId === provider.providerId && sameEndpoint(target.baseUrl, provider.baseUrl)) await changeModel(target.model)
+      else {
+        const view = await api.configureProvider(target.providerId, target.apiFormat, target.baseUrl, '', target.model)
+        setProvider(view); setProviderId(view.providerId); setProviderFormat(view.apiFormat); setProviderUrl(view.baseUrl); setProviderModel(view.model)
+      }
+      setCompare(null)
+      void refreshSessions()
+    } catch (cause) { setError(errorText(cause)) }
+  }
+  /** A review of a document goes in as a message, leaving the prompt box alone. */
+  const sendReview = (message: string, mode: AgentMode = agentMode) => void runChat(message, true, { mode, keepComposer: true, documents: [], contextPaths: [] })
+  /** Approving a Spec document moves to the next one; approving the tasks starts the build. */
+  const approveDocument = (doc: SessionDocument, edited: string | null) => {
+    const changes = edited !== null ? `\n\nI edited it first. Its current text:\n\n\`\`\`markdown\n${edited}\n\`\`\`` : ''
+    if (doc.name === 'tasks') {
+      setAgentMode('manual')
+      sendReview(`I approve the tasks.${changes}\n\nDo them now, in order. After each one, save the tasks document again with that task checked.`, 'manual')
+      return
+    }
+    const next = SPEC_STEPS[SPEC_STEPS.indexOf(doc.name as typeof SPEC_STEPS[number]) + 1] ?? 'tasks'
+    setAgentMode('spec')
+    sendReview(`I approve the ${doc.name}.${changes}\n\nWrite the ${next} document next, then stop for my review.`, 'spec')
+  }
   const runCommand = (command: SlashCommand, args: string) => {
+    if (command.source === 'mcp') { void runMcpPrompt(command.name, args); return true }
     // The core fills in $ARGUMENTS, $1…$9 and @file references; the local expansion is a fallback.
     if (command.source !== 'built-in') { void api.expandCommand(command.name, args).catch(() => expandCommand(command, args)).then(prompt => runChat(prompt)); return true }
     switch (command.name) {
@@ -1070,6 +1186,11 @@ function App() {
       case 'plan': setAgentMode('plan'); if (args) void runChat(args); else sessionNote(t('Plan mode: Neru will explore and propose a plan without changing anything.')); return true
       case 'init': void runChat('Explore this repository and write an AGENTS.md at its root for future coding sessions: what the project is, how it is organised, how to build, test and run it, coding conventions, and anything surprising. Keep it concise and factual; propose it as a file edit.'); return true
       case 'connectors': setSettingsTab('connectors'); setSection('settings'); return true
+      case 'spec': setAgentMode('spec'); if (args) void runChat(args, true, { mode: 'spec' }); else sessionNote(t('Spec mode: Neru writes requirements, then a design, then tasks, and waits for your review of each before any code.')); return true
+      case 'docs': setDocsShown(true); return true
+      case 'btw': setBtw({ seed: args }); return true
+      case 'compare': setCompare({ seed: args }); return true
+      case 'output-style': void runLocal(command.name, args.trim()); return true
       case 'settings': setSection('settings'); return true
       case 'clear': void newChat(); return true
       case 'model': case 'mode': case 'resume': case 'cost': case 'status': case 'todos': case 'memory': case 'permissions': case 'hooks': case 'export': case 'doctor': case 'help':
@@ -1428,7 +1549,24 @@ function App() {
     { label: t('Getting started guide'), action: () => setOnboarding('show') },
     { label: t('Take the tour'), action: () => { setSection('home'); appTour.start() } },
   ]
-  useEffect(() => { const onKey = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && !(event.target instanceof Element && event.target.closest('.monaco-editor'))) { event.preventDefault(); setPalette(value => !value) }; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n' && (surface === 'chat' || project)) { event.preventDefault(); if (surface === 'chat') void newLooseChat(); else void newChat() }; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'b') { event.preventDefault(); setSidebarOpen(value => { writeStored('neru.sidebar.open', !value); return !value }); setPeek(false) }; if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); setSection('settings') }; if (event.key === 'Escape' && settingsOpen) { setSettingsOpen(false); return }; if (event.key === 'Escape') { setPalette(false); if (responding) void api.stopChat(activeSessionId).catch(cause => setError(errorText(cause))) } }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [project, busy, responding, activeSessionId, newChat, newLooseChat, surface, settingsOpen, setSection])
+  useEffect(() => {
+    // Shortcuts come from Settings → Keyboard shortcuts; Escape always closes settings and the palette.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && settingsOpen) { setSettingsOpen(false); return }
+      if (event.key === 'Escape') setPalette(false)
+      switch (actionFor(shortcuts, event)) {
+        case 'palette': if (event.target instanceof Element && event.target.closest('.monaco-editor')) break; event.preventDefault(); setPalette(value => !value); break
+        case 'newSession': if (surface === 'chat' || project) { event.preventDefault(); if (surface === 'chat') void newLooseChat(); else void newChat() } break
+        case 'toggleSidebar': event.preventDefault(); setSidebarOpen(value => { writeStored('neru.sidebar.open', !value); return !value }); setPeek(false); break
+        case 'settings': event.preventDefault(); setSection('settings'); break
+        case 'sideQuestion': event.preventDefault(); setBtw(current => current ? null : { seed: '' }); break
+        case 'compare': event.preventDefault(); setCompare(current => current ? null : { seed: prompt }); break
+        case 'documents': if (activeSessionId) { event.preventDefault(); setDocsShown(value => !value) } break
+        case 'stop': if (responding) void api.stopChat(activeSessionId).catch(cause => setError(errorText(cause))); break
+      }
+    }
+    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
+  }, [project, busy, responding, activeSessionId, newChat, newLooseChat, surface, settingsOpen, setSection, shortcuts, prompt])
 
   if (onboarding === 'checking') return <div className="onboarding-boot"><Mascot size={68} /><span>Neru</span></div>
   const updateLayer = <>
@@ -1586,7 +1724,7 @@ function App() {
         <button className="button primary small" disabled={trustBusy} onClick={() => void trustOpenProject()}>{trustBusy ? t('Trusting…') : t('Trust this folder')}</button>
       </div>
     </div>}
-    {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''}`}>
+    {section === 'home' && <main key={surface} className={`home-view ${threadOpen ? 'has-messages' : ''} ${chatHome ? 'is-chat-home' : ''} ${docsShown && activeSessionId ? 'with-review' : ''}`}>
       {threadOpen
         ? <Conversation onErrorAction={errorAction} previewOffer={previewOffer && !responding} onOpenPreview={openPreview} onDismissPreview={() => setPreviewOffer(false)} messages={messages} live={live} phase={responding ? agentPhase(live, agentMode) : null} busy={responding || busy} pending={pending} pendingStatus={pendingStatus} resolved={resolved} progressNote={progressNote} failed={failed} projectPath={project?.path}
             feedback={feedback} onFeedback={(id, value) => setFeedback(current => { const next = { ...current, [id]: value }; writeStored('neru.feedback', next); return next })}
@@ -1599,8 +1737,9 @@ function App() {
         {filePicker && <FilePicker files={projectFiles} attached={contextPaths} onPick={attachFile} onClose={() => setFilePicker(false)} />}
         <TodoPanel todos={todos} />
         {queued.length > 0 && <QueueBar items={queued} onSteer={steerQueued} onEdit={editQueued} onRemove={id => activeSessionId && removeQueued(activeSessionId, id)} />}
-        <Composer value={prompt} onValueChange={value => { setPrompt(value); if (/@[^\s@]*$/.test(value) && projectFiles.length === 0) void api.listProjectFiles().then(setProjectFiles).catch(() => undefined) }} onSubmit={value => void runChat(value)}
+        <Composer value={prompt} onValueChange={value => { setPrompt(value); if (/@[^\s@]*$/.test(value) && projectFiles.length === 0 && project) void api.listProjectFiles().then(setProjectFiles).catch(() => undefined); if (value.endsWith('@')) void api.mcpResources().then(setMcpResources).catch(() => undefined); if (value === '/') void api.mcpPrompts().then(setMcpPrompts).catch(() => undefined) }} onSubmit={value => void runChat(value)}
           projectFiles={projectFiles} onAttachFile={attachFile}
+          resources={mcpResources.map(item => ({ key: `${item.server}\n${item.uri}`, name: item.name, server: item.server }))} onAttachResource={key => void attachResource(key)}
           attachments={attachedCount > 0 || reading > 0 ? <Attachments paths={contextPaths} documents={documents} reading={reading} onRemovePath={path => setContextPaths(current => current.filter(item => item !== path))} onRemoveDocument={path => setDocuments(current => current.filter(item => item.path !== path))} /> : undefined}
           sendWithoutText={hasImage} onQueue={queueMessage} onFork={text => void forkAndSend(text)}
           onStop={() => { if (activeSessionId) stoppedSessions.current.add(activeSessionId); void api.stopChat(activeSessionId).catch(cause => setError(errorText(cause))) }} onSteer={text => void steer(text)} loading={responding} disabled={(surface !== 'chat' && !project) || (busy && !responding) || Boolean(pending)}
@@ -1611,9 +1750,14 @@ function App() {
           commands={slashCommands} onCommand={runCommand}
           attachItems={attachItems} voiceEngine={voiceEngine} onVoiceStart={warmVoice} voiceReady={voiceEngine !== 'local' || Boolean(speech.active)} onVoiceUnavailable={localModelRequired} onTranscribe={transcribe} onError={setError}
           effort={effort} effortSupported={effortOk} onEffortChange={value => { setEffort(value); writeStored('neru.effort', value) }} context={context} />
+        {docs.length > 0 && !docsShown && <button type="button" className="button subtle small docs-chip" onClick={() => setDocsShown(true)}><FileText size={13} /> {docs.length === 1 ? docs[0].title : t('{n} documents', { n: docs.length })}</button>}
         {chatHome && <div className="chat-ideas">{CHAT_IDEAS.map(idea => <button key={idea.label} type="button" onClick={() => setPrompt(t(idea.prompt))}><idea.icon size={14} strokeWidth={1.75} />{t(idea.label)}</button>)}<button type="button" onClick={() => chooseSurface('code')}><CodeXml size={14} strokeWidth={1.75} />{t('Code')}</button></div>}
       </div>
     </main>}
+    {section === 'home' && docsShown && activeSessionId && <DocumentsPanel sessionId={activeSessionId} documents={docs} open={docOpen} onOpen={setDocOpen} onClose={() => setDocsShown(false)}
+      onSend={message => sendReview(message)} onApprove={approveDocument} onError={setError} busy={responding || busy || Boolean(pending)} />}
+    {section === 'home' && btw && <BtwPanel key={activeSessionId ?? 'none'} sessionId={activeSessionId} seed={btw.seed} onClose={() => setBtw(null)} />}
+    {compare && <ComparePanel sessionId={activeSessionId} seed={compare.seed} provider={provider} models={composerModels} savedKeys={savedKeys} onKeep={(text, answer, target) => void keepCompared(text, answer, target)} onClose={() => setCompare(null)} onError={setError} />}
     {section === 'team' && <TeamView project={project} onError={setError} voice={{ light, engine: voiceEngine, ready: voiceEngine !== 'local' || Boolean(speech.active), onStart: warmVoice, onUnavailable: localModelRequired, onTranscribe: transcribe }} onOpenSettings={tab => { setSettingsTab(tab); setSection('settings') }} onScope={setTeamScope} onOpenPane={id => openPane(id)} />}
     {section === 'board' && <main className="content-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <SessionBoard key={project.path} projectName={project.name} activeSessionId={activeSessionId} refreshKey={sessions} onOpen={id => { openSession(project.path, id); setSection('home') }} onError={setError} onNotice={setNotice} />}</main>}
     {section === 'search' && <main className="content-view">{!project ? <EmptyProject onOpen={chooseProject} /> : <div className="content-column"><div className="section-intro"><h2>{t('Find what matters.')}</h2><p>{t('Search source text with Git ignore rules respected.')}</p></div><SearchPanel key={project.path} projectKey={project.path} onOpen={path => void showFile(path)} /></div>}</main>}
@@ -1690,6 +1834,8 @@ function App() {
           </section>}
           {settingsTab === 'connectors' && <Connectors onError={setError} />}
           {settingsTab === 'phone' && <RemoteSettings onError={setError} onNotice={setNotice} />}
+          {settingsTab === 'shortcuts' && <ShortcutsSettings />}
+          {settingsTab === 'styles' && <OutputStyles hasProject={Boolean(project)} onError={setError} />}
           {settingsTab === 'privacy' && <PrivacySettings projectOpen={Boolean(project)} onError={setError} onNotice={setNotice} />}
           {settingsTab === 'skills' && <Skills onError={setError} onNotice={setNotice} />}
           {settingsTab === 'cli' && <CliSettings onError={setError} onNotice={setNotice} />}

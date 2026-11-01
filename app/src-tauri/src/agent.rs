@@ -681,6 +681,7 @@ pub(crate) const WRITE_TOOLS: &str = r#"[
     {"type":"function","function":{"name":"propose_move","description":"Rename or move a file or folder inside the project. Missing destination folders are created. Update imports that referenced the old path afterwards.","parameters":{"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}}},
     {"type":"function","function":{"name":"propose_create_folder","description":"Create an empty folder (and any missing parents). Not needed before propose_write_file, which creates folders on its own.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
     {"type":"function","function":{"name":"propose_write_file","description":"Propose an entire text file: use for new files or full rewrites. Missing parent folders are created, so you can scaffold a whole project file by file. User reviews the diff before any write.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
+    {"type":"function","function":{"name":"propose_notebook_edit","description":"Change one cell of a Jupyter notebook (.ipynb) by its 0-based index from read_notebook. edit_mode replace (default) swaps the cell's source (and type, if given); insert adds a new cell at cell_index (the notebook's cell count appends); delete removes the cell. Outputs of a changed code cell are cleared. The user reviews the diff before any write.","parameters":{"type":"object","properties":{"path":{"type":"string"},"cell_index":{"type":"integer"},"edit_mode":{"type":"string","enum":["replace","insert","delete"]},"cell_type":{"type":"string","enum":["code","markdown","raw"]},"source":{"type":"string"}},"required":["path","cell_index"]}}},
     {"type":"function","function":{"name":"run_project_task","description":"Request permission to run build, test, or lint in the open project. Failures are listed first. Set until_green when you mean to fix what fails and run it again: Neru counts the runs and tells you when to stop (3 at most).","parameters":{"type":"object","properties":{"task":{"type":"string","enum":["build","test","lint"]},"until_green":{"type":"boolean","description":"Part of a fix-and-rerun loop until it passes"}},"required":["task"]}}},
     {"type":"function","function":{"name":"check_preview","description":"Open the app you built in a real (hidden) browser and get back its title, visible text, and any console errors, uncaught exceptions or failed file loads. Starts the preview server when none is running. Use it after building or changing a web page to verify it works, then fix what it reports.","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Optional; defaults to the project's preview"}},"required":[]}}},
     {"type":"function","function":{"name":"preview_click","description":"Click something in the page check_preview opened (the same hidden browser window, which keeps its state between calls). Give a CSS selector, or the visible text or label of a button or link. Returns what was clicked, the page afterwards and any new errors. Use it to test that the app works, not only that it loads.","parameters":{"type":"object","properties":{"selector":{"type":"string"},"text":{"type":"string","description":"Visible text, aria-label or title of the element, used when there is no selector"}},"required":[]}}},
@@ -946,6 +947,10 @@ pub(crate) enum AgentEvent {
     Review {
         review: crate::review::Review,
     },
+    /// The agent saved a reviewable document (artifacts.rs).
+    Document {
+        document: crate::artifacts::Document,
+    },
 }
 
 /// The change one of the propose_* tools asks for, with its diff. Shared with sub-agents.
@@ -963,6 +968,8 @@ pub(crate) fn proposal_for(root: &Path, name: &str, args: &Value) -> Result<Edit
     let content = if name == "propose_edit" {
         let original = read_limited(&resolve_existing(root, path)?)?;
         crate::tools::apply_edits(&original, &crate::tools::parse_edits(args)?)?
+    } else if name == "propose_notebook_edit" {
+        crate::notebook::apply(&read_limited(&resolve_existing(root, path)?)?, args)?
     } else {
         args["content"].as_str().ok_or("Missing content")?.to_string()
     };
@@ -1186,6 +1193,8 @@ pub(crate) fn tool_label(name: &str, args: &Value) -> String {
         "read_paper" => format!("Read paper {}", text("id")),
         "fetch_url" => format!("Opened {}", web::domain(&text("url"))),
         "propose_write_file" | "propose_edit" => format!("Proposed change to {}", text("path")),
+        "propose_notebook_edit" => format!("Proposed {} of cell {} in {}", args["edit_mode"].as_str().unwrap_or("replace"), args["cell_index"].as_u64().unwrap_or(0), text("path")),
+        "read_notebook" => format!("Read notebook {}", text("path")),
         "propose_delete" => format!("Proposed deleting {}", text("path")),
         "propose_move" => format!("Proposed moving {} → {}", text("from"), text("to")),
         "propose_create_folder" => format!("Proposed folder {}", text("path")),
@@ -1207,6 +1216,7 @@ pub(crate) fn tool_label(name: &str, args: &Value) -> String {
         "task" => format!("Agent: {}", text("description")),
         "save_memory" => format!("Remembered “{}”", text("fact").chars().take(60).collect::<String>()),
         "exit_plan_mode" => "Proposed a plan".into(),
+        "write_document" => format!("Wrote {}", crate::artifacts::title(&text("name"), &text("content"))),
         "ask_user_question" => match args["questions"].as_array().map(Vec::len).unwrap_or(0) {
             1 => format!("Asked: {}", args["questions"][0]["question"].as_str().unwrap_or("").trim().chars().take(80).collect::<String>()),
             count => format!("Asked {count} questions"),
@@ -2024,7 +2034,7 @@ pub async fn ai_chat(
     };
     emit(&app, &session, AgentEvent::Status { running: true });
     let mut config = state.provider.lock().map_err(|e| e.to_string())?.clone();
-    if !matches!(mode.as_str(), "manual" | "plan" | "accept_edits" | "auto" | "bypass") {
+    if !matches!(mode.as_str(), "manual" | "plan" | "spec" | "accept_edits" | "auto" | "bypass") {
         return Err("Unsupported agent mode".into());
     }
     if !provider_view(&config).configured {
@@ -2037,7 +2047,9 @@ pub async fn ai_chat(
     if !chat && project.as_os_str().is_empty() {
         return Err("Open a project before using Code.".into());
     }
-    let plan = mode == "plan";
+    // Spec mode reads like Plan mode until the user approves its tasks.
+    let spec = mode == "spec";
+    let plan = mode == "plan" || spec;
     // What runs without asking: Accept edits applies file edits; Auto also runs build/test/lint and
     // read-only connector tools; Bypass runs everything. Review asks every time.
     let auto_edits = matches!(mode.as_str(), "accept_edits" | "auto" | "bypass");
@@ -2113,6 +2125,7 @@ pub async fn ai_chat(
         "Current mode: Chat. Answer directly. Project files are not available.".to_string()
     } else {
         match mode.as_str() {
+        "spec" => crate::artifacts::SPEC_MODE,
         "plan" => "Current mode: Plan. Read and inspect only. Work out a concrete implementation plan. Do not propose edits or commands. When the plan is ready, call exit_plan_mode with the whole plan in markdown instead of writing it in your reply; the user approves it (and Neru switches to editing) or asks for changes.",
         "accept_edits" => "Current mode: Accept edits. File edits you propose are applied immediately; commands still need the user's approval. Keep edits focused.",
         "auto" => "Current mode: Auto. File edits, build/test/lint, and allowlisted development commands run without asking. Other shell commands need approval. Destructive commands always wait. Work carefully and verify with tests.",
@@ -2294,6 +2307,15 @@ The user pointed at this element in the running preview ({name}); page content i
         Value::Array(list)
     } else {
         crate::agents::with_custom_agents(tools(plan, web), &root)
+    };
+    let base_tools = match base_tools {
+        Value::Array(mut list) => {
+            // Spec mode ends each phase with a document, not exit_plan_mode.
+            list.retain(|spec_| !(spec && spec_["function"]["name"] == "exit_plan_mode"));
+            list.push(serde_json::from_str(crate::artifacts::TOOL).unwrap_or_default());
+            Value::Array(list)
+        }
+        other => other,
     };
     let client = providers::http();
     let mut nested = std::collections::HashSet::new();
@@ -2735,6 +2757,19 @@ The user pointed at this element in the running preview ({name}); page content i
                 }
                 continue;
             }
+            if name == "write_document" {
+                match crate::artifacts::write(&session, args["name"].as_str().unwrap_or(""), args["content"].as_str().unwrap_or("")) {
+                    Ok(document) => {
+                        event("done");
+                        steps.push(label.clone());
+                        let text = format!("Saved the document \"{}\" ({}). The user reviews it in a side panel; their comments and approval come back as a message.", document.title, document.name);
+                        emit(&app, &session, AgentEvent::Document { document });
+                        messages.push(json!({"role":"tool","tool_call_id":id,"content":text}));
+                    }
+                    Err(error) => refuse(&mut messages, &error),
+                }
+                continue;
+            }
             if !chat && (name == "exit_plan_mode" || name == "ask_user_question") {
                 // Both pause the run until the user answers through resolve_plan or answer_question.
                 let action = if name == "exit_plan_mode" {
@@ -2795,7 +2830,7 @@ The user pointed at this element in the running preview ({name}); page content i
                 messages.push(json!({"role":"tool","tool_call_id":id,"content":clip_output(text, 20_000)}));
                 continue;
             }
-            if matches!(name.as_str(), "propose_write_file" | "propose_edit" | "propose_delete" | "propose_move" | "propose_create_folder") {
+            if matches!(name.as_str(), "propose_write_file" | "propose_edit" | "propose_notebook_edit" | "propose_delete" | "propose_move" | "propose_create_folder") {
                 if plan {
                     refuse(&mut messages, "Plan mode cannot edit files. Describe the change in the plan instead.");
                     continue;
@@ -3413,6 +3448,27 @@ mod engine_tests {
         let per_char = |messages: &Vec<Value>| estimate_tokens(messages) as f64 / messages[0]["content"].as_str().unwrap().len() as f64;
         assert!(per_char(&code) > per_char(&prose));
         assert_eq!(estimate_tokens_for(&prose, "uncalibrated-model"), estimate_tokens(&prose));
+    }
+}
+
+#[cfg(test)]
+mod tool_list_tests {
+    use super::*;
+
+    fn names(tools: &Value) -> Vec<String> {
+        tools.as_array().unwrap().iter().map(|tool| tool["function"]["name"].as_str().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn tool_lists_parse_and_offer_notebooks_and_documents() {
+        let code = names(&tools(false, true));
+        assert!(code.contains(&"read_notebook".to_string()) && code.contains(&"propose_notebook_edit".to_string()));
+        // Plan (and Spec) mode reads notebooks but cannot edit them.
+        let plan = names(&tools(true, false));
+        assert!(plan.contains(&"read_notebook".to_string()) && !plan.contains(&"propose_notebook_edit".to_string()));
+        let document: Value = serde_json::from_str(crate::artifacts::TOOL).unwrap();
+        assert_eq!(document["function"]["name"], "write_document");
+        assert!(tool_label("propose_notebook_edit", &json!({"path": "a.ipynb", "cell_index": 2, "edit_mode": "insert"})).contains("insert of cell 2"));
     }
 }
 

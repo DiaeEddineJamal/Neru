@@ -186,6 +186,35 @@ pub fn run_status_line(root: &Path, command: &str, input: &Value) -> Option<Stri
     text.lines().next().map(|line| line.chars().take(200).collect())
 }
 
+/// A style as the app's picker shows it.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleView {
+    pub name: String,
+    pub description: String,
+    pub source: String,
+    pub current: bool,
+}
+
+fn views(root: &Path) -> Vec<StyleView> {
+    let current = current(root).name;
+    list(root).into_iter().map(|style| StyleView { current: style.name == current, name: style.name, description: style.description, source: style.source }).collect()
+}
+
+/// The output styles for the open project, the one in use marked.
+#[tauri::command]
+pub fn list_output_styles(state: tauri::State<'_, crate::AppState>) -> Result<Vec<StyleView>, String> {
+    Ok(views(&crate::workspace::project_root(&state)?))
+}
+
+/// Chooses the open project's output style (the app's version of `/output-style`).
+#[tauri::command]
+pub fn set_output_style(name: String, state: tauri::State<'_, crate::AppState>) -> Result<Vec<StyleView>, String> {
+    let root = crate::workspace::project_root(&state)?;
+    choose(&root, &name)?;
+    Ok(views(&root))
+}
+
 fn shell(command: &str) -> std::process::Command {
     #[cfg(windows)]
     {

@@ -35,14 +35,15 @@ pub(crate) const READ_TOOLS: &str = r#"[
     {"type":"function","function":{"name":"git_diff","description":"Read the current staged or unstaged Git diff for one path or all changed files.","parameters":{"type":"object","properties":{"path":{"type":"string"},"staged":{"type":"boolean"}},"required":[]}}},
     {"type":"function","function":{"name":"read_skill","description":"Load a skill's instructions by name (see the Skills list). Pass file to load one of the reference documents the skill lists.","parameters":{"type":"object","properties":{"name":{"type":"string"},"file":{"type":"string","description":"Optional path of a reference file inside the skill, e.g. reference/polish.md"}},"required":["name"]}}},
     {"type":"function","function":{"name":"add_review_comment","description":"Pin a review comment on a file line. Use this for every code-review finding instead of only mentioning it in prose.","parameters":{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"text":{"type":"string"}},"required":["path","line","text"]}}},
-    {"type":"function","function":{"name":"open_preview","description":"Open a URL in Neru's preview pane. Use http://127.0.0.1:PORT for the app you started, or an https documentation page.","parameters":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}}}
+    {"type":"function","function":{"name":"open_preview","description":"Open a URL in Neru's preview pane. Use http://127.0.0.1:PORT for the app you started, or an https documentation page.","parameters":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}}},
+    {"type":"function","function":{"name":"read_notebook","description":"Read a Jupyter notebook (.ipynb) as numbered cells (0-based) with their type, source and text outputs. Use it instead of read_file for notebooks, then change cells with propose_notebook_edit.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}
 ]"#;
 
 /// Tools that only read and never touch shared state, so a turn's calls to them can run together.
 pub(crate) fn is_parallel_read(name: &str) -> bool {
     matches!(
         name,
-        "list_directory" | "read_file" | "read_files" | "search_text" | "find_files" | "project_map" | "find_symbol" | "git_status" | "git_diff" | "read_skill" | "web_search" | "fetch_url" | "diagnostics" | "semantic_search" | "search_papers" | "get_paper" | "read_paper"
+        "list_directory" | "read_file" | "read_files" | "search_text" | "find_files" | "project_map" | "find_symbol" | "git_status" | "git_diff" | "read_skill" | "web_search" | "fetch_url" | "diagnostics" | "semantic_search" | "search_papers" | "get_paper" | "read_paper" | "read_notebook"
     )
 }
 
@@ -301,6 +302,7 @@ pub(crate) fn execute_read_tool(root: &Path, name: &str, args: &Value) -> Result
         "read_files" => read_files(root, args),
         "search_text" => search_text(root, args),
         "find_files" => find_files(root, args),
+        "read_notebook" => crate::notebook::describe(&read_limited(&resolve_existing(root, args["path"].as_str().ok_or("Missing path")?)?)?),
         "project_map" => project_map(root, args),
         "find_symbol" => find_symbol(root, args),
         "diagnostics" => crate::diagnostics::tool(root, args),
