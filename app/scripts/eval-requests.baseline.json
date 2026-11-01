@@ -32,6 +32,9 @@
   "lean/alias-args": {
     "requests": 2
   },
+  "lean/local-helper": {
+    "requests": 3
+  },
   "lean/edit-miss-block": {
     "requests": 3
   },
@@ -70,6 +73,9 @@
   },
   "full/alias-args": {
     "requests": 2
+  },
+  "full/local-helper": {
+    "requests": 3
   },
   "full/edit-miss-block": {
     "requests": 3

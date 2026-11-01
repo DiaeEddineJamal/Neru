@@ -44,7 +44,30 @@ const SCENARIOS = {
   'multi-step': { steps: [{ tool: 'list_directory', args: { path: '.' } }, read('a.txt'), { tool: 'propose_edit', args: { path: 'a.txt', old_string: 'alpha', new_string: 'alpha one' } }, { tool: 'run_shell_command', args: { command: 'echo eval-ok' } }, answer] },
   // A model calling a parameter by another name: `pattern` for search_text's `query`.
   'alias-args': { steps: [{ tool: 'search_text', args: { pattern: 'beta' } }, answer] },
+  // bad-json with Ollama running beside the cloud model: the repair goes to its small local model.
+  'local-helper': { ollama: true, expectLocal: 1, steps: [{ tool: 'read_file', rawArgs: '{"path": "a.txt"' }, answer] },
 }
+
+// A scripted Ollama (native API), for scenarios with `ollama: true`. The others point OLLAMA_HOST at a
+// closed port, so an Ollama running on the machine cannot change their counts.
+let local = []
+const ollama = createServer((request, response) => {
+  let body = ''
+  request.on('data', part => { body += part })
+  request.on('end', () => {
+    const json = value => { response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)) }
+    if (request.method === 'GET' && request.url.startsWith('/v1/models')) return json({ object: 'list', data: [{ id: 'gemma3:4b', object: 'model' }, { id: 'qwen3-coder:30b', object: 'model' }] })
+    if (request.url.startsWith('/api/show')) return json({ capabilities: ['completion', 'tools'], model_info: { 'gemma3.context_length': 131072 } })
+    if (request.method !== 'POST' || !request.url.startsWith('/api/chat')) return response.writeHead(404).end()
+    const payload = JSON.parse(body || '{}')
+    const system = (payload.messages ?? []).find(message => message.role === 'system')?.content ?? ''
+    const reply = system.startsWith('You repair tool-call arguments') ? '{"path": "a.txt"}' : 'Eval'
+    local.push(payload.model)
+    response.writeHead(200, { 'content-type': 'application/x-ndjson' })
+    response.write(`${JSON.stringify({ model: payload.model, message: { role: 'assistant', content: reply }, done: false })}\n`)
+    response.end(`${JSON.stringify({ model: payload.model, message: { role: 'assistant', content: '' }, done: true, prompt_eval_count: 40, eval_count: 8 })}\n`)
+  })
+})
 
 // edit-miss-block: a function whose first line the model miscopies. Like a real model, the script
 // retries at once only when the error showed it every line it has to copy; otherwise it reads the file.
@@ -172,14 +195,17 @@ const tools = { lean: 0, full: 0 }
 const scratch = mkdtempSync(join(tmpdir(), 'neru-eval-'))
 try {
   await new Promise(ready => server.listen(0, '127.0.0.1', ready))
+  await new Promise(ready => ollama.listen(0, '127.0.0.1', ready))
   const { port } = server.address()
-  console.log('scenario                    requests  rounds  failed edits  bad calls  retries  switches  waited')
+  const ollamaPort = ollama.address().port
+  console.log('scenario                    requests  rounds  failed edits  bad calls  retries  switches  waited  local')
   for (const [profile, model] of Object.entries(PROFILES)) {
     for (const name of Object.keys(SCENARIOS)) {
       const key = `${profile}/${name}`
       scenario = name
       failed = false
       seen = []
+      local = []
       offered = 0
       // A fresh project and data folder each time, so no health, quota or session carries over.
       const project = join(scratch, `${profile}-${name}`, 'project')
@@ -193,7 +219,7 @@ try {
         writeFileSync(join(project, file), content)
       }
       writeFileSync(join(data, 'settings.json'), JSON.stringify({ providerId: 'local', apiFormat: 'openai-chat', baseUrl: `http://127.0.0.1:${port}/v1`, model }))
-      const run = await neru(['-p', SCENARIOS[name].prompt ?? `EVAL-${name}: do the scripted task`, '--permission-mode', 'bypass', '--output-format', 'json'], project, { ...process.env, NERU_DATA_DIR: data, NO_COLOR: '1' })
+      const run = await neru(['-p', SCENARIOS[name].prompt ?? `EVAL-${name}: do the scripted task`, '--permission-mode', 'bypass', '--output-format', 'json'], project, { ...process.env, NERU_DATA_DIR: data, NO_COLOR: '1', OLLAMA_HOST: SCENARIOS[name].ollama ? `127.0.0.1:${ollamaPort}` : '127.0.0.1:9' })
       let result = {}
       try { result = JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}') } catch { /* reported below */ }
       const task = result.task
@@ -205,10 +231,14 @@ try {
       }
       measured[key] = { requests: task.requests }
       tools[profile] = Math.max(tools[profile], offered)
-      const cells = [task.requests, task.rounds, task.failedEdits, task.parseFailures, task.retries, task.switches, `${(task.waitedMs / 1000).toFixed(1)}s`]
-      console.log(`${key.padEnd(28)}${String(cells[0]).padEnd(10)}${String(cells[1]).padEnd(8)}${String(cells[2]).padEnd(14)}${String(cells[3]).padEnd(11)}${String(cells[4]).padEnd(9)}${String(cells[5]).padEnd(10)}${cells[6]}`)
-      // The server's count is the ground truth for what Neru's own counter reports.
-      if (seen.length !== task.requests) problems.push(`${key}: Neru counted ${task.requests} requests but the model received ${seen.length} (${seen.join(', ')})`)
+      // Requests that ran on this computer (Ollama) rather than on the cloud model.
+      const onDevice = Object.entries(task.models ?? {}).filter(([model]) => model.startsWith('ollama/')).reduce((sum, [, count]) => sum + count, 0)
+      const cells = [task.requests, task.rounds, task.failedEdits, task.parseFailures, task.retries, task.switches, `${(task.waitedMs / 1000).toFixed(1)}s`, onDevice]
+      console.log(`${key.padEnd(28)}${String(cells[0]).padEnd(10)}${String(cells[1]).padEnd(8)}${String(cells[2]).padEnd(14)}${String(cells[3]).padEnd(11)}${String(cells[4]).padEnd(9)}${String(cells[5]).padEnd(10)}${String(cells[6]).padEnd(8)}${cells[7]}`)
+      // The servers' counts are the ground truth for what Neru's own counter reports.
+      if (seen.length + local.length !== task.requests) problems.push(`${key}: Neru counted ${task.requests} requests but the models received ${seen.length + local.length} (${[...seen, ...local.map(model => `ollama ${model}`)].join(', ')})`)
+      if (local.length !== onDevice) problems.push(`${key}: Neru counted ${onDevice} local requests but Ollama received ${local.length}`)
+      if ((SCENARIOS[name].expectLocal ?? 0) > onDevice) problems.push(`${key}: expected ${SCENARIOS[name].expectLocal} request(s) on the local model, got ${onDevice}\n${log}`)
       const before = baseline[key]?.requests
       if (before === undefined) continue
       if (task.requests > before) problems.push(`${key}: ${task.requests} requests, up from ${before}\n${log}`)
@@ -220,6 +250,7 @@ try {
   problems.push(String(error?.stack ?? error))
 } finally {
   server.close()
+  ollama.close()
   rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
 }
 

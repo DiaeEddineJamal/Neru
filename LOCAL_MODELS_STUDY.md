@@ -49,7 +49,16 @@ Original plan:
 - Download with progress (`/api/pull` streams it), cancel and remove (`/api/delete`), with a disk-space check before each download.
 - When Ollama is missing, a link to ollama.com/download and a check that finds it once it is installed. Neru does not run the installer itself.
 
-### L2. Local helpers (S)
+### L2. Local helpers (S) ✅ done
+
+- `fallback::small_model` now adds Ollama as a candidate when something answers at `OLLAMA_HOST` (or `127.0.0.1:11434`) on this computer. The check takes at most 300 ms and is cached for 30 s; an Ollama on another machine is never used, since it would not be private.
+- `local_helper_score` ranks small local models (9B or less, size read from the tag) above every cloud helper. Thinking models (`-r1`, `qwq`, plain `qwen3:`) are left out or ranked lower, because they are slow for a one-line answer. So are models whose tag gives no size.
+- `allowed()` treats a model on this computer as free, so a free plan can hand chores to it.
+- Applies to everything on the helper lane: session titles, conversation summaries, commit messages, tool-call repairs and research query planning.
+- Eval: a scripted Ollama, with `local-helper` (bad-json with Ollama running). The repair runs on `gemma3:4b`, so the cloud gets 2 requests instead of 3, in both profiles. Every other scenario points `OLLAMA_HOST` at a closed port, so an Ollama on a dev machine or in CI cannot change their counts.
+- Not checked against a real Ollama: the development machine has none installed.
+
+Original plan:
 - When Ollama runs and has a suitable small model, the helper lane uses it first, before any cloud model, for titles, summaries, commit messages and repairs. It stays within the privacy rule, which local always satisfies.
 - Eval: a scenario with a local helper available shows its chore requests leaving the cloud count.
 

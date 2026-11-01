@@ -696,7 +696,8 @@ fn switch_score(current: &ProviderConfig, candidate: &ProviderConfig, model: &st
 /// (OpenRouter's paid models, Z.AI's non-Flash ones), so nothing is billed by surprise.
 fn allowed(current: &ProviderConfig, candidate: &ProviderConfig, model: &str) -> bool {
     let free_needed = !same_key(candidate, current) || is_free_plan(current);
-    (!free_needed || is_free_plan(&ProviderConfig { model: model.to_string(), ..candidate.clone() }))
+    // A model on this computer costs nothing, whatever the plan.
+    (!free_needed || crate::privacy::is_local(candidate) || is_free_plan(&ProviderConfig { model: model.to_string(), ..candidate.clone() }))
         && !(candidate.provider_id == current.provider_id && model == current.model)
         && !resting(&candidate.provider_id, model)
         && !blocked(&candidate.provider_id, model)
@@ -923,6 +924,13 @@ pub async fn small_model(state: &AppState, main: &ProviderConfig, rule: &str) ->
             candidates.push(ProviderConfig { provider_id: provider_id.into(), api_format: "openai-chat".into(), base_url: base_url.into(), api_key: key.clone(), model: String::new() });
         }
     }
+    // Ollama running beside a cloud model: its small models take the chores, which then cost no
+    // cloud request and stay on this computer.
+    if main.provider_id != "ollama" {
+        if let Some(base_url) = running_ollama().await {
+            candidates.push(ProviderConfig { provider_id: "ollama".into(), api_format: "openai-chat".into(), base_url, api_key: String::new(), model: String::new() });
+        }
+    }
     candidates.retain(|candidate| crate::privacy::allows(rule, candidate));
     let mut lists = tokio::task::JoinSet::new();
     for (index, candidate) in candidates.iter().cloned().enumerate() {
@@ -951,6 +959,9 @@ pub async fn small_model(state: &AppState, main: &ProviderConfig, rule: &str) ->
 /// How well a model suits quick chores: fast hosts and fast variants first, enough skill to follow a
 /// format. None for models too weak, too slow (long thinkers) or not meant for chat.
 fn small_score(provider_id: &str, model: &str) -> Option<i64> {
+    if matches!(provider_id, "ollama" | "local") {
+        return local_helper_score(model);
+    }
     let strength = coding_score(model);
     let speed = helper_speed(model);
     let name = model.to_lowercase();
@@ -964,6 +975,55 @@ fn small_score(provider_id: &str, model: &str) -> Option<i64> {
         _ => 0,
     };
     Some(host + speed * 2 + strength / 3)
+}
+
+/// Billions of parameters a model tag names (`gemma3:4b`, `qwen2.5-coder:1.5b`), if it names them.
+fn parameters_b(model: &str) -> Option<f32> {
+    let name = model.to_lowercase();
+    name.split(|c: char| !c.is_ascii_alphanumeric() && c != '.').filter_map(|word| word.strip_suffix('b')?.parse::<f32>().ok()).last()
+}
+
+/// Small models on this computer come before any cloud model for chores: they cost no request and
+/// keep the text here. Larger ones (slow on most machines), thinking ones (slow for a one-line answer)
+/// and ones whose size the tag does not give are left to the cloud lane.
+fn local_helper_score(model: &str) -> Option<i64> {
+    let name = model.to_lowercase();
+    if ["embed", "guard", "vision", "whisper", "-r1", "qwq", "thinking"].iter().any(|part| name.contains(part)) {
+        return None;
+    }
+    let size = parameters_b(model).filter(|size| *size <= 9.0)?;
+    // Three or four billion parameters write a good commit message; one billion often does not.
+    let quality = (size.min(4.0) * 5.0) as i64;
+    // Plain Qwen3 thinks before every answer unless told not to.
+    let thinks = name.starts_with("qwen3:") && !name.contains("instruct");
+    Some(100 + quality - if thinks { 15 } else { 0 })
+}
+
+/// Ollama's address as Ollama itself reads it (OLLAMA_HOST, else 127.0.0.1:11434), when something
+/// answers there on this computer. Checked at most every half minute.
+async fn running_ollama() -> Option<String> {
+    static SEEN: LazyLock<Mutex<Option<(Instant, Option<String>)>>> = LazyLock::new(Default::default);
+    if let Some((at, found)) = SEEN.lock().ok().and_then(|seen| seen.clone()) {
+        if at.elapsed() < Duration::from_secs(30) {
+            return found;
+        }
+    }
+    let host = std::env::var("OLLAMA_HOST").ok().map(|host| host.trim().to_string()).filter(|host| !host.is_empty()).unwrap_or_else(|| "127.0.0.1:11434".into());
+    let host = if host.contains("://") { host } else { format!("http://{host}") };
+    // 0.0.0.0 is how Ollama is told to listen everywhere; on this computer it answers on 127.0.0.1.
+    let base_url = format!("{}/v1", host.trim_end_matches('/').replace("0.0.0.0", "127.0.0.1"));
+    let found = match reqwest::Url::parse(&base_url) {
+        // Only this computer: an Ollama elsewhere is not private, whatever its provider id says.
+        Ok(url) if providers::is_local(&url) => {
+            let address = format!("{}:{}", url.host_str().unwrap_or("127.0.0.1"), url.port_or_known_default().unwrap_or(11434));
+            matches!(tokio::time::timeout(Duration::from_millis(300), tokio::net::TcpStream::connect(address)).await, Ok(Ok(_))).then_some(base_url)
+        }
+        _ => None,
+    };
+    if let Ok(mut seen) = SEEN.lock() {
+        *seen = Some((Instant::now(), found.clone()));
+    }
+    found
 }
 
 /// A bonus for models built to answer fast, a penalty for long-thinking ones.
@@ -997,6 +1057,25 @@ async fn fallback_choice(current: &ProviderConfig, wanted: &str) -> Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn small_local_models_take_chores_before_any_cloud_model() {
+        assert_eq!(parameters_b("gemma3:4b"), Some(4.0));
+        assert_eq!(parameters_b("qwen2.5-coder:1.5b"), Some(1.5));
+        assert_eq!(parameters_b("llama3.2"), None);
+        let gemma = small_score("ollama", "gemma3:4b").unwrap();
+        let cloud = ["llama-3.1-8b-instant", "gemini-3-flash", "openai/gpt-oss-20b"].iter().filter_map(|model| small_score("groq", model)).max().unwrap_or(0);
+        assert!(gemma > cloud, "local {gemma} should beat the best cloud helper {cloud}");
+        assert!(small_score("ollama", "gemma3:4b") > small_score("ollama", "gemma3:1b"), "a little bigger writes better");
+        assert!(small_score("ollama", "qwen3:4b") < small_score("ollama", "gemma3:4b"), "thinking models are slower for one line");
+        assert_eq!(small_score("ollama", "qwen3-coder:30b"), None, "too slow for chores on most machines");
+        assert_eq!(small_score("ollama", "deepseek-r1:7b"), None);
+        assert_eq!(small_score("ollama", "nomic-embed-text"), None);
+        assert_eq!(small_score("ollama", "llama3.2"), None, "no size in the tag: left to the cloud lane");
+        let main = ProviderConfig { provider_id: "gemini".into(), api_format: "openai-chat".into(), base_url: "https://generativelanguage.googleapis.com/v1beta/openai".into(), model: "gemini-3-flash".into(), api_key: "k".into() };
+        let ollama = ProviderConfig { provider_id: "ollama".into(), api_format: "openai-chat".into(), base_url: "http://127.0.0.1:11434/v1".into(), model: String::new(), api_key: String::new() };
+        assert!(allowed(&main, &ollama, "gemma3:4b"), "a local model is free whatever the main plan");
+    }
 
     #[test]
     fn the_starter_is_the_best_coder_on_the_keyless_list() {
