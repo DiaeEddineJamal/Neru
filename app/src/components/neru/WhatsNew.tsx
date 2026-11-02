@@ -5,7 +5,7 @@ import { EASE_OUT } from '@/lib/ease'
 import changelog from '../../changelog.json'
 import { t } from '../../i18n'
 
-export interface ChangelogEntry { version: string; date: string; title: string; summary: string; sections: { title: string; items: string[] }[] }
+export interface ChangelogEntry { version: string; date: string; title: string; summary: string; includes?: string[]; sections: { title: string; items: string[] }[] }
 export const releases = changelog as ChangelogEntry[]
 
 /** What changed in a release, from the same changelog the GitHub release notes are built from. */

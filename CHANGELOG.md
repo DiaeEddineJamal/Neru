@@ -2,6 +2,15 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.13.1 · Clean command-line output on Windows
+*2026-11-02*
+
+The first release of the 0.13 work: everything in 0.13.0 below, plus a fix for scripts that read Neru's command-line output on Windows.
+
+### Fixes
+
+- On Windows, neru -p could print “The operation completed successfully.” after its JSON, so scripts that read the last line got the wrong one. The 0.13.0 build was stopped by this and never shipped.
+
 ## 0.13.0 · Free models that go further, and local models
 *2026-11-02*
 

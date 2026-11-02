@@ -43,5 +43,7 @@ if (arg === '--changelog') {
     console.error(`No changelog entry for ${version}. Add it to app/src/changelog.json.`)
     process.exit(1)
   }
-  process.stdout.write(`${section(entry).replace(/^## .*\n/, `# Neru ${entry.version} — ${entry.title}\n`)}\n${downloads(entry.version)}`)
+  // A release can carry the notes of versions that were never published on their own (`includes`).
+  const included = (entry.includes ?? []).map(version => entries.find(item => item.version === version)).filter(Boolean).map(section).join('\n')
+  process.stdout.write(`${section(entry).replace(/^## .*\n/, `# Neru ${entry.version} — ${entry.title}\n`)}\n${included ? `${included}\n` : ''}${downloads(entry.version)}`)
 }
