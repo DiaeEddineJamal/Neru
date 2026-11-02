@@ -331,7 +331,9 @@ fn register_toast_app(identifier: String) {
         let mut values = vec![("DisplayName", "Neru".to_string())];
         values.extend(icon.map(|path| ("IconUri", path.display().to_string())));
         for (name, value) in values {
-            let _ = std::process::Command::new("reg").hidden().args(["add", &key, "/v", name, "/d", &value, "/f"]).status();
+            // reg prints "The operation completed successfully." when it is done; on our stdout that
+            // could land after `neru -p`'s JSON, where scripts read the last line.
+            let _ = std::process::Command::new("reg").hidden().args(["add", &key, "/v", name, "/d", &value, "/f"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
         }
     });
 }
