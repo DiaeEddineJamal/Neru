@@ -1358,15 +1358,30 @@ button.title-chip:hover, button.title-chip.open { background: color-mix(in oklch
 .task-subhead { margin-top: 16px !important; }
 .task-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
 .task-card { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); text-align: left; font: inherit; }
-button.task-card { cursor: pointer; }
-button.task-card:hover { border-color: var(--sage); }
-.task-card.waiting { border-color: var(--code-chip); }
-.task-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.task-card-head strong { font-weight: 600; font-size: var(--fs-base); }
-.task-badge { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--secondary); font-size: 11px; }
-.task-badge.done { color: var(--moss); border-color: color-mix(in srgb, var(--moss) 40%, transparent); }
-.task-badge.waiting, .task-badge.queued { color: var(--code-chip); border-color: color-mix(in srgb, var(--code-chip) 40%, transparent); }
-.task-badge.failed, .task-badge.canceled { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+button.task-card { cursor: pointer; transition: background-color 140ms ease, border-color 140ms ease; }
+button.task-card:hover { border-color: color-mix(in srgb, var(--sage) 55%, var(--border)); background: var(--surface-2); }
+.task-card.waiting { border-color: color-mix(in srgb, var(--code-chip) 45%, var(--border)); }
+.task-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.task-card-head strong { min-width: 0; font-weight: 600; font-size: var(--fs-base); }
+/* "While you were away": status mark, then title and pill, project and facts, a two-line summary. */
+.digest-card { --state: var(--secondary); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 14px 16px; }
+.digest-card.done { --state: var(--moss); }
+.digest-card.waiting { --state: var(--code-chip); }
+.digest-card.failed { --state: var(--danger); }
+.digest-card.running { --state: var(--sage); }
+.digest-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; background: color-mix(in srgb, var(--state) 14%, transparent); color: var(--state); }
+.digest-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.digest-main .task-summary { display: -webkit-box; margin-top: 4px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.digest-go { align-self: center; color: var(--muted); opacity: 0; transform: translateX(-4px); transition: opacity 140ms ease, transform 140ms ease; }
+button.digest-card:hover .digest-go, button.digest-card:focus-visible .digest-go { opacity: 1; transform: none; }
+.task-state { --state: var(--secondary); display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; background: color-mix(in srgb, var(--state) 13%, transparent); color: var(--state); font-size: 11px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
+.task-state::before { content: ''; width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.task-state:has(svg)::before { display: none; }
+.task-state.done { --state: var(--moss); }
+.task-state.waiting, .task-state.queued { --state: var(--code-chip); }
+.task-state.failed, .task-state.canceled { --state: var(--danger); }
+.task-state.running { --state: var(--sage); }
+@media (prefers-reduced-motion: reduce) { button.task-card, .digest-go { transition: none; } }
 .task-meta { margin: 0; color: var(--muted); font-size: var(--fs-xs); line-height: 1.5; }
 .task-meta.danger { color: var(--danger); }
 .task-summary { color: var(--secondary); font-size: var(--fs-sm); line-height: 1.5; }

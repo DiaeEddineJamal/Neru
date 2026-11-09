@@ -2,6 +2,45 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.14.0 · Local models built in, charts in chat, and memory you control
+*2026-11-09*
+
+Neru runs open models itself: it downloads llama.cpp for your hardware and suggests the models this computer runs well, with nothing else to install. Answers in Chat can draw charts, diagrams and small interactive widgets. Memory keeps a summary you can edit, keeps each project's memory apart, and incognito chats leave nothing behind. Team mode is calmer and works in narrow windows.
+
+### Built-in local models
+
+- New Built-in provider in Settings → Model provider: Neru downloads llama.cpp for your graphics card (CUDA, Vulkan or Metal, otherwise the processor), checks every file, and starts a model when you first use it. Ollama still works as before.
+- Suggestions for this computer: each model in the catalog shows whether it fits on the graphics card, partly or on the processor, the quality and speed to expect, the context it gets, and whether there is enough disk. The best pick for each use is marked Recommended.
+- Downloads show progress, resume after an interruption, can be cancelled and removed, and check free disk space first.
+- Fast follow-ups: a loaded model stays warm, reuses its prompt cache between turns and unloads after 15 idle minutes. At most two models stay loaded. When a chat outgrows the context, the model reloads with a larger window and the request is retried.
+- When Neru quits, the model process stops with it.
+
+### Charts and widgets in Chat
+
+- Answers can include bar, line, area, pie and scatter charts with tooltips, Mermaid diagrams, and small interactive widgets such as a unit converter with a slider.
+- Widgets run in a sandbox with no network access and follow the light or dark theme.
+- While a chart or widget is still being written, a placeholder holds its place. If the model's output is malformed, you see the source instead.
+- Streaming no longer redraws charts and code blocks on every new word.
+
+### Memory
+
+- A summary of what Neru knows about you, rebuilt from your recent chats about once a day. You can read it, edit it, regenerate it or describe a change in Settings → Memory.
+- Chat projects keep their own memory: facts and a summary that stay in the project, shown beside its chats. Searching past chats from a project looks only at that project.
+- A setting decides whether Neru may search your past chats.
+- Incognito chats: turn on the incognito icon in the Chat composer before you start. The chat is never saved to disk, uses no memory and teaches Neru nothing, and it is gone when you leave it.
+
+### Team mode
+
+- A calmer header: member avatars, Stop while someone is working, and usage, the tour and task options in the … menu. The usage reading appears only when a limit is close.
+- Member cards show who each member is and what it may do. Model, access and worktree open when you click the card, and the rarer actions are in each member's menu.
+- Panel tabs are icons with tooltips, and the task list is more compact.
+- Narrow windows: below 920 px the task list opens as a drawer and the side panel has its own close button. Team mode works down to 640 px in both themes.
+
+### Polish
+
+- Incognito uses the familiar hat-and-glasses icon, in the composer and in the sidebar.
+- While you were away: each session card shows a status mark, a clear status pill and a two-line summary without raw code.
+
 ## 0.13.1 · Clean command-line output on Windows
 *2026-11-02*
 

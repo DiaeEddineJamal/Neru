@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Neru",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "identifier": "dev.neru.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; img-src 'self' asset: http://asset.localhost data: https:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; frame-src http://127.0.0.1:* http://localhost:* https:; connect-src 'self' ipc: http://ipc.localhost https://huggingface.co https://*.huggingface.co https://*.hf.co blob: data:",
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; img-src 'self' asset: http://asset.localhost data: https:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; frame-src 'self' http://127.0.0.1:* http://localhost:* https:; connect-src 'self' ipc: http://ipc.localhost https://huggingface.co https://*.huggingface.co https://*.hf.co blob: data:",
       "headers": {
         "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Embedder-Policy": "credentialless"

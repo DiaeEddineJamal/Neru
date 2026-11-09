@@ -38,7 +38,7 @@
 .team-group-head svg { transition: transform .15s ease-out; flex: 0 0 auto; }
 .team-group-head small { margin-left: auto; font-weight: 400; }
 .team-task-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.team-task-state { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: 0 0 auto; }
+.team-task-state { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); flex: 0 0 auto; padding-top: 10px; }
 .team-task-state time { color: var(--muted); font-size: var(--fs-xs); }
 .team-task-row:hover .team-task-state time { display: none; }
 .team-task-failed { color: var(--danger); }
@@ -89,7 +89,6 @@
 .team-delete-trees span.warn { color: var(--danger); }
 
 /* Changes, pull request, activity, usage panels */
-.team-tab-wide { flex: 0 0 auto !important; }
 .team-changes-place { display: flex; flex-direction: column; gap: 8px; }
 .team-changes-place h3, .team-activity h3 { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
 .team-review-all { display: flex; align-items: center; gap: 6px; color: var(--secondary); font-size: var(--fs-xs); }
@@ -112,7 +111,7 @@
 @keyframes team-breathe { 50% { opacity: .35; } }
 .team-activity-note { margin: 0; padding: 6px 8px; border-radius: 8px; background: var(--surface-2); color: var(--secondary); font-size: var(--fs-sm); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .team-activity-note b { color: var(--sage); font-weight: 500; }
-.team-exec { padding: 10px; border: 1px solid var(--border); border-radius: 12px; }
+.team-exec { gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
 .team-exec .team-field input[type=number] { flex: 0 0 64px; }
 .team-usage-summary { display: flex; align-items: flex-start; gap: 14px; padding: 4px 2px; }
 .team-usage-summary > div { display: flex; flex-direction: column; }
@@ -146,10 +145,8 @@
 .team-checklist li.done strong { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in oklch, var(--muted) 60%, transparent); }
 .team-checklist-mark { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 auto; border: 1.5px solid var(--border); border-radius: 50%; color: var(--bg); }
 .team-checklist li.done .team-checklist-mark { border-color: var(--sage); background: var(--sage); }
-.team-empty-start { display: flex; flex-direction: column; gap: 10px; width: min(100%, 760px); }
-.team-empty-start h2 { margin: 0; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
-.team-quickstart { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
-.team-quick { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text); text-align: left; transition: border-color .15s ease-out, background-color .15s ease-out, transform .15s ease-out; }
+.team-quickstart { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: var(--space-2); }
+.team-quick { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text); text-align: left; transition: border-color .15s ease-out, background-color .15s ease-out, transform .15s ease-out; }
 .team-quick:hover { border-color: var(--moss); background: var(--surface-2); transform: translateY(-1px); }
 .team-quick > span:last-child { display: flex; flex-direction: column; gap: 2px; }
 .team-quick strong { font-size: var(--fs-sm); font-weight: 600; }
@@ -170,19 +167,13 @@
 .agent-manage input { flex: 0 1 180px; height: 28px; }
 .agent-more { align-self: flex-start; margin-top: 4px; }
 
-/* Narrow layouts: the header keeps the title, the panel keeps every tab and access choice. */
-.team-head .team-title { flex: 0 1 auto; min-width: 96px; }
-.team-head .team-roster { flex: 1 1 48px; }
-.team-head > .menu-anchor, .team-head > .icon-button, .team-head > .button { flex: 0 0 auto; }
+/* Narrow layouts: the header keeps the title; avatars and actions never shrink. */
+.team-head .team-title { flex: 0 1 auto; min-width: 64px; }
+.team-head > .menu-anchor, .team-head > .icon-button, .team-head > .button, .team-head > .team-roster { flex: 0 0 auto; }
 .team-reading { max-width: 180px; }
 .team-reading span { overflow: hidden; text-overflow: ellipsis; }
-.team-tabs { display: flex; flex-wrap: nowrap; overflow: hidden; }
-.team-tabs button { flex: 1 1 0 !important; min-width: 28px; padding: 0 6px !important; }
-.team-tabs button.active { flex: 0 0 auto !important; }
-.team-member .team-access, .team-dialog .team-access { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.team-panel .team-member .team-access { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.team-member .team-access button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 1280px) { .team-reading span { display: none; } }
+.team-dialog .team-access { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@container team (max-width: 720px) { .team-reading span { display: none; } }
 
 .team-more { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; left: auto; min-width: 240px; }
 .team-more small { margin-left: auto; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }

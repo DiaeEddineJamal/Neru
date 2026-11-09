@@ -9,6 +9,7 @@ import { t } from '../../i18n'
 import { ModelLogo } from './ModelSelector'
 import { SettingsModelPicker } from './ModelPicker'
 import { LocalModels } from './LocalModels'
+import { BuiltinModels } from './BuiltinModels'
 import { PrivacyTag } from './PrivacySettings'
 import './ProviderSettings.css'
 import { Select } from '../ui/Select'
@@ -120,7 +121,9 @@ export function ProviderSettings(props: Props) {
           </p>
         </div>
         {/* Ollama gets the local model library instead of written steps: download, remove, start. */}
-        {preset.id === 'ollama'
+        {preset.id === 'builtin'
+          ? <BuiltinModels onChanged={() => void api.listModels(providerId, props.format, props.baseUrl, '').then(list => props.onModels(() => list)).catch(() => undefined)} />
+          : preset.id === 'ollama'
           ? <LocalModels onChanged={() => void api.listModels(providerId, props.format, props.baseUrl, '').then(list => props.onModels(() => list)).catch(() => undefined)} />
           : preset.keySteps && <ol className="provider-key-steps">{preset.keySteps.map(step => <li key={step}>{t(step)}</li>)}</ol>}
         {preset.keyUrl && preset.id !== 'ollama' && <a className="button subtle provider-key-button" href={preset.keyUrl} target="_blank" rel="noreferrer">{local ? <>{t('Open {name}', { name: preset.name })}</> : <><KeyRound size={14} />{t('Get a {name} key', { name: preset.name })}</>}<ExternalLink size={12} /></a>}

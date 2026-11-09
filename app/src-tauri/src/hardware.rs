@@ -14,6 +14,8 @@ pub struct Gpu {
     /// Memory of its own; integrated graphics borrow system memory and count as none.
     pub vram_gb: f32,
     pub dedicated: bool,
+    /// nvidia, amd, intel, apple or other: picks the built-in engine's backend (CUDA, Vulkan, Metal).
+    pub vendor: String,
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
@@ -141,9 +143,43 @@ fn detect_platform(hardware: &mut Hardware, models_dir: &std::path::Path) {
     hardware.disk_free_gb = run("df", &["-Pk", &existing]).and_then(|text| text.lines().nth(1)?.split_whitespace().nth(3)?.parse::<f64>().ok()).map(|kb| gb(kb * 1024.0));
 }
 
-fn gpu_from(name: &str, vram_gb: f32) -> Gpu {
+pub fn vendor_of(name: &str) -> &'static str {
+    let lower = name.to_lowercase();
+    if ["nvidia", "geforce", "rtx", "quadro", "tesla"].iter().any(|part| lower.contains(part)) {
+        "nvidia"
+    } else if ["amd", "radeon"].iter().any(|part| lower.contains(part)) {
+        "amd"
+    } else if ["intel", "arc"].iter().any(|part| lower.contains(part)) {
+        "intel"
+    } else if lower.contains("apple") {
+        "apple"
+    } else {
+        "other"
+    }
+}
+
+pub fn gpu_from(name: &str, vram_gb: f32) -> Gpu {
     let dedicated = !integrated(name) && vram_gb >= 2.0;
-    Gpu { name: name.to_string(), vram_gb: if dedicated { vram_gb } else { 0.0 }, dedicated }
+    Gpu { name: name.to_string(), vram_gb: if dedicated { vram_gb } else { 0.0 }, dedicated, vendor: vendor_of(name).into() }
+}
+
+/// Free space in GB on the drive that holds `dir` (or its nearest existing parent).
+pub fn free_space(dir: &std::path::Path) -> Option<f32> {
+    let existing = std::iter::successors(Some(dir), |path| path.parent()).find(|path| path.exists())?;
+    #[cfg(windows)]
+    {
+        use crate::Hidden;
+        let drive = existing.to_string_lossy().chars().next().filter(|c| c.is_ascii_alphabetic())?;
+        let mut command = std::process::Command::new("powershell");
+        command.args(["-NoProfile", "-NonInteractive", "-Command", &format!("(Get-PSDrive -Name '{drive}').Free")]);
+        let output = command.hidden().output().ok()?;
+        String::from_utf8_lossy(&output.stdout).trim().parse::<f64>().ok().map(gb)
+    }
+    #[cfg(not(windows))]
+    {
+        let output = std::process::Command::new("df").args(["-Pk", &existing.to_string_lossy()]).output().ok()?;
+        String::from_utf8_lossy(&output.stdout).lines().nth(1)?.split_whitespace().nth(3)?.parse::<f64>().ok().map(|kb| gb(kb * 1024.0))
+    }
 }
 
 /// This computer, measured once per run (a PowerShell or sysctl call takes a moment).
@@ -244,6 +280,235 @@ pub fn recommend(hardware: &Hardware, catalog: &[LocalModel]) -> LocalAdvice {
     LocalAdvice { hardware: hardware.clone(), agent: agent.is_some(), picks, verdict }
 }
 
+// ---------- the built-in engine's recommendations ----------
+
+/// One catalog model with the quantization chosen for this computer.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltinPick {
+    pub id: String,
+    pub name: String,
+    pub repo: String,
+    pub roles: Vec<String>,
+    pub note: String,
+    pub quant: String,
+    pub file: String,
+    pub bytes: u64,
+    /// "gpu" (all layers on the card), "partial" (some on the card, the rest in memory), "cpu".
+    pub runs_on: String,
+    /// Share of the layers on the graphics card, 0 to 100.
+    pub gpu_percent: u32,
+    /// An estimate from memory speed until the speed check measures it.
+    pub tokens_per_second: u32,
+    /// "great", "good", "tight", "slow", "disk" (fits, but not on the drive) or "no".
+    pub fit: String,
+    pub fit_label: String,
+    pub quality: String,
+    /// Context the engine would start this model with here.
+    pub context: u32,
+    /// The best pick for one of its roles on this computer.
+    pub recommended: bool,
+    /// The other quantizations that fit, best first, for a manual choice.
+    pub alternatives: Vec<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltinAdvice {
+    pub hardware: Hardware,
+    /// cpu, vulkan, cuda or metal: what the engine downloads for this computer.
+    pub backend: String,
+    pub models: Vec<BuiltinPick>,
+    pub verdict: String,
+    pub disk_free_gb: Option<f32>,
+}
+
+/// How a quantization compares with the original weights, in plain words.
+pub fn quality_label(quant: &str) -> &'static str {
+    match quant {
+        "Q8_0" | "F16" | "BF16" => "Near the original",
+        "Q6_K" => "Excellent",
+        "Q5_K_M" | "Q5_K_S" => "Very good",
+        "Q4_K_M" | "Q4_K_S" | "Q4_0" | "MXFP4" => "Good",
+        "IQ4_XS" | "IQ4_NL" => "Good, smaller",
+        "Q3_K_M" | "Q3_K_S" => "Noticeably weaker",
+        _ => "Weaker",
+    }
+}
+
+/// The backend the built-in engine uses here: CUDA for an NVIDIA card, Vulkan for another card with its
+/// own memory (2 GB or more), Metal on a Mac, and the processor otherwise. Integrated graphics stay on
+/// the processor: Vulkan on them is rarely faster and sometimes unstable.
+pub fn engine_backend(hardware: &Hardware) -> &'static str {
+    if cfg!(target_os = "macos") {
+        return if hardware.unified || cfg!(target_arch = "aarch64") { "metal" } else { "cpu" };
+    }
+    let best = hardware.gpus.iter().filter(|gpu| gpu.dedicated && gpu.vram_gb >= 2.0).max_by(|a, b| a.vram_gb.total_cmp(&b.vram_gb));
+    match best {
+        Some(gpu) if gpu.vendor == "nvidia" && cfg!(windows) => "cuda",
+        Some(_) => "vulkan",
+        None => "cpu",
+    }
+}
+
+/// Bytes a value of the key/value cache takes: Neru runs it at q8_0 (8.5 bits).
+const KV_BYTES: f32 = 8.5 / 8.0;
+
+/// The context the engine starts a model with: as much as fits beside the weights, at most what the
+/// model was trained for, 64K on a roomy machine and 32K on one with 16 GB or less. At least 4K.
+pub fn plan_context(hardware: &Hardware, weights_gb: f32, kv_bytes_per_token: f32, trained: u32) -> u32 {
+    let pool = gpu_budget(hardware).max(ram_budget(hardware));
+    let cap = if hardware.ram_gb <= 16.5 { 32_768 } else { 65_536 };
+    let room = (pool - weights_gb - 1.0).max(0.0) * 1_073_741_824.0;
+    let fits = (room / kv_bytes_per_token.max(1.0)) as u32;
+    let trained = if trained == 0 { 32_768 } else { trained };
+    (fits.min(cap).min(trained) / 1024 * 1024).max(4096.min(trained))
+}
+
+/// Where a model of `size_gb` (weights plus cache) runs, the share of layers on the card and the
+/// tokens a second to expect.
+fn placement(hardware: &Hardware, size_gb: f32, active_gb: f32) -> Option<(&'static str, u32, u32)> {
+    let (gpu, ram) = (gpu_budget(hardware), ram_budget(hardware));
+    let need = size_gb + 0.5;
+    let cpu_speed = bandwidth(false, hardware) / active_gb.max(0.05);
+    if gpu > 0.0 && need <= gpu {
+        return Some(("gpu", 100, (bandwidth(true, hardware) / active_gb.max(0.05)) as u32));
+    }
+    if gpu > 1.0 && !hardware.unified && need <= gpu + ram {
+        // Time a token takes is the card's share at card speed plus the rest at memory speed.
+        let share = (gpu / need).clamp(0.0, 1.0);
+        let seconds = active_gb * share / bandwidth(true, hardware) + active_gb * (1.0 - share) / bandwidth(false, hardware);
+        return Some(("partial", (share * 100.0) as u32, (1.0 / seconds.max(1e-4)) as u32));
+    }
+    (need <= ram).then_some(("cpu", 0, cpu_speed as u32))
+}
+
+pub fn builtin_recommend(hardware: &Hardware, catalog: &[crate::llama_models::GgufModel], disk_free_gb: Option<f32>) -> BuiltinAdvice {
+    let backend = engine_backend(hardware);
+    let mut models = Vec::new();
+    for model in catalog {
+        let role = if model.roles.iter().any(|r| r == "agent") { "agent" } else if model.roles.iter().any(|r| r == "helper") { "helper" } else { "chat" };
+        // Chat is read as it streams, so it wants a little more than chores.
+        let floor = if role == "chat" { 10 } else { min_speed(role).max(6) };
+        // Each quantization with where it runs; the files are listed best first.
+        let options: Vec<_> = model
+            .files
+            .iter()
+            .filter_map(|file| {
+                let weights = file.bytes as f32 / 1_073_741_824.0;
+                let context = plan_context(hardware, weights, model.kv_kb_per_token * 1024.0 * KV_BYTES / 2.0, model.context_max);
+                // A 16K working context for the fit; the engine may start with more.
+                let kv = model.kv_kb_per_token * 1024.0 * KV_BYTES / 2.0 * 16_384.0 / 1_073_741_824.0;
+                let bits = file.bytes as f32 * 8.0 / (model.params_b * 1e9);
+                let active = model.active_b * bits / 8.0;
+                placement(hardware, weights + kv, active).map(|(runs_on, percent, speed)| (file, runs_on, percent, speed, context, weights + kv))
+            })
+            .collect();
+        let rank = |runs_on: &str| match runs_on {
+            "gpu" => 0,
+            "partial" => 1,
+            _ => 2,
+        };
+        // The best place it can run, then the best quality there that is fast enough; Q3 only when
+        // nothing better fits.
+        let usable: Vec<_> = options.iter().filter(|option| !option.0.quant.starts_with("Q3")).collect();
+        let usable = if usable.is_empty() { options.iter().collect() } else { usable };
+        let tier = usable.iter().map(|option| (if option.3 >= floor { 0 } else { 1 }, rank(option.1))).min();
+        let chosen = tier.and_then(|(slow, place)| {
+            let in_tier: Vec<_> = usable.iter().filter(|option| rank(option.1) == place).collect();
+            // Fast enough: the best quality that is. Too slow everywhere: the smallest, fastest file.
+            // Comfortably fast first (half again the floor), so a few points of quality do not cost a
+            // third of the speed; then just fast enough; then the smallest file.
+            let comfortable = floor + floor / 2;
+            if slow == 0 { in_tier.iter().find(|option| option.3 >= comfortable).or_else(|| in_tier.iter().find(|option| option.3 >= floor)).map(|option| ***option) } else { in_tier.last().map(|option| ***option) }
+        });
+        let Some((file, runs_on, percent, speed, context, need)) = chosen else {
+            let smallest = model.files.last();
+            models.push(BuiltinPick {
+                id: model.id.clone(),
+                name: model.name.clone(),
+                repo: model.repo.clone(),
+                roles: model.roles.clone(),
+                note: model.note.clone(),
+                quant: smallest.map(|f| f.quant.clone()).unwrap_or_default(),
+                file: smallest.map(|f| f.file.clone()).unwrap_or_default(),
+                bytes: smallest.map_or(0, |f| f.bytes),
+                runs_on: "none".into(),
+                gpu_percent: 0,
+                tokens_per_second: 0,
+                fit: "no".into(),
+                fit_label: "Too large for this computer".into(),
+                quality: String::new(),
+                context: 0,
+                recommended: false,
+                alternatives: Vec::new(),
+            });
+            continue;
+        };
+        let pool = if runs_on == "gpu" { gpu_budget(hardware) } else { ram_budget(hardware) + if runs_on == "partial" { gpu_budget(hardware) } else { 0.0 } };
+        let (fit, fit_label) = if speed < floor {
+            ("slow", format!("Fits, but slow here (about {speed} tokens a second)"))
+        } else if need > pool * 0.85 || runs_on == "partial" {
+            ("tight", match runs_on {
+                "partial" => format!("Runs, partly on the graphics card ({percent}% of layers), about {speed} tokens a second"),
+                _ => format!("Runs, but tight on memory, about {speed} tokens a second"),
+            })
+        } else if speed >= floor * 3 {
+            ("great", format!("Runs well {}, about {speed} tokens a second", if runs_on == "gpu" { "on the graphics card" } else { "on the processor" }))
+        } else {
+            ("good", format!("Runs {}, about {speed} tokens a second", if runs_on == "gpu" { "on the graphics card" } else { "on the processor" }))
+        };
+        let disk_short = disk_free_gb.is_some_and(|free| (file.bytes as f32 / 1_073_741_824.0) + 1.0 > free);
+        models.push(BuiltinPick {
+            id: model.id.clone(),
+            name: model.name.clone(),
+            repo: model.repo.clone(),
+            roles: model.roles.clone(),
+            note: model.note.clone(),
+            quant: file.quant.clone(),
+            file: file.file.clone(),
+            bytes: file.bytes,
+            runs_on: runs_on.into(),
+            gpu_percent: percent,
+            tokens_per_second: speed,
+            fit: if disk_short { "disk".into() } else { fit.into() },
+            fit_label: if disk_short { format!("{fit_label}, but the drive needs {:.0} GB free", file.bytes as f32 / 1_073_741_824.0 + 1.0) } else { fit_label },
+            quality: quality_label(&file.quant).into(),
+            context,
+            recommended: false,
+            alternatives: options.iter().filter(|option| option.0.quant != file.quant).map(|option| option.0.quant.clone()).collect(),
+        });
+    }
+    // The first good pick per role in catalog order (best first) is the recommendation.
+    for role in ["agent", "chat", "helper"] {
+        let best = models.iter().position(|pick| pick.roles.iter().any(|r| r == role) && matches!(pick.fit.as_str(), "great" | "good" | "tight") && (role != "agent" || pick.tokens_per_second >= 8));
+        if let Some(index) = best {
+            models[index].recommended = true;
+        }
+    }
+    let order = |pick: &BuiltinPick| (!pick.recommended, match pick.fit.as_str() { "great" => 0, "good" => 1, "tight" => 2, "slow" => 3, "disk" => 4, _ => 5 });
+    models.sort_by_key(order);
+    let agent = models.iter().find(|pick| pick.recommended && pick.roles.iter().any(|r| r == "agent"));
+    let verdict = match agent {
+        Some(pick) => format!("{} can drive Code on this computer ({}). Smaller models below handle chat and chores fast.", pick.name, pick.fit_label.to_lowercase()),
+        None if models.iter().any(|pick| pick.recommended) => "Models up to a few billion parameters run well here, for chat and chores such as titles, summaries and commit messages. For Code itself, a free cloud model is faster.".into(),
+        None => "This computer is small for local models; free cloud models are the better choice.".into(),
+    };
+    BuiltinAdvice { hardware: hardware.clone(), backend: backend.into(), models, verdict, disk_free_gb }
+}
+
+/// Catalog models with the quantization that fits this computer, for Settings.
+#[tauri::command]
+pub async fn builtin_advice() -> Result<BuiltinAdvice, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let hardware = detect();
+        let free = crate::llama_models::models_dir().ok().and_then(|dir| free_space(&dir));
+        builtin_recommend(&hardware, &crate::llama_models::catalog(), free)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// The local models that fit this computer, for Settings and `neru doctor`.
 #[tauri::command]
 pub async fn local_advice() -> Result<LocalAdvice, String> {
@@ -292,6 +557,53 @@ mod tests {
         let agent = advice.picks.iter().find(|pick| pick.role == "agent").unwrap();
         assert_eq!(agent.runs_on, "gpu", "{advice:?}");
         assert!(agent.tokens_per_second >= 50);
+    }
+
+    fn builtin(advice: &BuiltinAdvice, id: &str) -> BuiltinPick {
+        advice.models.iter().find(|pick| pick.id == id).cloned().unwrap_or_else(|| panic!("{id} missing: {advice:?}"))
+    }
+
+    #[test]
+    fn the_built_in_engine_picks_a_quantization_that_fits() {
+        let catalog = crate::registry::built_in_gguf();
+        // This development machine: 32 GB, Iris Xe, no card of its own.
+        let laptop = builtin_recommend(&machine(32.0, vec![gpu_from("Intel(R) Iris(R) Xe Graphics", 2.0)]), &catalog, Some(200.0));
+        assert_eq!(laptop.backend, "cpu", "integrated graphics stay on the processor");
+        let coder = builtin(&laptop, "qwen3-coder-30b-a3b");
+        assert_eq!(coder.runs_on, "cpu");
+        assert!(coder.fit != "no" && coder.tokens_per_second >= 8, "{coder:?}");
+        let small = builtin(&laptop, "qwen3-4b-instruct-2507");
+        assert!(matches!(small.fit.as_str(), "great" | "good"), "{small:?}");
+        assert!(laptop.models.iter().filter(|pick| pick.recommended).count() >= 2);
+        // An 8 GB laptop cannot hold the 30B model at all.
+        let small_laptop = builtin_recommend(&machine(8.0, vec![]), &catalog, Some(200.0));
+        assert_eq!(builtin(&small_laptop, "qwen3-coder-30b-a3b").fit, "no");
+        assert!(small_laptop.models.iter().any(|pick| pick.recommended && pick.roles.iter().any(|r| r == "helper")));
+        // A 24 GB NVIDIA card: CUDA, and the coder fully on the card.
+        let desktop = builtin_recommend(&machine(32.0, vec![gpu_from("NVIDIA GeForce RTX 4090", 24.0)]), &catalog, Some(500.0));
+        assert_eq!(desktop.backend, if cfg!(windows) { "cuda" } else { "vulkan" });
+        let coder = builtin(&desktop, "qwen3-coder-30b-a3b");
+        assert_eq!(coder.runs_on, "gpu", "{coder:?}");
+        assert!(coder.recommended && coder.quant.starts_with('Q'), "{coder:?}");
+        // A 12 GB card spills the dense 24B model partly into memory.
+        let mid = builtin_recommend(&machine(32.0, vec![gpu_from("AMD Radeon RX 6700 XT", 12.0)]), &catalog, Some(500.0));
+        assert_eq!(mid.backend, "vulkan");
+        let devstral = builtin(&mid, "devstral-small-2507");
+        assert!(matches!(devstral.runs_on.as_str(), "gpu" | "partial"), "{devstral:?}");
+        // No disk space: nothing can be downloaded.
+        let full = builtin_recommend(&machine(32.0, vec![]), &catalog, Some(0.5));
+        assert!(full.models.iter().all(|pick| matches!(pick.fit.as_str(), "no" | "disk")));
+        assert!(full.models.iter().any(|pick| pick.fit == "disk"));
+    }
+
+    #[test]
+    fn the_context_fits_beside_the_weights() {
+        let laptop = machine(32.0, vec![]);
+        // 4B at Q4 (2.3 GB) with 147 KB a token at f16, about 78 KB at q8: the 64K cap applies.
+        assert_eq!(plan_context(&laptop, 2.3, 147_456.0 * 8.5 / 16.0, 262_144), 65_536);
+        assert_eq!(plan_context(&machine(16.0, vec![]), 2.3, 78_000.0, 262_144), 32_768, "32K on 16 GB");
+        assert_eq!(plan_context(&laptop, 2.3, 78_000.0, 8_192), 8_192, "never more than trained");
+        assert!(plan_context(&machine(8.0, vec![]), 3.5, 400_000.0, 131_072) >= 4096);
     }
 
     #[test]

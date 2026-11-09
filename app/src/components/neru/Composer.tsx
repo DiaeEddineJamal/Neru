@@ -11,6 +11,7 @@ import type { AgentMode, ContextUsage, Effort, ModelInfo, SlashCommand } from '.
 import { t } from '../../i18n'
 import { ModelSelector } from './ModelSelector'
 import { FreeCapacity } from './FreeCapacity'
+import { IncognitoToggle } from './IncognitoToggle'
 
 export type VoiceEngine = 'local' | 'transcription' | 'system'
 type VoiceState = 'idle' | 'listening' | 'paused' | 'transcribing'
@@ -550,6 +551,7 @@ export function Composer(props: ComposerProps) {
         </div>
         {props.showWeb !== false && <button type="button" className={cn('prompt-toggle', web && 'on')} aria-pressed={web} onClick={() => props.onWebChange(!web)} disabled={disabled} title={web ? t('Web search on: Neru can search and cite public pages') : t('Web search off: answers from the project only')} aria-label={t('Web search')}><Globe size={15} weight={web ? 'fill' : 'regular'} /></button>}
         {props.onResearchChange && <button type="button" className={cn('prompt-toggle', props.research && 'on')} aria-pressed={props.research} onClick={() => props.onResearchChange?.(!props.research)} disabled={disabled} title={props.research ? t('Research on: Neru plans, searches papers and writes a cited report') : t('Research: search papers and write a cited report')} aria-label={t('Research mode')}><GraduationCap size={15} weight={props.research ? 'fill' : 'regular'} /></button>}
+        {props.onResearchChange && props.showWeb !== false && <IncognitoToggle home={Boolean(props.roomy)} refreshKey={`${props.placeholder}|${loading}|${disabled}`} disabled={disabled || loading} />}
         {props.showMode !== false && <Select value={mode} onValueChange={value => props.onModeChange(value as AgentMode)} disabled={disabled || loading} className="composer-mode">
           <SelectTrigger className={cn('h-8 w-auto rounded-lg border-0 bg-transparent px-2 py-0 text-xs hover:bg-muted focus-visible:ring-2', mode === 'bypass' && 'mode-danger')}>
             <span className="truncate text-muted-foreground" title={t(MODES.find(item => item.value === mode)?.hint ?? '')}>{t(MODES.find(item => item.value === mode)?.label ?? '')}</span>

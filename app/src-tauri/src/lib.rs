@@ -20,11 +20,14 @@ mod editor_ai;
 mod extras;
 mod fallback;
 mod git;
+mod gguf;
 mod hardware;
 mod hooks;
 mod imports;
 mod index;
 mod limits;
+mod llama_models;
+mod llama_server;
 mod lsp;
 mod mcp;
 mod memory;
@@ -71,6 +74,7 @@ mod tools;
 mod toolproto;
 mod trust;
 mod usage;
+mod viz;
 mod voice;
 mod web;
 mod workspace;
@@ -238,6 +242,7 @@ pub fn run() {
         // Background shells would outlive the window otherwise; statics are never dropped.
         if let tauri::RunEvent::Exit = event {
             shells::kill_all();
+            llama_server::shutdown();
         }
     });
 }
@@ -382,6 +387,13 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             extras::forget_project_fact,
             extras::remember_project_fact,
             memory::memory_state,
+            memory::project_memory_state,
+            memory::memory_summary_get,
+            memory::memory_summary_set,
+            memory::memory_summary_regenerate,
+            memory::memory_summary_revise,
+            sessions::chat_incognito_state,
+            sessions::set_chat_incognito,
             memory::set_memory_settings,
             memory::add_memory,
             memory::edit_memory,
@@ -402,6 +414,17 @@ pub(crate) fn builder(ready: impl FnOnce(tauri::AppHandle) + Send + 'static) -> 
             ollama::ollama_cancel_pull,
             ollama::ollama_delete,
             ollama::ollama_speed,
+            hardware::builtin_advice,
+            llama_server::builtin_status,
+            llama_server::builtin_install_engine,
+            llama_server::set_builtin_settings,
+            llama_server::builtin_load,
+            llama_server::builtin_unload,
+            llama_server::builtin_log,
+            llama_server::builtin_speed,
+            llama_models::builtin_download,
+            llama_models::builtin_cancel_download,
+            llama_models::builtin_delete,
             engine::engine_settings,
             engine::set_engine_settings,
             engine::generate_commit_message,

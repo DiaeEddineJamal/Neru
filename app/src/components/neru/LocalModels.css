@@ -31,3 +31,18 @@
 .lm-speed.is-too-slow { color: var(--danger) !important; }
 .lm-link { align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--sage); font-size: var(--fs-xs); cursor: pointer; }
 .lm-link:hover { text-decoration: underline; }
+
+/* Settings → Model provider → Built-in: Neru's own llama.cpp engine (BuiltinModels.tsx). */
+.lm-name strong { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+.lm-badge { padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--sage) 16%, transparent); color: var(--sage); font-size: 10px; font-style: normal; font-weight: 600; }
+.lm-list li.is-recommended { background: color-mix(in srgb, var(--sage) 5%, var(--surface)); }
+.lm-fit { font-weight: 500; }
+.lm-fit.is-great, .lm-fit.is-good { color: var(--sage) !important; }
+.lm-fit.is-tight, .lm-fit.is-slow, .lm-fit.is-disk { color: var(--warning, #b7791f) !important; }
+.lm-fit.is-no { color: var(--danger) !important; }
+.lm-quant { height: 22px; padding: 0 4px; border: 1px solid var(--border); border-radius: var(--r-sm, 6px); background: var(--bg); color: var(--text); font-size: var(--fs-xs); }
+.lm-actions { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.lm-settings { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-lg); }
+.local-models .lm-settings label { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; margin: 0; color: var(--secondary); font-size: var(--fs-xs); text-align: left; }
+.lm-settings select { height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); color: var(--text); font-size: var(--fs-xs); }
+@media (max-width: 560px) { .lm-list li { flex-wrap: wrap; } .lm-progress { width: 100%; } .lm-custom { flex-wrap: wrap; } }

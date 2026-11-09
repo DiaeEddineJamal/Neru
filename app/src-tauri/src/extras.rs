@@ -169,6 +169,12 @@ pub fn user_memory_path() -> Result<PathBuf, String> {
 
 /// Both memory files and the saved memories, for the system prompt. Empty when there is nothing remembered.
 pub fn memory_prompt(root: Option<&Path>) -> String {
+    memory_prompt_scoped(root, Some(&crate::memory::Scope::Global))
+}
+
+/// `memory_prompt` for a chat's memory scope (a Chat project's own memory, or the global one). `None`
+/// is an incognito chat: no memory at all, only the profile the user wrote in Settings.
+pub fn memory_prompt_scoped(root: Option<&Path>, scope: Option<&crate::memory::Scope>) -> String {
     let file = |label: &str, path: Option<PathBuf>| {
         path.and_then(|path| fs::read_to_string(path).ok())
             .map(|body| body.trim().to_string())
@@ -176,10 +182,13 @@ pub fn memory_prompt(root: Option<&Path>) -> String {
             .map(|body| format!("\n\n{label}:\n{}", body.chars().take(8_000).collect::<String>()))
             .unwrap_or_default()
     };
-    let mut text = file("Memory about the user (saved in earlier sessions)", user_memory_path().ok());
-    // Structured saved memories (memory.rs), sorted so the bytes only change when a memory does.
-    text.push_str(&crate::memory::prompt());
-    if let Some(root) = root {
+    let mut text = String::new();
+    if let Some(scope) = scope {
+        text.push_str(&file("Memory about the user (saved in earlier sessions)", user_memory_path().ok()));
+        // The summary and structured saved memories (memory.rs), sorted so the bytes only change when a memory does.
+        text.push_str(&crate::memory::prompt_for(scope));
+    }
+    if let Some(root) = root.filter(|_| scope.is_some()) {
         text.push_str(&file("Memory about this project (saved in earlier sessions)", Some(project_memory_path(root))));
     }
     let profile = profile_prompt(&get_profile());
@@ -555,7 +564,7 @@ pub async fn doctor(app: AppHandle) -> Result<Vec<Check>, String> {
     let state = app.state::<crate::AppState>();
     let config = state.provider.lock().map_err(|e| e.to_string())?.clone();
     let mut checks = Vec::new();
-    let keyed = !config.api_key.is_empty() || matches!(config.provider_id.as_str(), "local" | "ollama") || crate::providers::keyless(&config.provider_id);
+    let keyed = !config.api_key.is_empty() || matches!(config.provider_id.as_str(), "local" | "ollama" | "builtin") || crate::providers::keyless(&config.provider_id);
     checks.push(Check {
         name: "Model".into(),
         ok: keyed && !config.model.is_empty(),

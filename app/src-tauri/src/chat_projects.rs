@@ -1,6 +1,8 @@
 //! Chat projects, like Claude's Projects: a name, a description, custom instructions and a set of
 //! knowledge documents shared by every chat filed under the project. Stored under
 //! `data_dir()/chat-projects/<id>/` as `project.json` plus one `knowledge/<item>.json` per document.
+//! The project's own memory (memory.rs, `Scope::Project`) sits beside them as `memory.json` (facts)
+//! and `memory-summary.json`, kept apart from the global memory and deleted with the project.
 //!
 //! The project block goes into the chat system prompt in a fixed, byte-stable order (instructions,
 //! then knowledge in the order it was added), after the base prompt and the user's profile and before
@@ -698,6 +700,20 @@ mod tests {
         store.delete(&created.id).unwrap();
         assert!(store.get(&created.id).is_err());
         assert!(store.list().is_empty());
+        let _ = fs::remove_dir_all(&store.base);
+    }
+
+    #[test]
+    fn project_memory_files_stay_out_of_the_list_and_go_with_the_project() {
+        let store = temp_store();
+        let created = store.create("Thesis", "").unwrap();
+        let dir = store.dir(&created.id).unwrap();
+        fs::write(dir.join("memory.json"), r#"{"memories":[]}"#).unwrap();
+        fs::write(dir.join("memory-summary.json"), "{\"text\":\"Purpose and context\"}").unwrap();
+        assert_eq!(store.list(), vec![created.clone()]);
+        assert!(store.knowledge(&created.id).unwrap().is_empty(), "memory files are not knowledge");
+        store.delete(&created.id).unwrap();
+        assert!(!dir.exists());
         let _ = fs::remove_dir_all(&store.base);
     }
 

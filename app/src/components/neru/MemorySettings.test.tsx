@@ -24,6 +24,14 @@ vi.mock('../../api', () => ({
   },
 }))
 
+vi.mock('@/lib/memoryApi', () => ({
+  memoryApi: {
+    summary: vi.fn(() => Promise.resolve({ text: '## Work context\nThe user studies law.', updatedAt: Date.UTC(2026, 10, 8), generatedAt: Date.UTC(2026, 10, 8), chatsThrough: 1, edited: false, generating: false, enabled: true })),
+  },
+  onMemoryChanged: () => () => undefined,
+  memoryTime: (millis: number) => new Date(millis).toISOString().slice(0, 10),
+}))
+
 const mocked = vi.mocked(api)
 
 describe('MemorySettings', () => {
@@ -49,11 +57,20 @@ describe('MemorySettings', () => {
   it('turns settings on and off', async () => {
     mocked.setMemoryPrefs.mockImplementation(settings => Promise.resolve({ ...store(), settings }))
     render(<MemorySettings onError={vi.fn()} onNotice={vi.fn()} />)
-    const history = await screen.findByRole('switch', { name: 'Reference chat history' })
+    const history = await screen.findByRole('switch', { name: 'Search and reference chats' })
+    expect(screen.getByRole('switch', { name: 'Generate memory from chat history' }).getAttribute('aria-checked')).toBe('true')
     expect(history.getAttribute('aria-checked')).toBe('false')
     fireEvent.click(history)
     expect(mocked.setMemoryPrefs).toHaveBeenCalledWith({ referenceMemories: true, learnFromChats: true, referenceChatHistory: true })
     await waitFor(() => expect(history.getAttribute('aria-checked')).toBe('true'))
+  })
+
+  it('shows the memory summary above the saved memories', async () => {
+    render(<MemorySettings onError={vi.fn()} onNotice={vi.fn()} />)
+    const summary = await screen.findByRole('region', { name: 'Memory summary' })
+    await waitFor(() => expect(summary.textContent).toContain('The user studies law.'))
+    expect(summary.textContent).toContain('Updated 2026-11-08')
+    expect(within(summary).getByRole('heading', { name: 'Work context' })).toBeTruthy()
   })
 
   it('adds, edits and deletes a memory', async () => {

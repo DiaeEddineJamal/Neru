@@ -5,14 +5,16 @@ import type { MemoryCategory, MemoryPrefs, MemoryStore, SavedMemory } from '../.
 import { cn } from '@/lib/utils'
 import { t } from '../../i18n'
 import { Select } from '../ui/Select'
+import { MemorySummary } from './MemorySummary'
+import { onMemoryChanged } from '@/lib/memoryApi'
 import './MemorySettings.css'
 
 const CATEGORY_LABELS: Record<MemoryCategory, string> = { about: 'About you', preferences: 'Preferences', work: 'Work', projects: 'Projects', other: 'Other' }
 const CATEGORIES = Object.keys(CATEGORY_LABELS) as MemoryCategory[]
 const TOGGLES: { key: keyof MemoryPrefs; label: string; detail: string }[] = [
-  { key: 'referenceMemories', label: 'Reference saved memories', detail: 'Every model, in Chat and Code, sees the memories below as facts about you.' },
-  { key: 'learnFromChats', label: 'Learn from chats automatically', detail: 'After a chat reply, a small model notes lasting facts about you. Never passwords, keys, health or other sensitive details, and it follows your privacy rule.' },
-  { key: 'referenceChatHistory', label: 'Reference chat history', detail: 'Models can search your earlier chats when you mention something you discussed before.' },
+  { key: 'referenceMemories', label: 'Reference saved memories', detail: 'Every model, in Chat and Code, sees the summary and memories below as background about you. Each chat project keeps its own memory.' },
+  { key: 'learnFromChats', label: 'Generate memory from chat history', detail: 'A small model notes lasting facts after chat replies and rewrites the summary from your chats about once a day. Never passwords, keys, health or other sensitive details, never incognito chats, and it follows your privacy rule.' },
+  { key: 'referenceChatHistory', label: 'Search and reference chats', detail: 'Models can search your earlier chats when you mention something you discussed before. Inside a project, only the chats in that project.' },
 ]
 
 const day = (millis: number) => new Date(millis).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -50,9 +52,7 @@ export function MemorySettings({ onError, onNotice }: { onError: (message: strin
   useEffect(() => { void api.memoryStore().then(setStore).catch(cause => onError(String(cause))) }, [onError])
   // Facts Neru learns from a chat in the background show up while the page is open.
   useEffect(() => {
-    let stop: (() => void) | undefined, live = true
-    void import('@tauri-apps/api/event').then(({ listen }) => listen('memory-changed', () => { void api.memoryStore().then(setStore).catch(() => undefined) })).then(unlisten => { if (live) stop = unlisten; else unlisten() }).catch(() => undefined)
-    return () => { live = false; stop?.() }
+    return onMemoryChanged(() => { void api.memoryStore().then(setStore).catch(() => undefined) })
   }, [])
 
   /** Applies a change; resolves to whether it worked, so a form stays open after an error. */
@@ -89,6 +89,8 @@ export function MemorySettings({ onError, onNotice }: { onError: (message: strin
 
     {TOGGLES.map(item => <div key={item.key} className="settings-row"><div><strong>{t(item.label)}</strong><p>{t(item.detail)}</p></div>
       <button type="button" className={cn('switch', store?.settings[item.key] && 'on')} role="switch" aria-checked={Boolean(store?.settings[item.key])} aria-label={t(item.label)} disabled={!store} onClick={() => toggle(item.key)} /></div>)}
+
+    <MemorySummary onError={onError} />
 
     <h3 className="cli-heading"><Brain size={15} aria-hidden /> {t('Saved memories')}{memories.length > 0 && <span className="memory-count">{memories.length}</span>}</h3>
     <div className="memory-toolbar">

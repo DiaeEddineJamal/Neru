@@ -32,7 +32,7 @@ pub fn privacy_of(config: &ProviderConfig) -> &'static str {
 
 /// Ollama, a local gateway, or any endpoint on this machine.
 pub fn is_local(config: &ProviderConfig) -> bool {
-    matches!(config.provider_id.as_str(), "ollama" | "local") || reqwest::Url::parse(&config.base_url).is_ok_and(|url| crate::providers::is_local(&url))
+    matches!(config.provider_id.as_str(), "ollama" | "local" | "builtin") || reqwest::Url::parse(&config.base_url).is_ok_and(|url| crate::providers::is_local(&url))
 }
 
 pub fn label(privacy: &str) -> &'static str {
@@ -158,6 +158,7 @@ pub fn provider_name(provider_id: &str) -> &str {
         "ollamacloud" => "Ollama Cloud",
         "zai" => "Z.AI",
         "ollama" => "Ollama",
+        "builtin" => "Neru's built-in engine",
         "local" => "Your local gateway",
         "openai" => "OpenAI",
         "anthropic" => "Anthropic",

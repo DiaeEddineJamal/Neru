@@ -18,7 +18,7 @@ const FILTERS: { id: ModelFilter; label: string; test: (info: ModelInfo) => bool
 ]
 
 /** Providers whose own list already says which models are live (or where a test request would spend scarce quota). */
-export const LISTING_IS_AUTHORITATIVE = new Set(['openrouter', 'ollama', 'local'])
+export const LISTING_IS_AUTHORITATIVE = new Set(['openrouter', 'ollama', 'local', 'builtin'])
 
 export function contextLabel(tokens?: number) {
   if (!tokens) return ''

@@ -29,6 +29,9 @@ pub struct Registry {
     /// Models to run on this computer, each role's best first (hardware.rs picks what fits).
     #[serde(default)]
     pub local_models: Vec<crate::hardware::LocalModel>,
+    /// GGUF models for the built-in engine (llama_models.rs), with each quantization's file.
+    #[serde(default)]
+    pub gguf_models: Vec<crate::llama_models::GgufModel>,
 }
 
 const BUILT_IN: &str = include_str!("../../../registry/models.json");
@@ -38,6 +41,12 @@ static CURRENT: LazyLock<RwLock<Registry>> = LazyLock::new(|| RwLock::new(initia
 
 fn built_in() -> Registry {
     serde_json::from_str(BUILT_IN).expect("registry/models.json is valid")
+}
+
+/// The built-in GGUF catalog, for a fetched registry from before it had one.
+pub fn built_in_gguf() -> Vec<crate::llama_models::GgufModel> {
+    static GGUF: LazyLock<Vec<crate::llama_models::GgufModel>> = LazyLock::new(|| built_in().gguf_models);
+    GGUF.clone()
 }
 
 fn cache_paths() -> Option<(std::path::PathBuf, std::path::PathBuf)> {

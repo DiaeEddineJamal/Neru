@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
-import { CircleCheck, Clock, LoaderCircle, Moon, PiggyBank, Sun, TriangleAlert, X } from '@/components/icons'
+import { ChevronRight, CircleCheck, CircleX, Clock, LoaderCircle, Moon, PiggyBank, Sun, TriangleAlert, X } from '@/components/icons'
 import { api } from '../../api'
 import type { AgentMode, Digest, DigestItem, QueuedTask } from '../../types'
 import { cn } from '@/lib/utils'
@@ -27,6 +27,12 @@ const MODES: { value: AgentMode; label: string }[] = [
  * Tasks: queue work for tonight (after free plans reset their daily quota) and see what happened while you were
  * away. Queued tasks run one at a time in their own session while Neru is open.
  */
+/** A reply's opening as plain prose: code blocks, widget sources and Markdown marks dropped. */
+function plainSummary(text?: string | null) {
+  if (!text) return ''
+  return text.replace(/```[\s\S]*?(```|$)/g, ' ').replace(/[`*#>]+/g, '').replace(/\s+/g, ' ').trim()
+}
+
 export function TasksDialog({ open, view, projects, onClose, onOpenSession, onError }: {
   open: boolean
   view: 'queue' | 'digest'
@@ -78,17 +84,22 @@ export function TasksDialog({ open, view, projects, onClose, onOpenSession, onEr
   const digestCard = (item: DigestItem) => {
     const facts = [item.edits ? (item.edits === 1 ? t('1 change') : t('{n} changes', { n: item.edits })) : '', item.commands ? (item.commands === 1 ? t('1 command') : t('{n} commands', { n: item.commands })) : '', item.failedCommands ? t('{n} failed', { n: item.failedCommands }) : ''].filter(Boolean).join(' · ')
     const label = { done: t('Done'), waiting: t('Needs you'), failed: t('Stopped'), running: t('Running') }[item.status]
-    return <button key={item.sessionId} type="button" className={cn('task-card', item.status)} onClick={() => { onOpenSession(item.projectPath, item.sessionId); onClose() }}>
-      <span className="task-card-head"><strong>{item.title}</strong><span className={cn('task-badge', item.status)}>{label}</span></span>
-      <span className="task-meta">{item.project}{item.queued ? ` · ${t('from your queue')}` : ''}</span>
-      {item.summary && <span className="task-summary">{item.summary}</span>}
-      {facts && <span className={cn('task-meta', item.failedCommands > 0 && 'danger')}>{facts}</span>}
+    const Mark = { done: CircleCheck, waiting: TriangleAlert, failed: CircleX, running: LoaderCircle }[item.status]
+    const summary = plainSummary(item.summary)
+    return <button key={item.sessionId} type="button" className={cn('task-card digest-card', item.status)} onClick={() => { onOpenSession(item.projectPath, item.sessionId); onClose() }}>
+      <span className="digest-mark" aria-hidden><Mark size={16} className={item.status === 'running' ? 'animate-spin' : undefined} /></span>
+      <span className="digest-main">
+        <span className="task-card-head"><strong className="truncate">{item.title}</strong><span className={cn('task-state', item.status)}>{label}</span></span>
+        <span className="task-meta">{[item.project, item.queued ? t('from your queue') : '', facts].filter(Boolean).join(' · ')}</span>
+        {summary && <span className="task-summary">{summary}</span>}
+      </span>
+      <ChevronRight size={16} className="digest-go" aria-hidden />
     </button>
   }
   const taskCard = (task: QueuedTask) => {
     const label = { queued: t('Queued'), running: t('Running'), waiting: t('Needs you'), done: t('Done'), failed: t('Failed'), canceled: t('Canceled') }[task.status]
     return <div key={task.id} className={cn('task-card', task.status)}>
-      <span className="task-card-head"><strong>{task.title}</strong><span className={cn('task-badge', task.status)}>{task.status === 'running' && <LoaderCircle size={11} className="animate-spin" aria-hidden />}{label}</span></span>
+      <span className="task-card-head"><strong>{task.title}</strong><span className={cn('task-state', task.status)}>{task.status === 'running' && <LoaderCircle size={11} className="animate-spin" aria-hidden />}{label}</span></span>
       <span className="task-meta">{baseName(task.projectPath)} · {task.status === 'queued' ? t('starts {time}', { time: time(task.at) }) : time(task.at)}{task.repeat ? ` · ${task.repeat === 'daily' ? t('every day') : t('every week')}` : ''}{task.offline ? ` · ${t('even when Neru is closed')}` : ''}{task.images ? ` · ${task.images === 1 ? t('1 photo') : t('{n} photos', { n: task.images })}` : ''}</span>
       {task.error && <span className="task-meta danger">{task.error}</span>}
       <span className="task-actions">

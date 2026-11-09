@@ -352,7 +352,7 @@ pub fn speeds() -> HashMap<String, Speed> {
 }
 
 /// A prompt of about a thousand tokens of ordinary code, so prompt reading is measured on real text.
-fn speed_prompt() -> String {
+pub fn speed_prompt() -> String {
     let block = "function totalWithTax(items, rate) {\n  let sum = 0\n  for (const item of items) {\n    sum += item.price * item.quantity\n  }\n  return Math.round(sum * (1 + rate) * 100) / 100\n}\n\n";
     format!("{}Explain in two sentences what the code above does.", block.repeat(18))
 }
@@ -370,14 +370,19 @@ pub async fn ollama_speed(tag: String) -> Result<Speed, String> {
     let body = crate::providers::read_response(response).await?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let speed = speed_from(&body, now).ok_or("Ollama did not report its timings.")?;
+    save_speed(&tag, &speed);
+    Ok(speed)
+}
+
+/// Keeps a measured speed (the built-in engine's are keyed `builtin:<id>`).
+pub fn save_speed(key: &str, speed: &Speed) {
     if let Some(path) = speeds_path() {
         let mut all = speeds();
-        all.insert(tag, speed.clone());
+        all.insert(key.to_string(), speed.clone());
         if let Ok(bytes) = serde_json::to_vec_pretty(&all) {
             let _ = std::fs::write(path, bytes);
         }
     }
-    Ok(speed)
 }
 
 #[cfg(test)]

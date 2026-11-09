@@ -89,8 +89,42 @@ Original plan:
 Original plan:
 - After a download, a short benchmark through Ollama's own timings (`prompt_eval_duration`, `eval_duration`) gives prompt and generation speed and a verdict: fine for the agent, helpers only, or too slow.
 
-### L5. Bundled engine (L, decide later)
-- A `llama-server` sidecar downloaded on demand would remove the Ollama dependency and give control over KV-cache reuse, speculative decoding and grammars. Decide once L1–L4 show how people use local models.
+### L5. Built-in engine (L) ✅ done (November 9, 2026)
+
+Local models now run without Ollama. Ollama stays as an optional second backend.
+- **Runtime** (`llama_server.rs`): llama.cpp's `llama-server`, pinned build `b12230`, is downloaded on first use from the ggml-org releases. Each archive is checked against its published SHA-256 and unpacked with the system `tar -xmf`.
+  - Backend per computer (`hardware::engine_backend`): CUDA 12.4 plus its runtime for an NVIDIA card on Windows; Vulkan for another card with 2 GB or more of its own memory; Metal on Apple silicon; otherwise the processor. Integrated graphics stay on the processor.
+  - A graphics backend that fails to start is retried once on the processor.
+  - `NERU_LLAMA_SERVER` points at your own build.
+- **Models** (`llama_models.rs`, `ggufModels` in `registry/models.json`): 11 Unsloth GGUF models. Each lists up to six quantizations with the real file name, size and SHA-256 from Hugging Face.
+  - Downloads report progress and speed, resume from a `.part` file (HTTP Range), can be cancelled, and check the disk first.
+  - A finished download is checked against its SHA-256 and its GGUF header is read.
+  - Models can be removed. Any other repository and `.gguf` file can be downloaded too.
+- **Serving**: a proxy on `127.0.0.1:39281/v1` (provider id `builtin`) starts the model a request names. Each model gets its own process, and at most two stay loaded (the least recently used goes first).
+  - The context is sized from the GGUF header (KV bytes per token at q8_0) and this computer's memory: 64K on a roomy machine, 32K at 16 GB or less, never more than the model was trained for.
+  - `--fit on` fits the layers to the graphics card.
+- **Launch flags**:
+  - `--flash-attn auto` (`off` on Vulkan)
+  - a q8_0 key/value cache; the value half only with flash attention
+  - `--parallel 2 -kvu`
+  - `--cache-reuse 256`
+  - a smaller `--cache-ram` at 16 GB or less
+  - llama.cpp's default `--load-mode auto` (mmap) is kept: `--no-mmap` and `--mlock` were removed upstream.
+- **Runtime behaviour**:
+  - `cache_prompt` is on, so the conversation's prefix stays in the slot between turns.
+  - A request that overflows the window reloads the model with a larger one (8K, 32K, then half again) and is retried.
+  - A model unloads after 15 idle minutes (configurable); Load in Settings warms it up ahead of time.
+  - On Windows the processes join a job object that ends with Neru. Leftovers from a crash are stopped on the next start.
+- **Recommendations** (`hardware::builtin_recommend`): for every catalog model, the best placement (all on the graphics card, part on it, or the processor), then the best quantization that still writes fast enough for its role. Q3 only when nothing else fits.
+  - Labels say how it fits ("Runs well", "Runs, but tight", "Fits, but slow", "Too large", not enough disk).
+  - They also give the quality ("Near the original" … "Noticeably weaker"), expected tokens a second and the context.
+  - The best pick for each role is marked Recommended.
+- **Helper lane**: downloaded helper-sized models take chores, as Ollama's do.
+- **Checked**: the live test (`cargo test --lib live_built_in -- --ignored --nocapture`) on the test machine with no Ollama installed.
+  - The engine downloaded in 5 s, and `Qwen3-0.6B-Q4_K_M` downloaded and verified in 58 s.
+  - The proxy listed the model, and a streamed reply came back ("The capital of France is Paris.", 90 tokens/s reading and 21 writing on the processor).
+  - A second turn reused 29 of 30 prompt tokens from the cache.
+- **Not checked**: CUDA, Vulkan and Metal on real hardware (the test machine has only Iris Xe), macOS, and Linux.
 
 ## Order
 

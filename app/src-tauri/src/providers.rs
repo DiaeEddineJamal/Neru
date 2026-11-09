@@ -44,6 +44,9 @@ fn authorized(request: RequestBuilder, config: &ProviderConfig) -> RequestBuilde
 }
 
 pub fn models_request(client: &Client, config: &ProviderConfig) -> RequestBuilder {
+    if config.provider_id == "builtin" {
+        crate::llama_server::ensure_proxy();
+    }
     let path = match config.provider_id.as_str() {
         "local" => "/models?available=true",
         "openrouter" => "/models?supported_parameters=tools",
@@ -157,6 +160,10 @@ pub fn chat_request(
     tools: &Value,
     effort: Option<&str>,
 ) -> RequestBuilder {
+    // The built-in engine's proxy starts the model a request names (llama_server.rs).
+    if config.provider_id == "builtin" {
+        crate::llama_server::ensure_proxy();
+    }
     // Every caller sends what it builds here, so this is where a task counts its requests.
     crate::taskstats::request(config);
     // The leading system message asked for its own cache breakpoint (a Chat project's block).

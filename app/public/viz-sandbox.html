@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Widgets from the conversation run here, inside <iframe sandbox="allow-scripts"> (an opaque origin):
+     no network, no forms, no popups, no access to the app. Scripts run only as blob: URLs made by
+     viz-sandbox.js, because inline script would also need the app's own CSP to allow it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<style>
+  :root { color-scheme: dark; --bg: transparent; --text: #f2f0e9; --muted: #8f8f8f; --border: #363636; --surface: #232323; --accent: #3987e5; font: 14px/1.5 Inter, 'Segoe UI', system-ui, sans-serif; color: var(--text); background: transparent; }
+  :root[data-theme='light'] { color-scheme: light; --text: #191a18; --muted: #7a7d76; --border: #dddcd5; --surface: #fff; --accent: #2a78d6; }
+  html, body { margin: 0; background: transparent; }
+  body { padding: 8px; overflow-x: auto; }
+</style>
+<script src="viz-sandbox.js" defer></script>
+</head>
+<body></body>
+</html>

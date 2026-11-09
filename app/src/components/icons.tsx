@@ -63,6 +63,7 @@ import { DotsThreeVerticalIcon } from '@phosphor-icons/react/dist/csr/DotsThreeV
 import { DownloadSimpleIcon } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { EyeIcon } from '@phosphor-icons/react/dist/csr/Eye'
 import { EyeSlashIcon } from '@phosphor-icons/react/dist/csr/EyeSlash'
+import { DetectiveIcon } from '@phosphor-icons/react/dist/csr/Detective'
 import { FileArrowDownIcon } from '@phosphor-icons/react/dist/csr/FileArrowDown'
 import { FileCodeIcon } from '@phosphor-icons/react/dist/csr/FileCode'
 import { FileMagnifyingGlassIcon } from '@phosphor-icons/react/dist/csr/FileMagnifyingGlass'
@@ -245,6 +246,7 @@ export const EllipsisVertical = adapt(DotsThreeVerticalIcon, 'EllipsisVertical')
 export const ExternalLink = adapt(ArrowSquareOutIcon, 'ExternalLink')
 export const Eye = adapt(EyeIcon, 'Eye')
 export const EyeOff = adapt(EyeSlashIcon, 'EyeOff')
+export const Incognito = adapt(DetectiveIcon, 'Incognito')
 export const FileCode2 = adapt(FileCodeIcon, 'FileCode2')
 export const FileDiff = adapt(GitDiffIcon, 'FileDiff')
 export const FileDown = adapt(FileArrowDownIcon, 'FileDown')

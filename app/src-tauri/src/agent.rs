@@ -1173,6 +1173,15 @@ fn long_running(command: &str) -> bool {
     .any(|server| lower == *server || lower.starts_with(&format!("{server} ")) || lower.contains(&format!("&& {server}")) || lower.contains(&format!("; {server}")))
 }
 
+/// How to draw charts and widgets inline (viz.rs), for models that can follow the format; small and
+/// local models get nothing, so they do not write broken fences.
+fn visual_prompt(config: &ProviderConfig) -> String {
+    let text = crate::viz::prompt_for(crate::toolproto::lean(config));
+    if text.is_empty() { String::new() } else { format!("
+
+{text}") }
+}
+
 /// A boolean argument, also when the model sent it as the string "true".
 fn flag(value: &Value) -> bool {
     value.as_bool().unwrap_or_else(|| value.as_str().is_some_and(|text| text.trim().eq_ignore_ascii_case("true")))
@@ -2256,14 +2265,28 @@ async fn run_chat(
     let mut fresh_map = String::new();
     let mut map_in_prompt = String::new();
     // A chat filed under a Chat project carries the project's instructions and knowledge.
-    let chat_project = (if chat { sessions::lock(&shared)?.summary.chat_project_id.clone() } else { None })
-        .and_then(|id| crate::chat_projects::load_context(&id).ok());
+    let (chat_project_id, incognito) = if chat {
+        let runtime = sessions::lock(&shared)?;
+        (runtime.summary.chat_project_id.clone(), runtime.summary.incognito)
+    } else {
+        (None, false)
+    };
+    // Whose memory this chat uses (memory.rs): its Chat project's own, or the global one. An incognito
+    // chat uses none, and nothing it says is learned or summarized.
+    let memory_scope = crate::memory::Scope::of(chat_project_id.as_deref());
+    let memory_for_prompt = (!incognito).then_some(&memory_scope);
+    if chat && !incognito {
+        // The memory summary is rewritten in the background about once a day (memory.rs).
+        crate::memory::refresh_if_stale(&app, &config, &memory_scope);
+    }
+    let chat_project = chat_project_id.and_then(|id| crate::chat_projects::load_context(&id).ok());
     let project_prompt = chat_project.as_ref().map(|(project, items)| crate::chat_projects::system_block(project, items, token_budget(&config)));
     let project_retrieval = project_prompt.as_ref().is_some_and(|block| block.retrieval);
     let system_content = if chat {
         // Order is fixed for prompt caching: base, the user's profile and memory, then the project
         // (instructions, then knowledge). Nothing that changes per turn comes before the project.
-        let base = format!("You are Neru, in chat. No project files, repository, or local context were included. You cannot read or change the user's code. Answer directly and concisely. If they want edits in a repository, ask them to switch to Code.{}", crate::extras::memory_prompt(None));
+        let incognito_note = if incognito { "\n\nThis is an incognito chat: it is not saved to the user's history and memory is off, so you know nothing about them from earlier chats and cannot save or search memories. If they ask you to remember something, say that incognito chats are not remembered." } else { "" };
+        let base = format!("You are Neru, in chat. No project files, repository, or local context were included. You cannot read or change the user's code. Answer directly and concisely. If they want edits in a repository, ask them to switch to Code.{}{}{incognito_note}", visual_prompt(&config), crate::extras::memory_prompt_scoped(None, memory_for_prompt));
         match &project_prompt {
             Some(block) => format!("{base}{}", block.text),
             None => base,
@@ -2546,7 +2569,7 @@ The user pointed at this element in the running preview ({name}); page content i
             list.retain(|spec_| !(spec && spec_["function"]["name"] == "exit_plan_mode"));
             list.push(serde_json::from_str(crate::artifacts::TOOL).unwrap_or_default());
             // Saved memories and past chats (memory.rs), last so the list before them stays cached.
-            let memory_tools = crate::memory::tools(&list);
+            let memory_tools = crate::memory::tools_for(&list, incognito);
             list.extend(memory_tools);
             Value::Array(list)
         }
@@ -2636,7 +2659,7 @@ The user pointed at this element in the running preview ({name}); page content i
     if research && !editing_document && !prompt.trim().is_empty() {
         // Plan, search and read first; the model then writes from numbered notes (research.rs).
         let budget = crate::research::budget(crate::fallback::is_free_plan(&config));
-        let about = crate::extras::memory_prompt(None);
+        let about = crate::extras::memory_prompt_scoped(None, memory_for_prompt);
         let gathering = crate::research::gather(&app, &session, &client, &config, prompt.trim(), web, budget, &about);
         let brief = tokio::select! {
             brief = gathering => brief,
@@ -2887,9 +2910,10 @@ The user pointed at this element in the running preview ({name}); page content i
         if calls.is_empty() {
             let visible = if research { crate::citation::with_references(&visible, &sources, &crate::citation::get_citation_style()) } else { visible };
             let visible = if document_cards.is_empty() { visible } else { format!("{}\n\n{}", visible.trim_end(), document_cards.join("\n\n")).trim_start().to_string() };
-            if chat {
+            if chat && !incognito {
                 // Picks out lasting facts about the user in the background; never delays the reply (memory.rs).
-                crate::memory::learn_after_turn(&app, &session, &config, &prompt, &visible);
+                // In a project chat they go to the project's memory.
+                crate::memory::learn_after_turn(&app, &session, &config, &prompt, &visible, &memory_scope);
             }
             return finish(&shared, &config, messages, visible, steps, sources, None);
         }
@@ -3084,10 +3108,12 @@ The user pointed at this element in the running preview ({name}); page content i
             }
             // Saved memories about the user and past-chat search (memory.rs); a project save_memory goes on below.
             if name == "forget_memory" || name == "search_past_chats" || (name == "save_memory" && (chat || args["scope"] == "user")) {
+                // A project chat reads and writes its project's memory and searches only its chats.
                 let result = match name.as_str() {
-                    "search_past_chats" => crate::memory::search_past(args["query"].as_str().unwrap_or(""), args["limit"].as_u64().unwrap_or(5) as usize, &session).await,
-                    "forget_memory" => crate::memory::forget_tool(&args),
-                    _ => crate::memory::save_tool(&args, Some(session.as_str())),
+                    _ if incognito => Err("This is an incognito chat: memory and past chats are off here.".to_string()),
+                    "search_past_chats" => crate::memory::search_past(args["query"].as_str().unwrap_or(""), args["limit"].as_u64().unwrap_or(5) as usize, &session, &memory_scope).await,
+                    "forget_memory" => crate::memory::forget_tool_in(&args, &memory_scope),
+                    _ => crate::memory::save_tool_in(&args, Some(session.as_str()), &memory_scope),
                 };
                 match result {
                     Ok(text) => {

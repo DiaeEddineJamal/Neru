@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isTauri } from '@tauri-apps/api/core'
 import { motion, useReducedMotion } from 'motion/react'
-import { Activity, ArrowRightLeft, BarChart3, Brush, ChevronRight, CircleAlert, CircleHelp, Copy, Download, ExternalLink, Eye, FileDiff as FileDiffIcon, FileText, FolderOpen, GitBranch, GitFork, GitPullRequest, History, ListFilter, Maximize2, MessageCircleQuestion, Minimize2, MoreHorizontal, Network, PanelRight, Pencil, Pin, Plus, Printer, RefreshCw, Search, Smile, Square, SquareTerminal, Tag, Trash2, Undo2, UserPlus, Users, X } from '@/components/icons'
+import { Activity, ArrowRightLeft, BarChart3, Brush, ChevronDown, ChevronRight, CircleAlert, CircleHelp, Copy, Download, ExternalLink, Eye, FileDiff as FileDiffIcon, FileText, FolderOpen, GitBranch, GitFork, GitPullRequest, History, ListFilter, Maximize2, MessageCircleQuestion, Minimize2, MoreHorizontal, Network, PanelLeft, PanelRight, Pencil, Pin, Plus, Printer, RefreshCw, Search, Smile, Square, SquareTerminal, Tag, Trash2, Undo2, UserPlus, Users, X } from '@/components/icons'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { MessageScroller } from '@/components/agents/message-scroller'
 import { StreamingResponse } from '@/components/agents/streaming-response'
@@ -87,7 +87,7 @@ const EMPTY_TOUR: TourStep[] = [
 /** First time a task is open: the thread, the composer and the task panel. */
 function taskTourSteps(openPanel: (tab: PanelTab) => void, handle: string): TourStep[] {
   return [
-    { target: 'roster', side: 'bottom', title: 'Who’s on the task', body: <p>Each member keeps its own session and memory, and sees what everyone else said since its last turn. Click a chip to send your next message only to that agent.</p> },
+    { target: 'roster', side: 'bottom', title: 'Who’s on the task', body: <p>Each member keeps its own session and memory, and sees what everyone else said since its last turn. Click an avatar to send your next message only to that agent.</p> },
     { target: 'thread', title: 'One shared thread', body: <><p>Replies, tool steps and hand-offs land here. When an agent writes <code>@{handle} …</code> on its own line, that teammate takes the next turn.</p><p>Turns that change files get a card with the files and an <strong>Undo</strong> button.</p></> },
     { target: 'composer', side: 'top', title: 'Talk to the team', body: <ul><li><kbd>@</kbd> mentions a teammate, or <code>@all</code> for everyone at once</li><li><kbd>/</kbd> opens team skills (<code>/plan</code>, <code>/tickets</code>, <code>/review</code>…) and each agent’s own commands</li><li><code>/btw @{handle} …</code> asks on the side; <code>/model @{handle} …</code> switches its model</li><li>Messages to a busy member wait in a queue you can edit, reorder or pause</li></ul> },
     { target: 'to', side: 'top', title: 'Choose who answers', body: <p><strong>Auto</strong> sends to whoever you mention, otherwise to whoever spoke last. <strong>All</strong> asks every member in parallel.</p> },
@@ -98,11 +98,10 @@ function taskTourSteps(openPanel: (tab: PanelTab) => void, handle: string): Tour
     { target: 'panel', side: 'left', enter: () => openPanel('activity'), title: 'Activity and smart execution', body: <p>Who is working and for how long, what is queued, and side chats waiting. <strong>Run the tickets</strong> has one member implement each ticket and another review it, round after round.</p> },
     { target: 'panel', side: 'left', enter: () => openPanel('usage'), title: 'Usage and limits', body: <><p>Tokens and cost per turn, and Claude Code’s and Codex’s 5-hour and weekly windows. Export it all as CSV. With <strong>Route on limits</strong> on, a member that runs out hands the request to a teammate.</p></> },
     { target: 'panel', side: 'left', enter: () => openPanel('map'), title: 'Map and replay', body: <p>Who handed work to whom. Press play to replay the hand-offs in order, or click a line to see its messages.</p> },
-    { target: 'reading', side: 'bottom', title: 'Limits at a glance', body: <p>The most-used subscription window on the team. Click it, or press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>U</kbd>, for every member’s usage.</p> },
-    { target: 'options', side: 'bottom', title: 'Task options', body: <p>Pin the task, label it, give it a group, icon and colour, sweep worktrees whose work has landed, or delete it. Deleting shows what each worktree would lose first.</p> },
+    { target: 'reading', side: 'bottom', title: 'Limits at a glance', body: <p>When a subscription window fills up, its reading shows here. Press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>U</kbd> any time for every member’s usage.</p> },
     { target: 'filter', side: 'right', title: 'Filter and sort', body: <p>Narrow the list by repository, agent, label or unread, matching all or any of them, and sort by activity, date or title.</p> },
     { target: 'search', side: 'right', title: 'Find anything', body: <p>Searches task names, labels and every message. Click a result to jump straight to it.</p> },
-    { target: 'help', side: 'bottom', title: 'That’s the tour', body: <p>Replay it from here any time. Start with something small, like <code>/plan</code> and a sentence about what you want.</p> },
+    { target: 'options', side: 'bottom', title: 'Task options', body: <><p>Usage and limits, pin, labels, group, icon and colour, sweeping landed worktrees, and delete. Deleting shows what each worktree would lose first.</p><p>Replay this tour from here any time. Start with something small, like <code>/plan</code> and a sentence about what you want.</p></> },
   ]
 }
 
@@ -310,43 +309,75 @@ function ModelField({ member, onChange }: { task: TeamTask; member: TeamMember; 
   </div>
 }
 
+/** One member: who it is and its state up front; model, access and worktree behind a disclosure;
+ * the rarer actions (terminals, fork, transcript, remove) in its menu. */
+function MemberCard({ task, member, only, onOnly, act, onError, onTerminal }: { task: TeamTask; member: TeamMember; only: string | null; onOnly: (handle: string | null) => void; act: (work: Promise<TeamTask>) => void; onError: (message: string) => void; onTerminal: (handle: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [menu, setMenu] = useState(false)
+  const cli = !member.kind.startsWith('custom:') && member.kind !== 'neru'
+  const access = ACCESS.find(item => item.mode === member.mode)
+  useEffect(() => {
+    if (!menu) return
+    const close = (event: MouseEvent) => { if (!(event.target as HTMLElement).closest('.team-member-menu')) setMenu(false) }
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenu(false) }
+    document.addEventListener('mousedown', close); window.addEventListener('keydown', key)
+    return () => { document.removeEventListener('mousedown', close); window.removeEventListener('keydown', key) }
+  }, [menu])
+  const pick = (run: () => void) => () => { setMenu(false); run() }
+  const state = member.status === 'working' ? 'Working' : member.status === 'failed' ? 'Failed' : member.status === 'stopped' ? 'Stopped' : null
+  return <div className={cn('team-member', open && 'open')}>
+    <div className="team-member-head">
+      <button className="team-member-toggle" onClick={() => setOpen(value => !value)} aria-expanded={open} aria-label={`@${member.handle} settings`}>
+        <AgentMark kind={member.kind} size={28} status={member.status} />
+        <span className="team-member-name"><strong>@{member.handle}</strong><span>{agentName(member.kind)} · {access?.label ?? member.mode}{member.worktree ? ' · worktree' : ''}{member.forkNext ? ' · fork' : ''}</span></span>
+        {state && <span className={cn('team-status', `is-${member.status}`)}>{state}</span>}
+        <ChevronDown size={14} className="team-member-chevron" />
+      </button>
+      {member.status === 'working' && <button className="icon-button small" onClick={() => void api.stopTeam(task.id, member.handle).catch(cause => onError(errorText(cause)))} aria-label={`Stop @${member.handle}`} title="Stop"><Square size={13} /></button>}
+      <div className="menu-anchor team-member-menu">
+        <button className={cn('icon-button small', menu && 'active')} onClick={() => setMenu(value => !value)} aria-label={`More for @${member.handle}`} aria-haspopup="menu" aria-expanded={menu} title="More"><MoreHorizontal size={15} /></button>
+        {menu && <div className="menu menu-down team-more" role="menu">
+          {cli && <button role="menuitem" onClick={pick(() => onTerminal(member.handle))}><SquareTerminal size={14} />Open in Neru’s terminal</button>}
+          {cli && <button role="menuitem" onClick={pick(() => void api.teamOpenTerminal(task.id, member.handle).catch(cause => onError(errorText(cause))))}><ExternalLink size={14} />Open in a terminal window</button>}
+          <button role="menuitem" onClick={pick(() => act(api.forkTeamMember(task.id, member.handle)))}><GitFork size={14} />Fork this member</button>
+          <button role="menuitem" onClick={pick(() => onOnly(only === member.handle ? null : member.handle))}><Eye size={14} />{only === member.handle ? 'Show everyone’s posts' : 'Show only its posts'}</button>
+          <div className="menu-separator" />
+          <button role="menuitem" className="danger" disabled={member.status === 'working'} onClick={pick(() => act(api.removeTeamMember(task.id, member.handle)))}><Trash2 size={14} />Remove from task</button>
+        </div>}
+      </div>
+    </div>
+    {member.error && <p className="team-member-error">{member.error}</p>}
+    {open && <div className="team-member-body">
+      <ModelField task={task} member={member} onChange={change => act(api.updateTeamMember(task.id, member.handle, change))} />
+      <label className="team-field">Access
+        <Select value={member.mode} onChange={event => act(api.updateTeamMember(task.id, member.handle, { mode: event.target.value }))} aria-label={`What @${member.handle} may do`}>
+          {ACCESS.map(item => <option key={item.mode} value={item.mode}>{item.label}</option>)}
+        </Select></label>
+      {access && <p className="team-field-hint">{access.hint}</p>}
+      {task.projectPath && <div className="team-worktree">
+        <GitBranch size={13} /><span className="truncate" title={member.worktree?.path}>{member.worktree ? member.worktree.branch : 'Own Git worktree'}</span>
+        <button className={cn('switch', member.worktree && 'on')} role="switch" aria-checked={Boolean(member.worktree)} aria-label={`Own worktree for @${member.handle}`} title="Own Git worktree, so parallel edits do not collide" disabled={member.status === 'working'} onClick={() => act(api.setTeamWorktree(task.id, member.handle, !member.worktree))} />
+      </div>}
+    </div>}
+  </div>
+}
+
 function MembersPanel({ task, agents, custom, only, onOnly, onChange, onError, onTerminal }: { task: TeamTask; agents: TeamAgent[]; custom: CustomAgent[]; only: string | null; onOnly: (handle: string | null) => void; onChange: (task: TeamTask) => void; onError: (message: string) => void; onTerminal: (handle: string) => void }) {
   const [adding, setAdding] = useState(false)
   const act = (work: Promise<TeamTask>) => void work.then(onChange).catch(cause => onError(errorText(cause)))
-  const cli = (kind: string) => !kind.startsWith('custom:') && kind !== 'neru'
   return <div className="team-panel-body">
-    {task.members.map(member => <div className="team-member" key={member.handle}>
-      <div className="team-member-head">
-        <AgentMark kind={member.kind} size={30} status={member.status} />
-        <div><strong>@{member.handle}</strong><span>{agentName(member.kind)}{member.forkNext ? ' · fork' : member.upstream ? ' · session kept' : ''}</span></div>
-        <span className={cn('team-status', `is-${member.status || 'idle'}`)}>{member.status === 'working' ? 'Working' : member.status === 'failed' ? 'Failed' : member.status === 'stopped' ? 'Stopped' : 'Ready'}</span>
-        {member.status === 'working'
-          ? <button className="icon-button small" onClick={() => void api.stopTeam(task.id, member.handle).catch(cause => onError(errorText(cause)))} aria-label={`Stop @${member.handle}`} title="Stop"><Square size={13} /></button>
-          : <button className="icon-button small" onClick={() => act(api.removeTeamMember(task.id, member.handle))} aria-label={`Remove @${member.handle}`} title="Remove from task"><Trash2 size={13} /></button>}
-      </div>
-      <div className="team-member-actions">
-        {cli(member.kind) && <button className="icon-button small" onClick={() => onTerminal(member.handle)} title="Open its own CLI in Neru's terminal, in the same session" aria-label={`Open @${member.handle} in Neru's terminal`}><SquareTerminal size={14} /></button>}
-        {cli(member.kind) && <button className="icon-button small" onClick={() => void api.teamOpenTerminal(task.id, member.handle).catch(cause => onError(errorText(cause)))} title="Open its own CLI in a separate terminal window" aria-label={`Open @${member.handle} in a terminal window`}><ExternalLink size={13} /></button>}
-        <button className="icon-button small" onClick={() => act(api.forkTeamMember(task.id, member.handle))} title="Fork: a copy that continues from this member's session" aria-label={`Fork @${member.handle}`}><GitFork size={14} /></button>
-        <button className={cn('icon-button small', only === member.handle && 'active')} onClick={() => onOnly(only === member.handle ? null : member.handle)} aria-pressed={only === member.handle} title="Transcript: show only this member's posts" aria-label={`Show only @${member.handle}'s posts`}><Eye size={14} weight={only === member.handle ? 'fill' : 'regular'} /></button>
-      </div>
-      {member.error && <p className="team-member-error">{member.error}</p>}
-      <ModelField task={task} member={member} onChange={change => act(api.updateTeamMember(task.id, member.handle, change))} />
-      {task.projectPath && <div className="team-worktree">
-        <GitBranch size={13} /><span className="truncate" title={member.worktree?.path}>{member.worktree ? member.worktree.branch : 'Works in the project folder'}</span>
-        <button className={cn('switch', member.worktree && 'on')} role="switch" aria-checked={Boolean(member.worktree)} aria-label={`Own worktree for @${member.handle}`} title="Own Git worktree, so parallel edits do not collide" disabled={member.status === 'working'} onClick={() => act(api.setTeamWorktree(task.id, member.handle, !member.worktree))} />
-      </div>}
-      <div className="theme-toggle team-access" role="group" aria-label={`What @${member.handle} may do`}>{ACCESS.map(item => <button key={item.mode} className={member.mode === item.mode ? 'active' : ''} title={item.hint} onClick={() => act(api.updateTeamMember(task.id, member.handle, { mode: item.mode }))}>{item.label}</button>)}</div>
-    </div>)}
+    <div className="team-member-list">
+      {task.members.map(member => <MemberCard key={member.handle} task={task} member={member} only={only} onOnly={onOnly} act={act} onError={onError} onTerminal={onTerminal} />)}
+    </div>
     <div className="menu-anchor">
-      <button className="button subtle team-add" onClick={() => setAdding(value => !value)} aria-expanded={adding}><UserPlus size={15} />Add agent</button>
+      <button className="button subtle small team-add" onClick={() => setAdding(value => !value)} aria-expanded={adding}><UserPlus size={14} />Add agent</button>
       {adding && <div className="menu menu-down" role="menu">
         {agents.filter(agent => agent.path).map(agent => <button role="menuitem" key={agent.kind} onClick={() => { setAdding(false); act(api.addTeamMember(task.id, { kind: agent.kind, mode: 'accept_edits' })) }}><AgentMark kind={agent.kind} size={18} />{agent.name}{!agent.signedIn && <small>not signed in</small>}</button>)}
         {custom.length > 0 && <div className="menu-separator" />}
         {custom.map(agent => <button role="menuitem" key={agent.kind} title={agent.path} onClick={() => { setAdding(false); act(api.addTeamMember(task.id, { kind: agent.kind, mode: 'accept_edits' })) }}><AgentMark kind={agent.kind} size={18} />{agent.name}<small>your script</small></button>)}
       </div>}
     </div>
-    <div className="settings-row team-route"><div><strong>Route on limits</strong><p>When a subscription runs out, hand the request to a teammate.</p></div>
+    <div className="team-setting"><div><strong>Route on limits</strong><p>When a subscription runs out, hand the request to a teammate.</p></div>
       <button className={cn('switch', task.routeOnLimit && 'on')} role="switch" aria-checked={task.routeOnLimit} aria-label="Route on limits" onClick={() => act(api.setTeamRouting(task.id, !task.routeOnLimit))} /></div>
   </div>
 }
@@ -503,6 +534,11 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
   const [to, setTo] = useState<string[]>([])
   const [panel, setPanel] = useState<PanelTab>(() => readStored<PanelTab>('neru.team.panel', 'members'))
   const [panelOpen, setPanelOpen] = useState(() => readStored('neru.team.panelOpen', true))
+  // Below 920px the task list is a drawer opened from the header.
+  const [railOpen, setRailOpen] = useState(false)
+  const viewRef = useRef<HTMLElement>(null)
+  // Where the panel is a sheet over the thread (Team narrower than 920px), a task opens on its thread.
+  useEffect(() => { setRailOpen(false); if ((viewRef.current?.clientWidth ?? 1000) <= 920) setPanelOpen(false) }, [activeId])
   // The task list and the task panel are drag-resizable columns.
   const railSize = useDragWidth('neru.team.railWidth', 232, 180, 420, 'right', 0.26)
   const panelSize = useDragWidth('neru.team.panelWidth', 316, 260, 760, 'left', 0.44)
@@ -764,10 +800,9 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
   const allGroups = [...new Set(tasks.map(item => item.group).filter(Boolean))]
   const toggleGroup = (name: string) => setCollapsed(current => { const next = current.includes(name) ? current.filter(item => item !== name) : [...current, name]; writeStored('neru.team.collapsed', next); return next })
   const row = (item: TeamTaskSummary) => <div key={item.id} className={cn('team-task-row', item.id === activeId && 'active')}>
-    <button className="team-task-select" onClick={() => setActiveId(item.id)} title={item.projectPath || 'No project'}>
+    <button className="team-task-select" onClick={() => { setActiveId(item.id); setRailOpen(false) }} title={item.projectPath || 'No project'}>
       <span className="team-task-title"><TaskGlyph icon={item.icon} color={item.color} />{item.pinned && <Pin size={11} className="team-pin" aria-label="Pinned" />}<span className="truncate">{item.title}</span></span>
-      <span className="team-task-meta"><span className="team-stack">{item.members.slice(0, 4).map(member => <AgentMark key={member.handle} kind={member.kind} size={16} status={member.status} />)}</span>{item.projectPath && <span className="truncate">{baseName(item.projectPath)}</span>}</span>
-      {item.labels.length > 0 && <span className="team-labels">{item.labels.slice(0, 3).map(label => <span key={label} className="team-label">{label}</span>)}</span>}
+      <span className="team-task-meta"><span className="team-stack">{item.members.slice(0, 4).map(member => <AgentMark key={member.handle} kind={member.kind} size={16} status={member.status} />)}</span>{item.projectPath && <span className="truncate">{baseName(item.projectPath)}</span>}{item.labels.slice(0, 1).map(label => <span key={label} className="team-label">{label}</span>)}</span>
     </button>
     <span className="team-task-state">
       {item.running ? <SpinnerRing active size={16} /> : item.failed ? <CircleAlert size={13} className="team-task-failed" aria-label="A member failed" /> : <time>{relativeTime(item.updatedAt)}</time>}
@@ -801,51 +836,65 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
     <button className="team-rail-import" data-tour="import" onClick={() => onOpenSettings('imports')}><Download size={14} />Import chats & skills</button>
   </aside>
 
+  const shownAgents = agents.filter(agent => agent.path || ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'copilot'].includes(agent.kind))
+  // One primary action under the headline; templates and the agents found here are secondary sections below.
   const empty = <div className="team-empty">
-    <div className="team-empty-hero"><Mascot size={64} interactive /><h1>Your agents, <em>one thread</em>.</h1><p>Bring the subscriptions you already pay for. Claude Code, Codex, Gemini, Cursor, OpenCode and more work side by side, see each other’s replies and hand work to one another.</p></div>
+    <button className="icon-button team-rail-toggle team-empty-rail" onClick={() => setRailOpen(value => !value)} aria-label="Show tasks" aria-expanded={railOpen} title="Tasks"><PanelLeft size={16} /></button>
+    <div className="team-empty-hero"><Mascot size={52} interactive /><h1>Your agents, <em>one thread</em>.</h1><p>Claude Code, Codex, Gemini, Cursor, OpenCode and more work side by side, read each other’s replies and hand work to one another.</p>
+      <div className="team-empty-actions">
+        <button className="button primary" data-tour="start" onClick={() => setCreating('blank')} disabled={readyAgents.length === 0 && agentsLoading}><Plus size={15} />Start a task</button>
+        <button className="button subtle" onClick={() => emptyTour.start()}><CircleHelp size={15} />Take the tour</button>
+      </div>
+    </div>
     {!checklistHidden && <Checklist agents={agents} tasks={tasks} toured={!emptyTour.open && emptyTour.seen()} onDismiss={() => { setChecklistHidden(true); writeStored('neru.team.checklistHidden', true) }}
       onAction={id => id === 'agents' ? onOpenSettings('agents') : id === 'import' ? onOpenSettings('imports') : id === 'task' ? setCreating('blank') : emptyTour.start()} />}
-    <div className="team-agent-grid" data-tour="agents">
-      {agentsLoading && agents.length === 0 && <p className="empty-small">Looking for agents on this machine…</p>}
-      {agents.filter(agent => agent.path || ['claude', 'codex', 'gemini', 'cursor', 'opencode', 'copilot'].includes(agent.kind)).map(agent => <motion.div key={agent.kind} className={cn('team-agent-card', !agent.path && 'missing')} initial={reduce ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: EASE_OUT }}>
-        <AgentMark kind={agent.kind} size={32} />
-        <div><strong>{agent.name}</strong><span>{!agent.path ? 'Not installed' : agent.signedIn ? `Ready${agent.version ? ` · ${agent.version.replace(/\s*\(.*\)$/, '')}` : ''}` : 'Installed, not signed in'}</span></div>
-        {!agent.path ? <button className="button subtle small" title={agent.install} onClick={() => void navigator.clipboard.writeText(agent.install)}><Copy size={12} />Install</button> : !agent.signedIn && <button className="button subtle small" onClick={() => onOpenSettings('agents')}>{agent.kind === 'gemini' ? 'Add key' : 'Sign in'}</button>}
-      </motion.div>)}
-    </div>
-    <div className="team-empty-start">
-      <h2>Start from</h2>
+    <section className="team-empty-section">
+      <header className="team-section-head"><h2>Start from a template</h2></header>
       <Quickstart onPick={id => setCreating(id)} />
-    </div>
-    <div className="team-empty-actions">
-      <button className="button primary" data-tour="start" onClick={() => setCreating('blank')} disabled={readyAgents.length === 0 && agentsLoading}><Plus size={15} />Start a task</button>
-      <button className="button subtle" onClick={() => onOpenSettings('imports')}><Download size={15} />Import chats & skills</button>
-      <button className="button subtle" onClick={() => loadAgents(true)} disabled={agentsLoading}><RefreshCw size={15} className={agentsLoading ? 'animate-spin' : undefined} />Look again</button>
-      <button className="button subtle" onClick={() => emptyTour.start()}><CircleHelp size={15} />Take the tour</button>
-    </div>
+    </section>
+    <section className="team-empty-section">
+      <header className="team-section-head"><h2>Agents on this computer</h2>
+        <button className="button subtle small" onClick={() => loadAgents(true)} disabled={agentsLoading}><RefreshCw size={13} className={agentsLoading ? 'animate-spin' : undefined} />Look again</button></header>
+      <div className="team-agent-grid" data-tour="agents">
+        {agentsLoading && agents.length === 0 && <p className="empty-small">Looking for agents on this machine…</p>}
+        {shownAgents.map(agent => <motion.div key={agent.kind} className={cn('team-agent-card', !agent.path && 'missing')} initial={reduce ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: EASE_OUT }}>
+          <AgentMark kind={agent.kind} size={28} />
+          <div><strong className="truncate">{agent.name}</strong><span>{!agent.path ? 'Not installed' : agent.signedIn ? `Ready${agent.version ? ` · ${agent.version.replace(/\s*\(.*\)$/, '')}` : ''}` : 'Installed, not signed in'}</span></div>
+          {!agent.path ? <button className="button subtle small" title={`Copy: ${agent.install}`} onClick={() => void navigator.clipboard.writeText(agent.install)}><Copy size={12} />Install</button> : !agent.signedIn && <button className="button subtle small" onClick={() => onOpenSettings('agents')}>{agent.kind === 'gemini' ? 'Add key' : 'Sign in'}</button>}
+        </motion.div>)}
+      </div>
+    </section>
   </div>
 
   const reading = task ? usageReading(task) : null
   const shownPosts = task ? (only ? task.posts.filter(post => post.author === only || post.to.includes(only)) : task.posts) : []
-  return <main className={cn('team-view', panelOpen && task && 'with-panel', (railSize.dragging || panelSize.dragging) && 'resizing')} style={{ '--rail-w': `${railSize.width}px`, '--panel-w': `${panelSize.width}px` } as React.CSSProperties}>
+  return <main ref={viewRef} className={cn('team-view', panelOpen && task && 'with-panel', railOpen && 'rail-open', (railSize.dragging || panelSize.dragging) && 'resizing')} style={{ '--rail-w': `${railSize.width}px`, '--panel-w': `${panelSize.width}px` } as React.CSSProperties}>
     {rail}
+    {railOpen && <div className="team-scrim" onClick={() => setRailOpen(false)} aria-hidden />}
     <section className="team-main" aria-label={task?.title ?? 'Team'}>
       {!task ? empty : <>
         <header className="team-head">
+          <button className="icon-button team-rail-toggle" onClick={() => setRailOpen(value => !value)} aria-label="Show tasks" aria-expanded={railOpen} title="Tasks"><PanelLeft size={16} /></button>
           <TaskGlyph icon={task.icon} color={task.color} size={15} />
           {renaming
             ? <input className="session-rename" autoFocus defaultValue={task.title} aria-label="Rename task" onBlur={event => { setRenaming(false); void api.renameTeamTask(task.id, event.target.value).then(setTask).then(refreshTasks).catch(cause => onError(errorText(cause))) }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setRenaming(false) }} />
             : <button className="team-title" onDoubleClick={() => setRenaming(true)} title="Double-click to rename"><h2 className="truncate">{task.title}</h2></button>}
-          <div className="team-roster" data-tour="roster">{task.members.map(member => <button key={member.handle} className={cn('team-chip', to.includes(member.handle) && 'on')} onClick={() => setTo(current => current.includes(member.handle) ? current.filter(item => item !== member.handle) : [...current, member.handle])} title={`Send to @${member.handle}`}>
-            <AgentMark kind={member.kind} size={18} status={member.status} /><span>@{member.handle}</span></button>)}</div>
+          {/* Avatars only: a click sends the next message to that member alone; the composer's To row names who is chosen. */}
+          <div className="team-roster" data-tour="roster" role="group" aria-label="Send the next message to">{task.members.map(member => <button key={member.handle} className={cn('team-chip', to.includes(member.handle) && 'on')} onClick={() => setTo(current => current.includes(member.handle) ? current.filter(item => item !== member.handle) : [...current, member.handle])} aria-pressed={to.includes(member.handle)} aria-label={`Send to @${member.handle}`} title={`@${member.handle} · ${agentName(member.kind)} · ${statusLabel(member.status)}`}>
+            <AgentMark kind={member.kind} size={20} status={member.status} /></button>)}</div>
+          <span className="team-head-spacer" />
+          {working.length > 0 && <button className="button subtle small" onClick={() => void api.stopTeam(task.id).catch(cause => onError(errorText(cause)))}><Square size={12} />Stop</button>}
+          {/* The limits reading only claims space when a window is filling up; otherwise it lives in the menu. */}
           <div className="menu-anchor">
-            <button className={cn('team-reading', reading?.level && `is-${reading.level}`)} onClick={() => setMenu(current => current === 'usage' ? null : 'usage')} aria-expanded={menu === 'usage'} title="Usage and limits (Ctrl+Shift+U)" data-tour="reading"><BarChart3 size={13} /><span>{reading?.text ?? 'Usage'}</span></button>
+            {reading?.level && <button className={cn('team-reading', `is-${reading.level}`)} onClick={() => setMenu(current => current === 'usage' ? null : 'usage')} aria-expanded={menu === 'usage'} title="Usage and limits (Ctrl+Shift+U)" data-tour="reading"><BarChart3 size={13} /><span>{reading.text}</span></button>}
             {menu === 'usage' && <div className="menu menu-down team-usage-pop" role="dialog" aria-label="Usage and limits" onKeyDown={event => { if (event.key === 'Escape') setMenu(null) }}><UsageDashboard task={task} names={agentName} onError={onError} compact /><button className="button subtle small" onClick={() => { setMenu(null); choosePanel('usage') }}>Open the dashboard</button></div>}
           </div>
-          {working.length > 0 && <button className="button subtle small" onClick={() => void api.stopTeam(task.id).catch(cause => onError(errorText(cause)))}><Square size={12} />Stop</button>}
-          <div className="menu-anchor"><button className={cn('icon-button', (menu === 'more' || menu === 'appearance') && 'active')} onClick={() => setMenu(current => current === 'more' || current === 'appearance' ? null : 'more')} aria-label="Task options" aria-haspopup="menu" aria-expanded={menu === 'more'} title="Pin, labels, group, icon and colour" data-tour="options"><MoreHorizontal size={16} /></button>
+          <div className="menu-anchor"><button className={cn('icon-button', (menu === 'more' || menu === 'appearance') && 'active')} onClick={() => setMenu(current => current === 'more' || current === 'appearance' ? null : 'more')} aria-label="Task options" aria-haspopup="menu" aria-expanded={menu === 'more'} title="Task options" data-tour="options"><MoreHorizontal size={16} /></button>
             {menu === 'more' && <div className="menu menu-down team-more" role="menu" onKeyDown={event => { if (event.key === 'Escape') setMenu(null) }}>
-              <button role="menuitem" autoFocus onClick={() => { setMenu(null); act(api.setTeamPinned(task.id, !task.pinned)) }}><Pin size={14} />{task.pinned ? 'Unpin' : 'Pin to the top'}</button>
+              <button role="menuitem" autoFocus onClick={() => setMenu('usage')}><BarChart3 size={14} />Usage and limits<small>{reading?.text ?? ''}</small></button>
+              <button role="menuitem" onClick={() => { setMenu(null); taskTour.start() }}><CircleHelp size={14} />Take the tour</button>
+              <div className="menu-separator" />
+              <button role="menuitem" onClick={() => { setMenu(null); act(api.setTeamPinned(task.id, !task.pinned)) }}><Pin size={14} />{task.pinned ? 'Unpin' : 'Pin to the top'}</button>
               <button role="menuitem" onClick={() => { setMenu(null); editLabels() }}><Tag size={14} />Labels…{task.labels.length > 0 && <small>{task.labels.join(', ')}</small>}</button>
               <button role="menuitem" onClick={() => setMenu('appearance')}><Smile size={14} />Group, icon and colour…{task.group && <small>{task.group}</small>}</button>
               {task.members.some(member => member.worktree) && <button role="menuitem" onClick={() => { setMenu(null); void sweep() }}><Brush size={14} />Sweep landed worktrees</button>}
@@ -853,7 +902,6 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
               <button role="menuitem" className="danger" onClick={() => { setMenu(null); const summary = tasks.find(item => item.id === task.id); if (summary) setDeleting(summary) }}><Trash2 size={14} />Delete task…</button>
             </div>}
             {menu === 'appearance' && <AppearanceMenu task={task} groups={allGroups} onChange={change => act(api.setTeamAppearance(task.id, change))} onClose={() => setMenu(null)} />}</div>
-          <button className="icon-button" data-tour="help" onClick={() => taskTour.start()} aria-label="Take the tour" title="Take the tour"><CircleHelp size={16} /></button>
           <button className={cn('icon-button', panelOpen && 'active')} onClick={togglePanel} aria-label="Toggle the task panel" aria-pressed={panelOpen} title="Members, artifacts, changes, usage"><PanelRight size={16} weight={panelOpen ? 'fill' : 'regular'} /></button>
         </header>
         {only && <div className="team-only" role="status"><Eye size={13} /><span>Showing @{only}’s transcript: its posts and what was sent to it.</span><button className="team-link" onClick={() => void api.revealPath(`${task.folder}/transcripts/${only}.md`).catch(cause => onError(errorText(cause)))}>Open the file</button><button className="team-link" onClick={() => setOnly(null)}>Show everyone</button></div>}
@@ -901,10 +949,13 @@ export function TeamView({ project, onError, onOpenSettings, onScope, onOpenPane
     </section>
     {task && panelOpen && <aside className="team-panel" aria-label="Task panel" data-tour="panel">
       <div {...panelSize.handle} aria-label="Resize the task panel" />
-      <nav className="segmented team-tabs" aria-label="Task panel sections">
-        {PANEL_TABS.map(([id, label, Icon]) => <button key={id} className={panel === id ? 'active' : ''} aria-current={panel === id ? 'page' : undefined} aria-label={label} onClick={() => choosePanel(id)} title={label}><Icon size={14} />{panel === id && <span>{label}</span>}</button>)}
-        <button className="team-tab-wide" onClick={() => panelSize.set(wide ? 316 : 620)} aria-pressed={wide} aria-label={wide ? 'Narrow panel' : 'Wide panel'} title={wide ? 'Narrow panel (or drag its edge)' : 'Wide panel (or drag its edge)'}>{wide ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button>
+      <nav className="team-tabs" aria-label="Task panel sections">
+        {PANEL_TABS.map(([id, label, Icon]) => <button key={id} className={panel === id ? 'active' : ''} aria-current={panel === id ? 'page' : undefined} aria-label={label} onClick={() => choosePanel(id)} title={label}><Icon size={15} /></button>)}
       </nav>
+      <header className="team-panel-head"><h3>{PANEL_TABS.find(([id]) => id === panel)?.[1]}</h3>
+        <button className="icon-button small team-tab-wide" onClick={() => panelSize.set(wide ? 316 : 620)} aria-pressed={wide} aria-label={wide ? 'Narrow panel' : 'Wide panel'} title={wide ? 'Narrow panel (or drag its edge)' : 'Wide panel (or drag its edge)'}>{wide ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button>
+        <button className="icon-button small team-panel-close" onClick={togglePanel} aria-label="Close the task panel" title="Close"><X size={14} /></button>
+      </header>
       {panel === 'members' && <MembersPanel task={task} agents={allAgents} custom={custom} only={only} onOnly={setOnly} onChange={setTask} onError={onError} onTerminal={handle => void openTerminal(handle)} />}
       {panel === 'artifacts' && <ArtifactsPanel task={task} onError={onError} />}
       {panel === 'changes' && <ChangesPanel task={task} onError={onError} onSend={sendTo} />}

@@ -76,6 +76,11 @@ pub struct SessionSummary {
     /// The Chat project this chat is filed under (chat_projects.rs), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_project_id: Option<String>,
+    /// An incognito chat: kept in memory only (never written to disk), left out of memory learning,
+    /// summaries and past-chat search, with no memory in its prompt. It is discarded when the window
+    /// moves to another session or Neru quits.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -203,13 +208,17 @@ impl Runtime {
         self.push_visible("note", text, vec![], vec![], vec![], None);
     }
 
-    /// Writes the session to disk, naming it after its first request.
+    /// Writes the session to disk, naming it after its first request. An incognito chat is never
+    /// written.
     pub fn save(&mut self) -> Result<(), String> {
         self.summary.updated_at = now();
         if self.summary.title == "New chat" {
             if let Some(first) = self.transcript.iter().find(|item| item.role == "user") {
                 self.summary.title = provisional_title(&first.content);
             }
+        }
+        if self.summary.incognito {
+            return Ok(());
         }
         let file = SessionFile {
             summary: SessionSummary {
@@ -471,9 +480,107 @@ pub fn active_work_root(state: &AppState) -> Option<PathBuf> {
 }
 
 fn activate(state: &AppState, shared: &Shared) -> Result<SessionSnapshot, String> {
-    let runtime = lock(shared)?;
-    *state.active_session.lock().map_err(|e| e.to_string())? = Some(runtime.summary.id.clone());
-    Ok(runtime.snapshot())
+    // The runtime lock is let go first: discarding takes the session map, which is locked before
+    // runtimes everywhere else.
+    let (id, snapshot) = {
+        let runtime = lock(shared)?;
+        (runtime.summary.id.clone(), runtime.snapshot())
+    };
+    let previous = state.active_session.lock().map_err(|e| e.to_string())?.replace(id.clone());
+    if let Some(previous) = previous.filter(|previous| *previous != id) {
+        discard_incognito(state, &previous);
+    }
+    Ok(snapshot)
+}
+
+/// Leaving an incognito chat discards it, unless a reply is still running in it.
+fn discard_incognito(state: &AppState, id: &str) {
+    let Ok(mut map) = state.sessions.lock() else { return };
+    let leave = map.get(id).and_then(|shared| shared.lock().ok().map(|runtime| runtime.summary.incognito && !runtime.running)).unwrap_or(false);
+    if leave {
+        map.remove(id);
+        drop(map);
+        crate::shells::kill_session(id);
+    }
+}
+
+/// The next chat created is incognito (set from the toggle on the empty chat page).
+static NEXT_INCOGNITO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Incognito chats still open, which are only in memory.
+fn incognito_summaries(state: &AppState) -> Vec<SessionSummary> {
+    let Ok(map) = state.sessions.lock() else { return Vec::new() };
+    map.values()
+        .filter_map(|shared| shared.lock().ok().filter(|runtime| runtime.summary.incognito).map(|runtime| SessionSummary { running: runtime.running, ..runtime.summary.clone() }))
+        .collect()
+}
+
+/// The shown session, when it is a chat with nothing in it yet (the incognito toggle can still flip it).
+fn empty_active_chat(state: &AppState) -> Option<Shared> {
+    let shared = active(state).ok()?;
+    let fits = {
+        let runtime = shared.lock().ok()?;
+        is_loose_chat(&runtime.summary.project_path) && runtime.summary.chat_project_id.is_none() && runtime.transcript.is_empty() && !runtime.running
+    };
+    fits.then_some(shared)
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IncognitoState {
+    /// The next new chat starts incognito.
+    pub next: bool,
+    /// The shown session is an incognito chat.
+    pub active: bool,
+    pub active_id: Option<String>,
+    /// The shown session has no messages yet.
+    pub active_empty: bool,
+}
+
+fn incognito_state(state: &AppState) -> IncognitoState {
+    let shown = active(state).ok().and_then(|shared| shared.lock().ok().map(|runtime| (runtime.summary.id.clone(), runtime.summary.incognito, runtime.transcript.is_empty())));
+    IncognitoState {
+        next: NEXT_INCOGNITO.load(std::sync::atomic::Ordering::SeqCst),
+        active: shown.as_ref().is_some_and(|(_, incognito, _)| *incognito),
+        active_empty: shown.as_ref().is_some_and(|(_, _, empty)| *empty),
+        active_id: shown.map(|(id, _, _)| id),
+    }
+}
+
+#[tauri::command]
+pub fn chat_incognito_state(state: State<'_, AppState>) -> IncognitoState {
+    incognito_state(&state)
+}
+
+/// The incognito toggle. On: the shown chat becomes incognito when nothing was sent in it yet (its file
+/// is removed), otherwise the next new chat starts incognito. Off: the same, back to a saved chat.
+#[tauri::command]
+pub fn set_chat_incognito(on: bool, state: State<'_, AppState>) -> Result<IncognitoState, String> {
+    set_incognito(&state, on)?;
+    Ok(incognito_state(&state))
+}
+
+fn set_incognito(state: &AppState, on: bool) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    match empty_active_chat(state) {
+        Some(shared) => {
+            let mut runtime = lock(&shared)?;
+            if runtime.summary.incognito != on {
+                runtime.summary.incognito = on;
+                if on {
+                    let file = path(&runtime.summary.id)?;
+                    if file.exists() {
+                        fs::remove_file(file).map_err(|e| e.to_string())?;
+                    }
+                } else {
+                    runtime.save()?;
+                }
+            }
+            NEXT_INCOGNITO.store(false, Ordering::SeqCst);
+        }
+        None => NEXT_INCOGNITO.store(on, Ordering::SeqCst),
+    }
+    Ok(())
 }
 
 pub(crate) fn create_worktree(root: &Path, id: &str) -> Result<Worktree, String> {
@@ -520,6 +627,16 @@ pub fn create_with_id(
     worktree: bool,
     id: String,
 ) -> Result<SessionSnapshot, String> {
+    create_session_with(state, root, worktree, id, false)
+}
+
+fn create_session_with(
+    state: &AppState,
+    root: &Path,
+    worktree: bool,
+    id: String,
+    incognito: bool,
+) -> Result<SessionSnapshot, String> {
     let id = Uuid::parse_str(id.trim()).map_err(|_| format!("{id} is not a valid session id (a UUID)"))?.to_string();
     if read(&id).is_ok() {
         return Err(format!("A session with id {id} already exists"));
@@ -541,6 +658,7 @@ pub fn create_with_id(
             status: None,
             pr: None,
             chat_project_id: None,
+            incognito,
         },
         conversation: vec![],
         transcript: vec![],
@@ -576,6 +694,7 @@ pub fn create_detached(state: &AppState, root: &Path, title: &str) -> Result<Str
             status: None,
             pr: None,
             chat_project_id: None,
+            incognito: false,
         },
         conversation: vec![],
         transcript: vec![],
@@ -638,6 +757,11 @@ fn mark_running(state: &AppState, list: &mut [SessionSummary]) {
 #[tauri::command]
 pub fn list_all_sessions(state: State<'_, AppState>) -> Result<Vec<SessionSummary>, String> {
     let mut list = all_sessions()?;
+    // Open incognito chats are listed (marked) while they last, so the window can go back to one.
+    let mut open = incognito_summaries(&state);
+    open.retain(|summary| !list.iter().any(|item| item.id == summary.id));
+    list.extend(open);
+    list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     mark_running(&state, &mut list);
     Ok(list)
 }
@@ -674,7 +798,11 @@ pub fn create_chat_session(chat_project_id: Option<String>, state: State<'_, App
     if let Some(id) = &project {
         crate::chat_projects::Store::default_store()?.get(id)?;
     }
-    let snapshot = create_for_root(&state, Path::new(""), false)?;
+    // Incognito when the toggle asked for it, or when the chat being replaced was an untouched
+    // incognito one (so a new chat made from the empty page keeps the choice). Not inside a project.
+    let incognito = project.is_none()
+        && (NEXT_INCOGNITO.swap(false, std::sync::atomic::Ordering::SeqCst) || empty_active_chat(&state).is_some_and(|shared| lock(&shared).is_ok_and(|runtime| runtime.summary.incognito)));
+    let snapshot = create_session_with(&state, Path::new(""), false, Uuid::new_v4().to_string(), incognito)?;
     let Some(project) = project else { return Ok(snapshot) };
     let shared = runtime(&state, &snapshot.session.id)?;
     let mut runtime = lock(&shared)?;
@@ -741,6 +869,7 @@ pub fn fork_session(id: String, state: State<'_, AppState>) -> Result<SessionSna
             status: None,
             pr: None,
             chat_project_id: summary.chat_project_id,
+            incognito: summary.incognito,
         },
         conversation,
         transcript,
@@ -805,7 +934,7 @@ pub fn clean_title(raw: &str) -> Option<String> {
 #[tauri::command]
 pub fn delete_session(id: String, state: State<'_, AppState>) -> Result<SessionSnapshot, String> {
     let shared = owned(&state, &id)?;
-    let (worktree, loose, hook_root) = {
+    let (worktree, loose, hook_root, incognito) = {
         let runtime = lock(&shared)?;
         if runtime.running {
             return Err("Stop this session's response first".into());
@@ -814,6 +943,7 @@ pub fn delete_session(id: String, state: State<'_, AppState>) -> Result<SessionS
             runtime.summary.worktree.clone(),
             is_loose_chat(&runtime.summary.project_path),
             (!runtime.summary.project_path.is_empty()).then(|| runtime.work_root()),
+            runtime.summary.incognito,
         )
     };
     if let Some(root) = hook_root {
@@ -821,7 +951,11 @@ pub fn delete_session(id: String, state: State<'_, AppState>) -> Result<SessionS
         let id = id.clone();
         std::thread::spawn(move || crate::hooks::session_end(&root, &id, "session_deleted"));
     }
-    fs::remove_file(path(&id)?).map_err(|e| e.to_string())?;
+    // An incognito chat has no file.
+    let file = path(&id)?;
+    if !incognito || file.exists() {
+        fs::remove_file(file).map_err(|e| e.to_string())?;
+    }
     state.sessions.lock().map_err(|e| e.to_string())?.remove(&id);
     crate::shells::kill_session(&id);
     if let Some(tree) = worktree {
@@ -1010,6 +1144,52 @@ mod tests {
 
         fs::remove_file(path(&created.session.id).unwrap()).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incognito_chats_never_touch_disk_and_go_when_left() {
+        let state = AppState::default();
+        let chat = create_session_with(&state, Path::new(""), false, Uuid::new_v4().to_string(), true).unwrap();
+        let id = chat.session.id.clone();
+        assert!(chat.session.incognito);
+        assert_eq!(serde_json::to_value(&chat.session).unwrap()["incognito"], true);
+        {
+            let shared = active(&state).unwrap();
+            let mut runtime = shared.lock().unwrap();
+            runtime.push_visible("user", "Plan a surprise party".into(), vec![], vec![], vec![], Some(1));
+            runtime.save().unwrap();
+            assert_eq!(runtime.summary.title, "Plan a surprise party");
+        }
+        assert!(!path(&id).unwrap().exists(), "an incognito chat is never written");
+        assert!(incognito_summaries(&state).iter().any(|summary| summary.id == id));
+        // A saved chat's summary leaves the flag out entirely.
+        let other = create_for_root(&state, Path::new(""), false).unwrap();
+        assert!(serde_json::to_value(&other.session).unwrap().get("incognito").is_none());
+        assert!(state.sessions.lock().unwrap().get(&id).is_none(), "moving to another session discards it");
+        assert!(incognito_summaries(&state).is_empty());
+        fs::remove_file(path(&other.session.id).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn incognito_toggle_flips_an_empty_chat_or_the_next_one() {
+        let state = AppState::default();
+        let chat = create_for_root(&state, Path::new(""), false).unwrap();
+        let id = chat.session.id.clone();
+        assert!(path(&id).unwrap().exists());
+        set_incognito(&state, true).unwrap();
+        assert!(!path(&id).unwrap().exists(), "its file goes when it turns incognito");
+        let shown = incognito_state(&state);
+        assert!(shown.active && shown.active_empty && !shown.next);
+        assert_eq!(shown.active_id.as_deref(), Some(id.as_str()));
+        set_incognito(&state, false).unwrap();
+        assert!(path(&id).unwrap().exists(), "and comes back when it is a saved chat again");
+        active(&state).unwrap().lock().unwrap().push_visible("user", "Hello".into(), vec![], vec![], vec![], Some(1));
+        set_incognito(&state, true).unwrap();
+        let shown = incognito_state(&state);
+        assert!(shown.next && !shown.active, "a chat with messages stays as it is; the next one is incognito");
+        set_incognito(&state, false).unwrap();
+        assert!(!incognito_state(&state).next);
+        fs::remove_file(path(&id).unwrap()).unwrap();
     }
 
     fn json_msg(role: &str) -> Value {

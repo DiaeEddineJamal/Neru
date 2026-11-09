@@ -177,6 +177,23 @@ export interface OllamaStatus {
   speeds: Record<string, LocalSpeed>
 }
 export interface LocalSpeed { promptPerSecond: number; generatePerSecond: number; loadSeconds: number; verdict: 'agent' | 'slow-agent' | 'helper' | 'too-slow'; sentence: string; measuredAt: number }
+/** The built-in engine (llama_server.rs, llama_models.rs, hardware.rs builtin_recommend). */
+export interface BuiltinPick {
+  id: string; name: string; repo: string; roles: string[]; note: string; quant: string; file: string; bytes: number
+  runsOn: 'gpu' | 'partial' | 'cpu' | 'none'; gpuPercent: number; tokensPerSecond: number
+  fit: 'great' | 'good' | 'tight' | 'slow' | 'disk' | 'no'; fitLabel: string; quality: string; context: number; recommended: boolean; alternatives: string[]
+}
+export interface BuiltinAdvice { hardware: LocalAdvice['hardware'] & { gpus: { name: string; vramGb: number; dedicated: boolean; vendor?: string }[] }; backend: string; models: BuiltinPick[]; verdict: string; diskFreeGb: number | null }
+export interface BuiltinModel { id: string; name: string; repo: string; file: string; quant: string; bytes: number; path: string; catalogId: string | null; roles: string[] }
+export interface BuiltinLoaded { id: string; port: number; context: number; backend: string; gpuLayers: string | null; idleSeconds: number; busy: boolean }
+export interface BuiltinSettings { keepWarmMinutes: number; context: number; backend: string; maxLoaded: number }
+export interface BuiltinStatus {
+  engine: { tag: string; backend: string; path: string } | null
+  backend: string; baseUrl: string; models: BuiltinModel[]; downloading: string[]; loaded: BuiltinLoaded[]; settings: BuiltinSettings
+  speeds: Record<string, LocalSpeed>; modelsDir: string
+}
+export interface BuiltinDownload { key: string; id: string; status: string; completed: number; total: number; speed: number; done: boolean; error: string | null }
+export interface EngineProgress { backend: string; status: string; completed: number; total: number; done: boolean; error: string | null }
 export interface PullProgress { tag: string; status: string; completed: number; total: number; done: boolean; error: string | null }
 
 /** What one free plan has left today, across its models (limits.rs `ProviderCapacity`). */

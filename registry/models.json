@@ -102,5 +102,105 @@
         "embed"
       ]
     }
+  ],
+  "ggufModels": [
+    {"id":"qwen3-coder-30b-a3b","name":"Qwen3 Coder 30B A3B","repo":"unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF","roles":["agent"],"paramsB":30.5,"activeB":3.3,"layers":48,"kvKbPerToken":96,"contextMax":262144,"note":"Coding agent; a mixture of experts, so it writes fast even on a processor.",
+      "files": [
+        {"quant":"Q8_0","file":"Qwen3-Coder-30B-A3B-Instruct-Q8_0.gguf","bytes":32483935392,"sha256":"4ff1cff607804037bf6d2168249c570baa4e1621292b159c0e06591e0d7c3066"},
+        {"quant":"Q6_K","file":"Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf","bytes":25092535456,"sha256":"100b5121d09553fb1af3b873b21fb3ec3da5c306fc5cb09bd338c48e21b10875"},
+        {"quant":"Q5_K_M","file":"Qwen3-Coder-30B-A3B-Instruct-Q5_K_M.gguf","bytes":21725584544,"sha256":"4b78837bbec5ee248e4a5642bf608b6793721af41b92589e40c8da0bce58b907"},
+        {"quant":"Q4_K_M","file":"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf","bytes":18556689568,"sha256":"fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad"},
+        {"quant":"IQ4_XS","file":"Qwen3-Coder-30B-A3B-Instruct-IQ4_XS.gguf","bytes":16378076320,"sha256":"26cd4fef3ada9de84c6c59c4b93f9bc5df4d69a71e18cfe8a17369c2f8374ce7"},
+        {"quant":"Q3_K_M","file":"Qwen3-Coder-30B-A3B-Instruct-Q3_K_M.gguf","bytes":14711850144,"sha256":"30c83da425db2324444b6a6cecaf4c410038a2ec73a78de2436879dc0316a371"}
+      ]},
+    {"id":"gpt-oss-20b","name":"gpt-oss 20B","repo":"unsloth/gpt-oss-20b-GGUF","roles":["agent","chat"],"paramsB":21,"activeB":3.6,"layers":24,"kvKbPerToken":48,"contextMax":131072,"note":"OpenAI open-weight reasoning model with tool use.",
+      "files": [
+        {"quant":"Q8_0","file":"gpt-oss-20b-Q8_0.gguf","bytes":12109567168,"sha256":"bcd455d4034ec02f71a875b46cb17df44a97911d7258291973be4d21f98329f3"},
+        {"quant":"Q6_K","file":"gpt-oss-20b-Q6_K.gguf","bytes":12041000128,"sha256":"f2ead52a7842a556ea10d5edd91a88e5af974856d2485ecaad3aade679832935"},
+        {"quant":"Q5_K_M","file":"gpt-oss-20b-Q5_K_M.gguf","bytes":11717357248,"sha256":"9c3814533c5b4c84d42b5dce4376bbdfd7227e990b8733a3a1c4f741355b3e75"},
+        {"quant":"Q4_K_M","file":"gpt-oss-20b-Q4_K_M.gguf","bytes":11624759488,"sha256":"c27536640e410032865dc68781d80a08b98f8db5e93575919af8ccc0568aeb4f"},
+        {"quant":"Q3_K_M","file":"gpt-oss-20b-Q3_K_M.gguf","bytes":11506103488,"sha256":"bc02b57e05cfef36b1f6f4a952666a76b26838f8cf431412cb0cd19f41cf8040"}
+      ]},
+    {"id":"devstral-small-2507","name":"Devstral Small 24B","repo":"unsloth/Devstral-Small-2507-GGUF","roles":["agent"],"paramsB":23.6,"activeB":23.6,"layers":40,"kvKbPerToken":160,"contextMax":131072,"note":"Mistral coding agent model; dense, best on a graphics card.",
+      "files": [
+        {"quant":"Q8_0","file":"Devstral-Small-2507-Q8_0.gguf","bytes":25054788576,"sha256":"bd43fa34f9a5fa379143972b3e83b9a4bac74b8e78c08d77234d8e940085aa5e"},
+        {"quant":"Q6_K","file":"Devstral-Small-2507-Q6_K.gguf","bytes":19345947872,"sha256":"80727fb4454baa1540fe363d98852b85a00fff6771531b258df477b4e9e0e193"},
+        {"quant":"Q5_K_M","file":"Devstral-Small-2507-Q5_K_M.gguf","bytes":16763993312,"sha256":"f27744a8db83d609241b096d97bf27f98d236d7a3ff23e28790c7260909b9a64"},
+        {"quant":"Q4_K_M","file":"Devstral-Small-2507-Q4_K_M.gguf","bytes":14333918432,"sha256":"5578b1cd0733b496cdb2d309d9a275de2ea31681793c8f05f70f3adfa65a26c4"},
+        {"quant":"IQ4_XS","file":"Devstral-Small-2507-IQ4_XS.gguf","bytes":12779896032,"sha256":"47e03bcb00955b2adc4361e567fe7597e4975356c52ab917bc66b8a219b871b5"},
+        {"quant":"Q3_K_M","file":"Devstral-Small-2507-Q3_K_M.gguf","bytes":11474091232,"sha256":"a94259d6cfef4757f208e908fea3b00430d33bf6c67f6a2ba0b3342ccedf1b5a"}
+      ]},
+    {"id":"qwen3-30b-a3b-instruct-2507","name":"Qwen3 30B A3B Instruct","repo":"unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF","roles":["chat"],"paramsB":30.5,"activeB":3.3,"layers":48,"kvKbPerToken":96,"contextMax":262144,"note":"Strong general chat; mixture of experts.",
+      "files": [
+        {"quant":"Q8_0","file":"Qwen3-30B-A3B-Instruct-2507-Q8_0.gguf","bytes":32483932576,"sha256":"47514861adaa7ae7f32818fe54595c7cbed2753417ba78df53054fcf7b9dcd88"},
+        {"quant":"Q6_K","file":"Qwen3-30B-A3B-Instruct-2507-Q6_K.gguf","bytes":25092532640,"sha256":"b1a3ed3bc584d58d25253c408cbbf894f974dffa2df74e016469289e686ef701"},
+        {"quant":"Q5_K_M","file":"Qwen3-30B-A3B-Instruct-2507-Q5_K_M.gguf","bytes":21725581728,"sha256":"74cf6e525344a184e59f8dbd1d18e59587f1a03eaff66f6b1fbd0ee3a53a3d68"},
+        {"quant":"Q4_K_M","file":"Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf","bytes":18556686752,"sha256":"6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0"},
+        {"quant":"IQ4_XS","file":"Qwen3-30B-A3B-Instruct-2507-IQ4_XS.gguf","bytes":16378073504,"sha256":"bd03aa8b332adb414eb842ec725b4a5dd116b17b57d4e5543ba742587a3c5e21"},
+        {"quant":"Q3_K_M","file":"Qwen3-30B-A3B-Instruct-2507-Q3_K_M.gguf","bytes":14711847328,"sha256":"e145c9d2f5d11c9583eb099aa75100b7ab943e77d5240c9a2cd936f81c89ef43"}
+      ]},
+    {"id":"gemma-3-12b","name":"Gemma 3 12B","repo":"unsloth/gemma-3-12b-it-GGUF","roles":["chat"],"paramsB":12,"activeB":12,"layers":48,"kvKbPerToken":384,"contextMax":131072,"note":"Google general chat model, good writing.",
+      "files": [
+        {"quant":"Q8_0","file":"gemma-3-12b-it-Q8_0.gguf","bytes":12510212576,"sha256":"a774cd9c6f289a6159f4a3f92a7ebca887e15073f92016d53c3593cb440a5982"},
+        {"quant":"Q6_K","file":"gemma-3-12b-it-Q6_K.gguf","bytes":9660811616,"sha256":"5a99903816f50b6b7d63fe96e1ed51d6e03c795051e99146719f3e066a863069"},
+        {"quant":"Q5_K_M","file":"gemma-3-12b-it-Q5_K_M.gguf","bytes":8445036896,"sha256":"ea6d227c4983534b4661a0ada08328c21afa07c1e3c316fb55c172776cc808b3"},
+        {"quant":"Q4_K_M","file":"gemma-3-12b-it-Q4_K_M.gguf","bytes":7300778336,"sha256":"15b8fd9d8672cd4240c178c217ca781409291f34e353d2e913b29c7602ceb3ff"},
+        {"quant":"IQ4_XS","file":"gemma-3-12b-it-IQ4_XS.gguf","bytes":6550964576,"sha256":"e209a303d9d0841c1ab29a728b930ef630ba27766aa0067258f9e400f7ae8c65"},
+        {"quant":"Q3_K_M","file":"gemma-3-12b-it-Q3_K_M.gguf","bytes":6008818016,"sha256":"d8ab409bfc66b1d48ed7d651cc1a8c56fcc9b347d03aa0ee833f5654b576a885"}
+      ]},
+    {"id":"qwen3-8b","name":"Qwen3 8B","repo":"unsloth/Qwen3-8B-GGUF","roles":["chat"],"paramsB":8.2,"activeB":8.2,"layers":36,"kvKbPerToken":144,"contextMax":40960,"note":"General chat with thinking.",
+      "files": [
+        {"quant":"Q8_0","file":"Qwen3-8B-Q8_0.gguf","bytes":8709519168,"sha256":"0cfbf745760f07a76ddeb358dd025a27f2e11d1ca9c9a4169a373d52990fe86e"},
+        {"quant":"Q6_K","file":"Qwen3-8B-Q6_K.gguf","bytes":6725900096,"sha256":"0eaec718fdeab0f429dfa0ec481c090388811f5e63785ddb582292f4ef3c3827"},
+        {"quant":"Q5_K_M","file":"Qwen3-8B-Q5_K_M.gguf","bytes":5851113280,"sha256":"159c694b93271e4edc1dc2a305b10cf981032c8f3035a7da00973312f0331504"},
+        {"quant":"Q4_K_M","file":"Qwen3-8B-Q4_K_M.gguf","bytes":5027784512,"sha256":"120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4"},
+        {"quant":"IQ4_XS","file":"Qwen3-8B-IQ4_XS.gguf","bytes":4581287744,"sha256":"30a433372c4c986754e30cfaa05848ab78896d38d34b6b275b24c409857801cb"},
+        {"quant":"Q3_K_M","file":"Qwen3-8B-Q3_K_M.gguf","bytes":4124161856,"sha256":"4924cf38a3b3c4b27ead5ccb93e27027f9418738506ac50a24a70dfe8581a007"}
+      ]},
+    {"id":"qwen3-4b-instruct-2507","name":"Qwen3 4B Instruct","repo":"unsloth/Qwen3-4B-Instruct-2507-GGUF","roles":["helper","chat"],"paramsB":4,"activeB":4,"layers":36,"kvKbPerToken":144,"contextMax":262144,"note":"Small and capable: chores and quick chat.",
+      "files": [
+        {"quant":"Q8_0","file":"Qwen3-4B-Instruct-2507-Q8_0.gguf","bytes":4280405600,"sha256":"391c1e410fd9f4cf2de2b510273b56a84c19ce18f4fa3bfb3774031dac4ef068"},
+        {"quant":"Q6_K","file":"Qwen3-4B-Instruct-2507-Q6_K.gguf","bytes":3306261600,"sha256":"cd7b21b38b3e71400587c184b6a9b04d3beb4d13fdae6464d4075dee4f1bc5ad"},
+        {"quant":"Q5_K_M","file":"Qwen3-4B-Instruct-2507-Q5_K_M.gguf","bytes":2889514080,"sha256":"5bde5e9d883622acb02bf77fe7dcbc56a8b9a9ad4be78a72ca23a532658b4ecb"},
+        {"quant":"Q4_K_M","file":"Qwen3-4B-Instruct-2507-Q4_K_M.gguf","bytes":2497281120,"sha256":"3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"},
+        {"quant":"IQ4_XS","file":"Qwen3-4B-Instruct-2507-IQ4_XS.gguf","bytes":2270751840,"sha256":"cfd15a69e4801abfa16f0263b77ffbf97cbb8af67782a70cc95cf627b3dfa27d"},
+        {"quant":"Q3_K_M","file":"Qwen3-4B-Instruct-2507-Q3_K_M.gguf","bytes":2075618400,"sha256":"9c6e0763577125a994a9bea0bbd7a737ac4498b8a6a4e0f788727553af1806c9"}
+      ]},
+    {"id":"gemma-3-4b","name":"Gemma 3 4B","repo":"unsloth/gemma-3-4b-it-GGUF","roles":["helper","chat"],"paramsB":4.3,"activeB":4.3,"layers":34,"kvKbPerToken":136,"contextMax":131072,"note":"Small Google model for chores and chat.",
+      "files": [
+        {"quant":"Q8_0","file":"gemma-3-4b-it-Q8_0.gguf","bytes":4130402176,"sha256":"81bf0583ab5bad155a5a3b15d155a880a1a1e4f7de2de5c06f10f64ac49f8336"},
+        {"quant":"Q6_K","file":"gemma-3-4b-it-Q6_K.gguf","bytes":3190740096,"sha256":"df3fb9a1449296d26258c0771d5280ceb71559ad98e2db658799a05218ed9fa1"},
+        {"quant":"Q5_K_M","file":"gemma-3-4b-it-Q5_K_M.gguf","bytes":2829698176,"sha256":"974e5c2f13c321fc3258b6fbf2ce326a09d8ace511aa6846df1db62baf7df7d4"},
+        {"quant":"Q4_K_M","file":"gemma-3-4b-it-Q4_K_M.gguf","bytes":2489894016,"sha256":"04a43a22e8d2003deda5acc262f68ec1005fa76c735a9962a8c77042a74a7d19"},
+        {"quant":"IQ4_XS","file":"gemma-3-4b-it-IQ4_XS.gguf","bytes":2263241856,"sha256":"5afc930350e5578ab83cf25c4cbac7eef422852bfa1169a438b40fce059306ec"},
+        {"quant":"Q3_K_M","file":"gemma-3-4b-it-Q3_K_M.gguf","bytes":2098459776,"sha256":"cd0dc2ce517f0c2764a7a7d1274c935335fa56092bb62b39e06546fb599c382d"}
+      ]},
+    {"id":"llama-3.2-3b","name":"Llama 3.2 3B","repo":"unsloth/Llama-3.2-3B-Instruct-GGUF","roles":["helper"],"paramsB":3.2,"activeB":3.2,"layers":28,"kvKbPerToken":112,"contextMax":131072,"note":"Small Meta model for chores.",
+      "files": [
+        {"quant":"Q8_0","file":"Llama-3.2-3B-Instruct-Q8_0.gguf","bytes":3421898816,"sha256":"f34112a11b7dad74ab517dedf6dcf00d624c9adac2dc0c72c719ca0478554ef2"},
+        {"quant":"Q6_K","file":"Llama-3.2-3B-Instruct-Q6_K.gguf","bytes":2643853760,"sha256":"a48f9d72a278835e0b0c00c6c115a3edd1703f5f15713b5f3194bc8b392ea631"},
+        {"quant":"Q5_K_M","file":"Llama-3.2-3B-Instruct-Q5_K_M.gguf","bytes":2322153920,"sha256":"8d422c0d21ed241ed701e2a5d4a1d2b580b0d406ba8b3e09605ffe980f2836ed"},
+        {"quant":"Q4_K_M","file":"Llama-3.2-3B-Instruct-Q4_K_M.gguf","bytes":2019377600,"sha256":"6c99cc00ae910f6a532a80022cb4bc1939094527a089c29294b841c0bd87f74d"},
+        {"quant":"IQ4_XS","file":"Llama-3.2-3B-Instruct-IQ4_XS.gguf","bytes":1829110208,"sha256":"6fca4bfe9ebadd5a4971c8e42b9aae3ec23d7750c95647b797b8803182eab494"},
+        {"quant":"Q3_K_M","file":"Llama-3.2-3B-Instruct-Q3_K_M.gguf","bytes":1687159232,"sha256":"aa48f1dfafebc0bd0631ffff625804e3641f5e61e8c91c465a556195fbd80376"}
+      ]},
+    {"id":"gemma-3-1b","name":"Gemma 3 1B","repo":"unsloth/gemma-3-1b-it-GGUF","roles":["helper"],"paramsB":1,"activeB":1,"layers":26,"kvKbPerToken":26,"contextMax":32768,"note":"Tiny; titles and short chores on any computer.",
+      "files": [
+        {"quant":"Q8_0","file":"gemma-3-1b-it-Q8_0.gguf","bytes":1069306400,"sha256":"616dfb049ad14288d971d96f5ca4953fdebbf1e3cd407ad159f3bfd47090201d"},
+        {"quant":"Q6_K","file":"gemma-3-1b-it-Q6_K.gguf","bytes":1011738656,"sha256":"078d867f4c0d46ba6249987a8ab80ebff766415e10899522a359a48cefd035f7"},
+        {"quant":"Q5_K_M","file":"gemma-3-1b-it-Q5_K_M.gguf","bytes":851345696,"sha256":"0da75a587ce0be8ea0281d5c6453822c3c347ce524b6cc14b129fb137caa8a6a"},
+        {"quant":"Q4_K_M","file":"gemma-3-1b-it-Q4_K_M.gguf","bytes":806058272,"sha256":"8270790f3ab69fdfe860b7b64008d9a19986d8df7e407bb018184caa08798ebd"},
+        {"quant":"IQ4_XS","file":"gemma-3-1b-it-IQ4_XS.gguf","bytes":714435104,"sha256":"9f80c5a5ed08f28a34f1befd41446e8ff6bcc41b746c8d0c4507c3f706437e6a"},
+        {"quant":"Q3_K_M","file":"gemma-3-1b-it-Q3_K_M.gguf","bytes":722416160,"sha256":"8e7b279535cdf39e322d6cdf1b10941a80807a96b851fb8aa22176425e8f9755"}
+      ]},
+    {"id":"qwen3-0.6b","name":"Qwen3 0.6B","repo":"unsloth/Qwen3-0.6B-GGUF","roles":["helper"],"paramsB":0.6,"activeB":0.6,"layers":28,"kvKbPerToken":112,"contextMax":40960,"note":"The smallest; a quick test of the engine.",
+      "files": [
+        {"quant":"Q8_0","file":"Qwen3-0.6B-Q8_0.gguf","bytes":639447744,"sha256":"e150ed544dfe6016930c026a93913a5e3184181ebfe6ab2223ae01dd0491784c"},
+        {"quant":"Q6_K","file":"Qwen3-0.6B-Q6_K.gguf","bytes":495107776,"sha256":"1c15a88244c9e852516e5ba0e394fc97f2182f1f2757413fb99fe6a9214c033b"},
+        {"quant":"Q5_K_M","file":"Qwen3-0.6B-Q5_K_M.gguf","bytes":444415680,"sha256":"03c6e2127d155b89c21a512954010486b1e00e1a9eebdfad650d03b53ab4c74a"},
+        {"quant":"Q4_K_M","file":"Qwen3-0.6B-Q4_K_M.gguf","bytes":396705472,"sha256":"ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a"},
+        {"quant":"IQ4_XS","file":"Qwen3-0.6B-IQ4_XS.gguf","bytes":367804096,"sha256":"dacc1fe1dc6f4799f366ac3385299f71c7e02c58b8702448a174f14d91b1c64d"},
+        {"quant":"Q3_K_M","file":"Qwen3-0.6B-Q3_K_M.gguf","bytes":347127488,"sha256":"30bb9f9222cf58c076277879881a24e7127a10be32076d76d8c70f8defc01f5d"}
+      ]}
   ]
 }

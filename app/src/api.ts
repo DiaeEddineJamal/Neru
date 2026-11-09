@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import type { AgentEvent, AgentModel, AgentMode, AgentView, ShellView, AgentResponse, AttachedDocument, CheckProgress, CitationStyle, Source, CliStatus, CheckSummary, ContextUsage, Effort, PrStatus, SessionChange, SlashCommand, FileEntry, GitStatus, McpServer, ModelInfo, ProbeResult, ProjectInfo, ProviderView, RemoteInfo, RemoteStatus, RewindResult, SearchResults, IndexStatus, SessionSnapshot, SessionSummary, ImportProgress, ImportScan, SkillView, CustomAgent, TeamAgent, TeamArtifact, TeamEvent, TeamPost, TeamSearchHit, TeamTask, TeamTaskSummary, TeamTaskFile, TeamTreeInfo, TeamQueued, AgentCommand, TerminalLaunch, TrustStatus, VoiceView } from './types'
 import type { ApiFormat, PrivacyRule } from './providerCatalog'
 import type { ChatProject, ChatProjectDetail, ChatProjectListItem, ChatProjectPatch } from './types'
-import type { Allowance, BoardCard, CheckResult, Digest, EngineSettings, Profile, LocalAdvice, LocalSpeed, OllamaStatus, ProviderCapacity, PullProgress, QueuedTask, TaskReport, UsageTotals } from './types'
+import type { Allowance, BoardCard, CheckResult, Digest, EngineSettings, Profile, LocalAdvice, LocalSpeed, OllamaStatus, BuiltinAdvice, BuiltinStatus, BuiltinModel, BuiltinLoaded, BuiltinSettings, BuiltinDownload, EngineProgress, ProviderCapacity, PullProgress, QueuedTask, TaskReport, UsageTotals } from './types'
 import type { OutputStyle, Paper, PaperCard, ServerPrompt, ServerResource, SessionDocument, SideAnswer } from './types'
 import type { MemoryCategory, MemoryPrefs, MemoryStore } from './types'
 import type { Route } from './lib/browser'
@@ -183,6 +183,18 @@ export const api = {
   ollamaCancelPull: (tag: string) => invoke<void>('ollama_cancel_pull', { tag }),
   ollamaDelete: (tag: string) => invoke<void>('ollama_delete', { tag }),
   ollamaSpeed: (tag: string) => invoke<LocalSpeed>('ollama_speed', { tag }),
+  builtinAdvice: () => invoke<BuiltinAdvice>('builtin_advice'),
+  builtinStatus: () => invoke<BuiltinStatus>('builtin_status'),
+  builtinInstallEngine: (backend?: string) => invoke<{ tag: string; backend: string; path: string }>('builtin_install_engine', { backend: backend ?? null }),
+  builtinSetSettings: (settings: BuiltinSettings) => invoke<BuiltinSettings>('set_builtin_settings', { settings }),
+  builtinDownload: (repo: string, file: string) => invoke<BuiltinModel>('builtin_download', { repo, file }),
+  builtinCancelDownload: (key: string) => invoke<void>('builtin_cancel_download', { key }),
+  builtinDelete: (id: string) => invoke<void>('builtin_delete', { id }),
+  builtinLoad: (id: string) => invoke<BuiltinLoaded>('builtin_load', { id }),
+  builtinUnload: (id: string) => invoke<void>('builtin_unload', { id }),
+  builtinSpeed: (id: string) => invoke<LocalSpeed>('builtin_speed', { id }),
+  onBuiltinDownload: (handler: (progress: BuiltinDownload) => void) => listen<BuiltinDownload>('builtin://download', event => handler(event.payload)),
+  onEngineProgress: (handler: (progress: EngineProgress) => void) => listen<EngineProgress>('builtin://engine', event => handler(event.payload)),
   onOllamaPull: (handler: (progress: PullProgress) => void) => listen<PullProgress>('ollama://pull', event => handler(event.payload)),
   resetUsage: () => invoke<UsageTotals>('reset_usage'),
   engineSettings: () => invoke<EngineSettings>('engine_settings'),

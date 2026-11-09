@@ -931,6 +931,10 @@ pub async fn small_model(state: &AppState, main: &ProviderConfig, rule: &str) ->
             candidates.push(ProviderConfig { provider_id: "ollama".into(), api_format: "openai-chat".into(), base_url, api_key: String::new(), model: String::new() });
         }
     }
+    // Models downloaded for the built-in engine take chores too; the first one loads on demand.
+    if main.provider_id != "builtin" && crate::llama_models::installed().iter().any(|model| local_helper_score(&model.id).is_some()) {
+        candidates.push(ProviderConfig { provider_id: "builtin".into(), api_format: "openai-chat".into(), base_url: crate::llama_server::base_url(), api_key: String::new(), model: String::new() });
+    }
     candidates.retain(|candidate| crate::privacy::allows(rule, candidate));
     let mut lists = tokio::task::JoinSet::new();
     for (index, candidate) in candidates.iter().cloned().enumerate() {
@@ -959,7 +963,7 @@ pub async fn small_model(state: &AppState, main: &ProviderConfig, rule: &str) ->
 /// How well a model suits quick chores: fast hosts and fast variants first, enough skill to follow a
 /// format. None for models too weak, too slow (long thinkers) or not meant for chat.
 fn small_score(provider_id: &str, model: &str) -> Option<i64> {
-    if matches!(provider_id, "ollama" | "local") {
+    if matches!(provider_id, "ollama" | "local" | "builtin") {
         return local_helper_score(model);
     }
     let strength = coding_score(model);

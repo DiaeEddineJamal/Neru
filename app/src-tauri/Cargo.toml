@@ -1,6 +1,6 @@
 [package]
 name = "neru"
-version = "0.13.1"
+version = "0.14.0"
 description = "A calm, local-first coding agent"
 authors = ["Neru"]
 license = "MIT"
@@ -63,6 +63,10 @@ tree-sitter-python = "0.25.0"
 tree-sitter-rust = "0.24.2"
 tree-sitter-go = "0.25.0"
 tree-sitter-json = "0.24.8"
+
+# The built-in engine's llama-server processes join a job that closes with Neru (llama_server.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { BookOpen, Clock, Compass, ChevronRight, Command, Copy, FileDown, Folder, FolderMinus, Folders, Star, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Link, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquareKanban, SquarePen, Sun, Trash2, Users } from '@/components/icons'
+import { BookOpen, Clock, Compass, ChevronRight, Command, Copy, FileDown, Incognito, Folder, FolderMinus, Folders, Star, FolderOpen, FolderPlus, FolderSearch, GitBranch, GitBranchPlus, Link, LoaderCircle, MessageSquare, Moon, MoreHorizontal, Pencil, Plus, Search, Settings2, SquareKanban, SquarePen, Sun, Trash2, Users } from '@/components/icons'
 import { useContextMenu } from './ContextMenu'
 import './SidebarRail.css'
 import { Mascot } from './Mascot'
@@ -180,7 +180,7 @@ export function Sidebar(props: SidebarProps) {
             {renamingId === session.id
               ? <input className="session-rename" autoFocus aria-label={t('Rename session')} value={renameValue} onChange={event => setRenameValue(event.target.value)} onBlur={finishRename} onKeyDown={event => { if (event.key === 'Enter') finishRename(); if (event.key === 'Escape') setRenamingId(null) }} />
               : <>
-                <button className="session-select" disabled={busy} onClick={() => props.onOpenSession('', session.id)} title={projectName(session.chatProjectId) ? `${projectName(session.chatProjectId)} / ${session.title}` : session.title}><span className="truncate">{session.title}</span>{projectName(session.chatProjectId) && <span className="chat-project-tag truncate">{projectName(session.chatProjectId)}</span>}</button>
+                <button className="session-select" disabled={busy} onClick={() => props.onOpenSession('', session.id)} title={projectName(session.chatProjectId) ? `${projectName(session.chatProjectId)} / ${session.title}` : session.title}>{(session as SessionSummary & { incognito?: boolean }).incognito && <Incognito size={12} className="session-incognito" aria-label={t('Incognito chat')} />}<span className="truncate">{session.title}</span>{projectName(session.chatProjectId) && <span className="chat-project-tag truncate">{projectName(session.chatProjectId)}</span>}</button>
                 {session.running
                   ? <span className="session-running" title={t('Responding')}><LoaderCircle size={13} className="animate-spin" aria-label={t('Responding')} /></span>
                   : <span className="session-time">{relativeTime(session.updatedAt)}</span>}

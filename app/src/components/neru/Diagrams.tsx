@@ -2,8 +2,9 @@ import { useEffect, useId, useState } from 'react'
 import { Check, Copy, Maximize2, Minus, Plus, X } from '@/components/icons'
 import { t } from '../../i18n'
 
-/** Shared shell: a titled block with copy and fullscreen, as Traycer shows diagrams and wireframes. */
-function Frame({ label, code, children, full }: { label: string; code: string; children: React.ReactNode; full: React.ReactNode }) {
+/** Shared shell: a titled block with copy and fullscreen, as Traycer shows diagrams and wireframes.
+ * `actions`: extra toolbar buttons before copy. Without `full` there is no fullscreen button. */
+export function Frame({ label, code, children, full, actions }: { label: string; code: string; children: React.ReactNode; full?: React.ReactNode; actions?: React.ReactNode }) {
   const [copied, setCopied] = useState(false)
   const [open, setOpen] = useState(false)
   useEffect(() => {
@@ -15,11 +16,12 @@ function Frame({ label, code, children, full }: { label: string; code: string; c
   return <div className="diagram-block">
     <div className="diagram-bar">
       <span>{label}</span>
-      <button type="button" onClick={() => { void navigator.clipboard.writeText(code); setCopied(true); window.setTimeout(() => setCopied(false), 1400) }} aria-label={t('Copy source')} title={t('Copy source')}>{copied ? <Check size={13} /> : <Copy size={13} />}</button>
-      <button type="button" onClick={() => setOpen(true)} aria-label={t('Fullscreen')} title={t('Fullscreen')}><Maximize2 size={13} /></button>
+      {actions}
+      <button type="button" onClick={() => { void navigator.clipboard?.writeText(code); setCopied(true); window.setTimeout(() => setCopied(false), 1400) }} aria-label={t('Copy source')} title={t('Copy source')}>{copied ? <Check size={13} /> : <Copy size={13} />}</button>
+      {full !== undefined && <button type="button" onClick={() => setOpen(true)} aria-label={t('Fullscreen')} title={t('Fullscreen')}><Maximize2 size={13} /></button>}
     </div>
     {children}
-    {open && <div className="modal-backdrop diagram-full" onMouseDown={() => setOpen(false)}>
+    {open && full !== undefined && <div className="modal-backdrop diagram-full" onMouseDown={() => setOpen(false)}>
       <div className="diagram-full-body" onMouseDown={event => event.stopPropagation()}>
         <button type="button" className="icon-button diagram-close" onClick={() => setOpen(false)} aria-label={t('Close')}><X size={16} /></button>
         {full}

@@ -11,6 +11,17 @@ const hoisted = vi.hoisted(() => ({
 }))
 vi.mock('../../api', () => ({ api: hoisted }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
+const memory = vi.hoisted(() => ({
+  summary: vi.fn(),
+  projectMemories: vi.fn(),
+  addMemory: vi.fn(),
+  deleteMemory: vi.fn(),
+}))
+vi.mock('@/lib/memoryApi', () => ({
+  memoryApi: memory,
+  onMemoryChanged: () => () => undefined,
+  memoryTime: (millis: number) => new Date(millis).toISOString().slice(0, 10),
+}))
 
 import { ChatProjects, type ChatProjectsProps } from './ChatProjects'
 
@@ -31,7 +42,12 @@ function setup(view: ChatProjectsProps['view'], sessions: SessionSummary[] = [])
 }
 
 describe('ChatProjects', () => {
-  beforeEach(() => { Object.values(hoisted).forEach(fn => fn.mockReset()) })
+  beforeEach(() => {
+    Object.values(hoisted).forEach(fn => fn.mockReset())
+    Object.values(memory).forEach(fn => fn.mockReset())
+    memory.summary.mockResolvedValue({ text: '', updatedAt: 0, generatedAt: 0, chatsThrough: 0, edited: false, generating: false, enabled: true })
+    memory.projectMemories.mockResolvedValue({ settings: { referenceMemories: true, learnFromChats: true, referenceChatHistory: true }, memories: [] })
+  })
 
   it('lists projects with chat counts, searches and opens one', async () => {
     hoisted.listChatProjects.mockResolvedValue([project('a', 'Thesis', { starred: true }), project('b', 'Cooking')])
@@ -78,6 +94,29 @@ describe('ChatProjects', () => {
     expect(props.onStartChat).toHaveBeenCalledWith('a', 'Draft chapter one')
     fireEvent.click(screen.getByText('Outline'))
     expect(props.onOpenChat).toHaveBeenCalledWith('1')
+  })
+
+  it('keeps the project memory: its summary and facts, added and deleted with the project id', async () => {
+    const settings = { referenceMemories: true, learnFromChats: true, referenceChatHistory: true }
+    const fact = (id: string, text: string) => ({ id, text, category: 'projects' as const, createdAt: 1, updatedAt: 1, source: 'noticed' as const })
+    hoisted.getChatProject.mockResolvedValue({ project: project('a', 'Thesis'), knowledge: [], knowledgeTokens: 0, budgetTokens: 100_000, inlineLimitTokens: 40_000 })
+    memory.summary.mockResolvedValue({ text: '## Current state\nChapter two is drafted.', updatedAt: Date.UTC(2026, 10, 8), generatedAt: Date.UTC(2026, 10, 8), chatsThrough: 1, edited: false, generating: false, enabled: true })
+    memory.projectMemories.mockResolvedValue({ settings, memories: [fact('m1', 'Cites in APA style')] })
+    memory.addMemory.mockResolvedValue({ settings, memories: [fact('m1', 'Cites in APA style'), fact('m2', 'Due in June')] })
+    memory.deleteMemory.mockResolvedValue({ settings, memories: [fact('m2', 'Due in June')] })
+    setup({ kind: 'project', id: 'a' })
+    const panel = await screen.findByRole('region', { name: 'Project memory' })
+    await waitFor(() => expect(panel.textContent).toContain('Chapter two is drafted.'))
+    expect(memory.summary).toHaveBeenCalledWith('a')
+    expect(memory.projectMemories).toHaveBeenCalledWith('a')
+    expect(await screen.findByText('Cites in APA style')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Add a fact for this project'), { target: { value: 'Due in June' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add fact' }))
+    expect(memory.addMemory).toHaveBeenCalledWith('Due in June', 'projects', 'a')
+    expect(await screen.findByText('Due in June')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete: Cites in APA style' }))
+    expect(memory.deleteMemory).toHaveBeenCalledWith('m1', 'a')
+    await waitFor(() => expect(screen.queryByText('Cites in APA style')).toBeNull())
   })
 
   it('toggles the star', async () => {

@@ -1381,6 +1381,7 @@ fn probe_skip(provider_id: &str) -> Option<&'static str> {
     match provider_id {
         "openrouter" => Some("OpenRouter lists only models with a live endpoint"),
         "ollama" => Some("Installed on this computer"),
+        "builtin" => Some("Downloaded in Neru"),
         "local" => Some("Listed by your gateway"),
         _ => None,
     }

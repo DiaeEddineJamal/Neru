@@ -1,0 +1,55 @@
+/* Charts and widgets drawn from ```chart and ```html-widget fences. Series colors: the dataviz
+   reference palette, its own validated steps for each theme (dark is the app default). */
+.visual-chart, .visual-legend {
+  --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500;
+  --viz-5: #d55181; --viz-6: #008300; --viz-7: #9085e9; --viz-8: #e66767;
+}
+:root[data-theme='light'] .visual-chart, :root[data-theme='light'] .visual-legend {
+  --viz-1: #2a78d6; --viz-2: #eb6834; --viz-3: #1baf7a; --viz-4: #eda100;
+  --viz-5: #e87ba4; --viz-6: #008300; --viz-7: #6250d6; --viz-8: #e34948;
+}
+
+.visual-chart { position: relative; padding: 8px 12px 10px; }
+.visual-chart svg { display: block; width: 100%; height: auto; max-height: 340px; overflow: visible; font: 11px Inter, sans-serif; }
+.visual-chart.large svg { max-height: 70vh; }
+.visual-axes text { fill: var(--muted); }
+.visual-axes .axis-title { fill: var(--secondary); font-size: 11.5px; }
+.visual-axes line.grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 3; }
+.visual-axes line.zero { stroke: var(--border-strong); stroke-width: 1; }
+.visual-area { opacity: .18; }
+.visual-dot, .visual-point { stroke: var(--surface-2); stroke-width: 1.5; }
+.visual-slice { stroke: var(--surface-2); stroke-width: 2; transition: opacity .15s; }
+.visual-crosshair { stroke: var(--border-strong); stroke-width: 1; pointer-events: none; }
+.visual-hit { cursor: default; }
+.visual-pie-total { fill: var(--text); font-size: 20px; font-weight: 600; }
+.visual-pie-caption { fill: var(--muted); font-size: 11px; }
+
+.visual-legend { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 0 0 6px; }
+.visual-legend-item { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--secondary); font-size: var(--fs-xs); cursor: pointer; }
+.visual-legend-item:hover { background: var(--state-hover); color: var(--text); }
+.visual-legend-item i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.visual-legend-item[aria-pressed='false'] { color: var(--muted); text-decoration: line-through; }
+.visual-legend-item[aria-pressed='false'] i { opacity: .3; }
+
+.visual-tip { position: absolute; z-index: 2; transform: translate(12px, -50%); pointer-events: none; display: grid; gap: 2px; min-width: 120px; max-width: 240px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-3); box-shadow: var(--shadow-popover); color: var(--text); font-size: var(--fs-xs); }
+.visual-tip.flip { transform: translate(calc(-100% - 12px), -50%); }
+.visual-tip b { font-weight: 600; margin-bottom: 2px; }
+.visual-tip span { display: flex; align-items: center; gap: 6px; color: var(--secondary); }
+.visual-tip span i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.visual-tip em { margin-left: auto; padding-left: 12px; font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.visual-table { max-height: 340px; overflow: auto; padding: 6px 12px 10px; }
+.visual-table table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.visual-table th, .visual-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: right; }
+.visual-table th:first-child, .visual-table td:first-child { text-align: left; }
+.visual-table th { color: var(--muted); font-weight: 500; }
+
+/* Same color-scheme as the sandbox page sets, or Chromium paints an opaque backdrop behind it. */
+.visual-widget { display: block; width: 100%; border: 0; background: transparent; color-scheme: dark; }
+:root[data-theme='light'] .visual-widget { color-scheme: light; }
+.visual-widget-error { display: block; padding: 6px 12px; color: var(--danger); font-size: var(--fs-xs); border-top: 1px solid var(--border); }
+.visual-source { margin: 0; max-height: 320px; overflow: auto; padding: 10px 12px; border-top: 1px solid var(--border); font: 12px var(--font-mono); color: var(--secondary); white-space: pre; }
+.visual-fallback pre code { font: inherit; }
+.visual-pending .diagram-loading { animation: visual-pulse 1.4s ease-in-out infinite; }
+@keyframes visual-pulse { 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .visual-pending .diagram-loading { animation: none; } }

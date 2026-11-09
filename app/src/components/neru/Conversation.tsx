@@ -1,4 +1,4 @@
-import { createContext, Fragment, isValidElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, Fragment, isValidElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, CircleAlert, Globe, History, ListChecks, LoaderCircle, MessageCircleQuestion, Paperclip, Play, ShieldCheck, X } from '@/components/icons'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import ReactMarkdown from 'react-markdown'
@@ -22,7 +22,9 @@ import { remarkMentions } from '@/lib/mentions'
 import { api } from '../../api'
 import { t } from '../../i18n'
 import { Mascot } from './Mascot'
-import { MermaidBlock, WireframeBlock } from './Diagrams'
+import { WireframeBlock } from './Diagrams'
+import { VisualFence } from './Visual'
+import { isVisualTag, remarkVisualFences } from '@/lib/visual/fence'
 import { Bibliography, ResearchProgress } from './ResearchPanel'
 import { FlashcardsBlock, QuizBlock } from './StudyBlocks'
 import { DocumentCard } from './ArtifactPane'
@@ -154,30 +156,36 @@ function linkCitations(content: string, count: number) {
   })).join('')
 }
 
+// Fenced code renders like the VS Code editor; inline code keeps the prose style. Defined once at
+// module level so a streamed token does not remount every fence (a chart or widget would redraw).
+function FencePre({ children }: { children?: ReactNode }) {
+  const child = Array.isArray(children) ? children[0] : children
+  if (!isValidElement(child)) return <pre>{children}</pre>
+  const props = child.props as { className?: string; children?: ReactNode; 'data-open'?: string }
+  const tag = /language-([\w+#.-]+)/.exec(props.className ?? '')?.[1]
+  const source = String(props.children ?? '').replace(/\n$/, '')
+  // Charts, widgets and Mermaid wait for their closing fence while streaming (Visual.tsx).
+  if (isVisualTag(tag)) return <VisualFence tag={tag!} code={source} open={props['data-open'] === 'true'} />
+  if (tag === 'wireframe') return <WireframeBlock html={source} />
+  if (tag === 'flashcards') return <FlashcardsBlock code={source} />
+  if (tag === 'quiz') return <QuizBlock code={source} />
+  if (tag === 'neru-document') return <DocumentCard code={source} />
+  return <CodeBlock code={source} language={languageForFence(tag)} />
+}
+
 /** `mentions`: handles to highlight as @mentions (Team members). */
 export function ResponseMarkdown({ content, sources, idPrefix, onCite, mentions }: { content: string; sources: Source[]; idPrefix: string; onCite: () => void; mentions?: string[] }) {
-  return <ReactMarkdown remarkPlugins={mentions ? [remarkGfm, [remarkMentions, { handles: mentions }]] : [remarkGfm]} components={{
-    a: ({ href, children }) => {
+  const plugins = useMemo(() => mentions ? [remarkGfm, remarkVisualFences, [remarkMentions, { handles: mentions }] as [typeof remarkMentions, { handles: string[] }]] : [remarkGfm, remarkVisualFences], [mentions])
+  const components = useMemo(() => ({
+    a: ({ href, children }: { href?: string; children?: ReactNode }) => {
       const cite = href?.match(/^#cite-(\d+)$/)
       const source = cite ? sources[Number(cite[1]) - 1] : undefined
       if (cite && source) return <span onClickCapture={onCite}><Citation citationId={source.id} index={Number(cite[1])} idPrefix={idPrefix} /></span>
       return <a href={href}>{children}</a>
     },
-    // Fenced code renders like the VS Code editor; inline code keeps the prose style.
-    pre: ({ children }) => {
-      const child = Array.isArray(children) ? children[0] : children
-      if (!isValidElement(child)) return <pre>{children}</pre>
-      const props = child.props as { className?: string; children?: ReactNode }
-      const tag = /language-([\w+#.-]+)/.exec(props.className ?? '')?.[1]
-      const source = String(props.children ?? '').replace(/\n$/, '')
-      if (tag === 'mermaid') return <MermaidBlock code={source} />
-      if (tag === 'wireframe') return <WireframeBlock html={source} />
-      if (tag === 'flashcards') return <FlashcardsBlock code={source} />
-      if (tag === 'quiz') return <QuizBlock code={source} />
-      if (tag === 'neru-document') return <DocumentCard code={source} />
-      return <CodeBlock code={source} language={languageForFence(tag)} />
-    },
-  }}>{sources.length ? linkCitations(content, sources.length) : content}</ReactMarkdown>
+    pre: FencePre,
+  }), [sources, onCite, idPrefix])
+  return <ReactMarkdown remarkPlugins={plugins} components={components}>{sources.length ? linkCitations(content, sources.length) : content}</ReactMarkdown>
 }
 
 function ToolIcon({ status }: { status: ToolEventStatus }) {

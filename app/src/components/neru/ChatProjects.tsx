@@ -11,6 +11,7 @@ import { useContextMenu } from './ContextMenu'
 import type { ChatProject, ChatProjectDetail, ChatProjectListItem, KnowledgeItem, SessionSummary } from '../../types'
 import { capacity, lastActivity, projectChats, relativeTime, sortProjects, type ProjectSort, type ProjectsView } from '@/lib/chatProjects'
 import './ChatProjects.css'
+import { ProjectMemory } from './ProjectMemory'
 import { Select } from '../ui/Select'
 
 export interface ChatProjectsProps {
@@ -299,6 +300,7 @@ function KnowledgePanel({ detail, reading, onInstructions, onUpload, onAddText, 
         ? <p className="cp-instructions-preview">{detail.project.instructions}</p>
         : <button type="button" className="cp-placeholder" onClick={onInstructions}>{t('Set project instructions')}<span>{t('Tailor how Neru answers in every chat in this project.')}</span></button>}
     </section>
+    <ProjectMemory projectId={detail.project.id} />
     <section className="cp-panel-block">
       <header>
         <h2>{t('Project knowledge')}</h2>
