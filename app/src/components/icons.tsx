@@ -69,6 +69,7 @@ import { FileCodeIcon } from '@phosphor-icons/react/dist/csr/FileCode'
 import { FileMagnifyingGlassIcon } from '@phosphor-icons/react/dist/csr/FileMagnifyingGlass'
 import { FilePlusIcon } from '@phosphor-icons/react/dist/csr/FilePlus'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
+import { PresentationChartIcon } from '@phosphor-icons/react/dist/csr/PresentationChart'
 import { FlaskIcon } from '@phosphor-icons/react/dist/csr/Flask'
 import { FloppyDiskIcon } from '@phosphor-icons/react/dist/csr/FloppyDisk'
 import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder'
@@ -254,6 +255,8 @@ export const FilePen = adapt(NotePencilIcon, 'FilePen')
 export const FilePlus2 = adapt(FilePlusIcon, 'FilePlus2')
 export const FileSearch = adapt(FileMagnifyingGlassIcon, 'FileSearch')
 export const FileText = adapt(FileTextIcon, 'FileText')
+export const Presentation = adapt(PresentationChartIcon, 'Presentation')
+
 export const FlaskConical = adapt(FlaskIcon, 'FlaskConical')
 export const Folder = adapt(FolderIcon, 'Folder')
 export const FolderMinus = adapt(FolderMinusIcon, 'FolderMinus')

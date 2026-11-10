@@ -1,8 +1,14 @@
 /* The document panel beside the chat (Research mode papers), modelled on the Claude desktop app's artifacts:
    a slim toolbar over a scrolling page that is typeset like the exported document. */
-.artifact-pane { position: absolute; z-index: 17; top: 48px; right: 0; bottom: 0; display: flex; flex-direction: column; width: min(760px, 54vw); border-left: 1px solid var(--border); background: var(--surface); color: var(--text); animation: artifact-in .22s cubic-bezier(.16, 1, .3, 1); }
+.artifact-pane { --artifact-size: min(var(--artifact-w, 760px), calc(100% - 360px)); position: absolute; z-index: 17; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: max(340px, var(--artifact-size)); border-left: 1px solid var(--border); background: var(--bg); color: var(--text); animation: artifact-in .22s cubic-bezier(.16, 1, .3, 1); }
+/* Drag the left edge to resize the panel; the chat beside it narrows to match. */
+.artifact-resize { position: absolute; z-index: 6; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; touch-action: none; }
+.artifact-resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background-color .15s ease; }
+.artifact-resize:hover::after, .artifact-resize.is-dragging::after { background: var(--sage); }
+.artifact-pane.is-resizing, .artifact-pane.is-resizing ~ * { user-select: none; }
+.artifact-pane.is-resizing iframe { pointer-events: none; }
 @keyframes artifact-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
-.home-view.with-artifact { margin-right: min(760px, 54vw); }
+.home-view.with-artifact { margin-right: max(340px, min(var(--artifact-w, 760px), calc(100% - 360px))); }
 
 .artifact-head { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--border); }
 .artifact-icon { flex: 0 0 auto; color: var(--sage); }
@@ -26,8 +32,7 @@
 .artifact-menu small { color: var(--muted); font-size: 11px; }
 .artifact-menu em { color: var(--muted); font-size: 11.5px; font-style: normal; }
 
-.artifact-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 28px 24px 48px; background: color-mix(in srgb, var(--bg) 82%, #000); }
-:root[data-theme='light'] .artifact-scroll { background: #ebeae4; }
+.artifact-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 28px 24px 48px; background: var(--bg); }
 .artifact-loading { display: grid; height: 100%; place-items: center; color: var(--muted); }
 
 /* The page: always paper-white with dark ink, like the Word and PDF it exports to. */
@@ -141,3 +146,64 @@
 .paper-page.is-document .paper-block-input.is-single { text-align: start; }
 .paper-section > h2 + .paper-block p, .paper-block:has(> h3) + .paper-block p, .paper-block:has(> h2) + .paper-block p { text-indent: 0; }
 .artifact-saved { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-right: 4px; color: var(--sage); font-size: var(--fs-xs); animation: artifact-in .16s ease-out; }
+
+/* Charts and diagrams inside a document: drawn on the white page in the light theme's ink. */
+.paper-page .doc-visual, .deck-slide .doc-visual, .sheet-chart {
+  --bg: #fffefb; --surface: #faf9f5; --surface-2: #fff; --surface-3: #eeeee9; --text: #191a18; --secondary: #676a64; --muted: #7a7d76;
+  --border: #dddcd5; --border-strong: #c9c8bf; --state-hover: rgb(0 0 0 / .05); --menu-bg: #fff;
+  margin: 14px 0; color: var(--text); text-indent: 0; text-align: start; font-family: Inter, 'Segoe UI', system-ui, sans-serif;
+}
+.paper-page .doc-visual svg { max-width: 100%; }
+
+/* Slide decks (PowerPoint): 16:9 slides typeset like the exported deck, sized to the panel. */
+.deck { display: flex; flex-direction: column; gap: 22px; max-width: 880px; margin: 0 auto; }
+.deck-empty { display: grid; place-items: center; min-height: 200px; color: var(--muted); }
+.deck-item { margin: 0; container-type: inline-size; }
+.deck-slide { position: relative; display: flex; flex-direction: column; aspect-ratio: 16 / 9; overflow: hidden; padding: 4.6cqw 4.6cqw 4cqw; border-radius: 6px; background: #fff; color: #1c1c1a; box-shadow: 0 1px 2px rgb(0 0 0 / .18), 0 12px 40px -16px rgb(0 0 0 / .45); font: 2.4cqw/1.4 Inter, 'Segoe UI', system-ui, sans-serif; }
+.deck-slide h2 { flex: 0 0 auto; margin: 0 0 .6em; font-size: 3.6cqw; font-weight: 700; line-height: 1.2; }
+.deck-slide h2::after { content: ''; display: block; width: 9cqw; height: .5cqw; margin-top: 1.4cqw; border-radius: 2px; background: #54745b; }
+.deck-body { flex: 1; min-height: 0; overflow: hidden; }
+.deck-body:has(.doc-visual) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 3cqw; align-items: start; }
+.deck-body:has(.doc-visual) > .doc-visual { grid-column: 2; grid-row: 1 / span 6; margin: 0; }
+.deck-body:not(:has(> :not(.doc-visual))) { display: block; }
+.deck-body ul, .deck-body ol { margin: 0; padding-left: 1.3em; list-style: disc; }
+.deck-body ol { list-style: decimal; }
+.deck-body li::marker { color: #54745b; }
+.deck-body li { margin: 0 0 .45em; }
+.deck-body li li { font-size: .85em; }
+.deck-body p { margin: 0 0 .6em; }
+.deck-body table { width: 100%; border-collapse: collapse; font-size: .78em; }
+.deck-body th { padding: .35em .6em; background: #54745b; color: #fff; text-align: left; }
+.deck-body td { padding: .35em .6em; border-bottom: 1px solid #cfcfc8; }
+.deck-body code { padding: 0 .2em; border-radius: 3px; background: #f0efe9; font-size: .9em; }
+.deck-slide.is-title { justify-content: center; border-top: 1.4cqw solid #54745b; }
+.deck-slide.is-title h2 { font-size: 5.4cqw; }
+.deck-slide.is-title h2::after { display: none; }
+.deck-slide.is-title .deck-body { flex: 0 0 auto; color: #6a6a64; font-size: 2.8cqw; }
+.deck-number { position: absolute; right: 2.4cqw; bottom: 1.6cqw; color: #6a6a64; font-size: 1.5cqw; }
+.deck-notes { margin: 8px 4px 0; color: var(--secondary); font-size: var(--fs-xs); line-height: 1.5; }
+.deck-notes strong { margin-right: 4px; color: var(--muted); font-weight: 600; }
+.deck-item.is-writing .deck-slide { outline: 2px solid color-mix(in srgb, var(--sage) 55%, transparent); outline-offset: 3px; }
+
+/* Workbooks (Excel): a grid with column letters, row numbers and sheet tabs. */
+.sheet { display: flex; flex-direction: column; gap: 10px; max-width: 100%; }
+.sheet-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.sheet-tabs button { height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--secondary); font-size: var(--fs-xs); }
+.sheet-tabs button:hover { color: var(--text); background: var(--surface-3); }
+.sheet-tabs button.active { border-color: var(--sage); color: var(--text); font-weight: 600; }
+.sheet-grid { overflow: auto; max-height: 70vh; border: 1px solid #cfcfc8; border-radius: 6px; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / .14); }
+.sheet-grid table { border-collapse: separate; border-spacing: 0; min-width: 100%; color: #1c1c1a; font: 13px/1.35 Inter, 'Segoe UI', system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.sheet-grid th, .sheet-grid td { padding: 5px 10px; border-right: 1px solid #e4e3dc; border-bottom: 1px solid #e4e3dc; white-space: nowrap; text-align: left; }
+.sheet-letter, .sheet-rownum, .sheet-corner { position: sticky; background: #f3f2ec; color: #7a7d76; font-size: 11px; font-weight: 500; text-align: center !important; }
+.sheet-letter, .sheet-corner { top: 0; z-index: 2; }
+.sheet-rownum { left: 0; z-index: 1; min-width: 36px; }
+.sheet-corner { left: 0; z-index: 3; }
+.sheet-head th[scope='col'] { background: #dfe9df; color: #16231a; font-weight: 600; border-bottom: 1px solid #54745b; }
+.sheet-grid td.is-number { text-align: right; }
+.sheet-grid td.is-formula { color: #2f4a36; }
+.sheet-grid td.is-error { color: #a25750; font-style: italic; }
+.sheet-total td { font-weight: 700; border-top: 1px solid #1c1c1a; }
+.sheet-chart { padding: 12px; border-radius: 6px; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / .14); }
+.sheet-hint { margin: 0; color: var(--muted); font-size: var(--fs-xs); }
+.document-card-icon.is-deck { color: #b4612f; }
+.document-card-icon.is-sheet { color: #2f7a46; }

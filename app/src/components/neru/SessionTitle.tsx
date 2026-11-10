@@ -9,7 +9,9 @@ export type TitleMenuItem =
   | 'separator'
 
 /** A dropdown that opens under its trigger, with hover submenus, like Claude's title-bar menus. */
-function TitleMenu({ items, onClose, align = 'left' }: { items: TitleMenuItem[]; onClose: () => void; align?: 'left' | 'right' }) {
+function TitleMenu({ items: given, onClose, align = 'left' }: { items: TitleMenuItem[]; onClose: () => void; align?: 'left' | 'right' }) {
+  // No separator at either end or twice in a row.
+  const items = given.filter((item, index) => item !== 'separator' || (index > 0 && index < given.length - 1 && given[index - 1] !== 'separator'))
   const [openSub, setOpenSub] = useState<string | null>(null)
   // A single letter shown beside an item is also its key while the menu is open.
   useEffect(() => {

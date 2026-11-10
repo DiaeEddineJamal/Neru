@@ -4,17 +4,29 @@ import { api } from '../api'
 import type { Paper } from '../types'
 import { blocks, inlines, plain, type Block, type Inline } from './paperBlocks'
 
-export type ExportFormat = 'docx' | 'pdf' | 'html' | 'tex' | 'md' | 'txt' | 'bib'
+export type ExportFormat = 'docx' | 'pdf' | 'pptx' | 'xlsx' | 'csv' | 'html' | 'tex' | 'md' | 'txt' | 'bib'
 
 export const EXPORTS: { format: ExportFormat; label: string; hint: string; extension: string; filter: string }[] = [
   { format: 'docx', label: 'Word document', hint: 'Edit in Microsoft Word, Google Docs or LibreOffice', extension: 'docx', filter: 'Word document' },
   { format: 'pdf', label: 'PDF', hint: 'Ready to print or submit', extension: 'pdf', filter: 'PDF' },
+  { format: 'pptx', label: 'PowerPoint', hint: 'Slides for PowerPoint, Keynote or Google Slides', extension: 'pptx', filter: 'PowerPoint presentation' },
+  { format: 'xlsx', label: 'Excel workbook', hint: 'For Excel, Google Sheets or LibreOffice, with working formulas', extension: 'xlsx', filter: 'Excel workbook' },
+  { format: 'csv', label: 'CSV', hint: 'The first sheet as comma-separated values', extension: 'csv', filter: 'CSV' },
   { format: 'tex', label: 'LaTeX', hint: 'For Overleaf or a LaTeX template', extension: 'tex', filter: 'LaTeX' },
   { format: 'html', label: 'Web page', hint: 'A standalone HTML page', extension: 'html', filter: 'HTML' },
   { format: 'md', label: 'Markdown', hint: 'Plain text with formatting marks', extension: 'md', filter: 'Markdown' },
   { format: 'txt', label: 'Plain text', hint: 'Just the words, no formatting', extension: 'txt', filter: 'Text' },
   { format: 'bib', label: 'BibTeX references', hint: 'The works cited, for Zotero, Mendeley or LaTeX', extension: 'bib', filter: 'BibTeX' },
 ]
+
+/** The downloads that suit a paper: slides and spreadsheets have their own; documents have the rest. */
+export function exportsFor(paper: Paper) {
+  if (paper.format === 'pptx') return EXPORTS.filter(item => ['pptx', 'md', 'txt'].includes(item.format))
+  if (paper.format === 'xlsx') return EXPORTS.filter(item => ['xlsx', 'csv', 'md'].includes(item.format))
+  return EXPORTS.filter(item => !['pptx', 'xlsx', 'csv'].includes(item.format) && (!paper.plain || (item.format !== 'bib' && item.format !== 'tex')))
+}
+
+const body = (paper: Paper) => paper.sections.map(section => section.body).join('\n\n')
 
 /** Papers number their sections; plain documents (plans, reports) do not. */
 const heading = (index: number, text: string, plainDoc = false) => plainDoc ? text : `${index + 1}. ${text}`
@@ -317,6 +329,9 @@ export async function build(paper: Paper, format: ExportFormat): Promise<Uint8Ar
   switch (format) {
     case 'docx': return toDocx(paper)
     case 'pdf': return toPdf(paper)
+    case 'pptx': return (await import('./officeDocs')).toPptx(body(paper), paper.title)
+    case 'xlsx': { const office = await import('./officeDocs'); return office.toXlsx(office.parseSheets(body(paper)), paper.title) }
+    case 'csv': { const office = await import('./officeDocs'); const [first] = office.parseSheets(body(paper)); return encoder.encode(first ? office.toCsv(first) : '') }
     case 'tex': return encoder.encode(toLatex(paper))
     case 'html': return encoder.encode(toHtml(paper))
     case 'md': return encoder.encode(toMarkdown(paper))

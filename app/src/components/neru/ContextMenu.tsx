@@ -30,7 +30,11 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
     if (items.length === 0) return
     setPlace(null)
     setActive(-1)
-    setMenu({ x: event.clientX, y: event.clientY, items })
+    // No separator at either end or twice in a row, whatever optional groups a place left out.
+    const tidy = items.filter((item, index) => item !== 'separator' || (index > 0 && items[index - 1] !== 'separator'))
+    while (tidy[0] === 'separator') tidy.shift()
+    while (tidy[tidy.length - 1] === 'separator') tidy.pop()
+    setMenu({ x: event.clientX, y: event.clientY, items: tidy })
   }, [])
   const close = useCallback(() => setMenu(null), [])
 

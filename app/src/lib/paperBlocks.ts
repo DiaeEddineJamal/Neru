@@ -2,7 +2,9 @@
 // paragraphs, ### subheadings, bullet and numbered lists, block quotes and pipe tables, with bold,
 // italic, code and links inline.
 
-export type Inline = { text: string; bold?: boolean; italic?: boolean; code?: boolean }
+import { parseChart } from './visual/chart'
+
+export type Inline ={ text: string; bold?: boolean; italic?: boolean; code?: boolean }
 export type Block =
   | { kind: 'paragraph'; inlines: Inline[] }
   | { kind: 'heading'; level: 3 | 4; inlines: Inline[] }
@@ -39,6 +41,27 @@ export function blocks(markdown: string): Block[] {
     const line = lines[index]
     const trimmed = line.trim()
     if (!trimmed) { flush(); continue }
+    // Fenced blocks: a ```chart becomes its data table (with the title as a caption); a diagram
+    // (```mermaid) or widget is left out; other code is kept as code lines.
+    const fence = /^(`{3,}|~{3,})\s*([\w-]*)/.exec(trimmed)
+    if (fence) {
+      flush()
+      const body: string[] = []
+      for (index++; index < lines.length && !lines[index].trim().startsWith(fence[1]); index++) body.push(lines[index])
+      const tag = fence[2].toLowerCase()
+      if (tag === 'chart') {
+        const chart = parseChart(body.join('\n').trim())
+        if (chart.ok) {
+          const { spec } = chart
+          if (spec.title) out.push({ kind: 'paragraph', inlines: [{ text: spec.title, italic: true }] })
+          if (spec.type === 'scatter') out.push({ kind: 'table', header: [[{ text: spec.x ?? 'x' }], ...spec.series.map(series => [{ text: series.name }])], rows: spec.series.flatMap(series => (series.points ?? []).map(point => [[{ text: String(point[0]) }], ...spec.series.map(other => [{ text: other === series ? String(point[1]) : '' }])])) })
+          else out.push({ kind: 'table', header: [[{ text: spec.x ?? '' }], ...spec.series.map(series => [{ text: series.name }])], rows: spec.labels.map((label, at) => [[{ text: label }], ...spec.series.map(series => [{ text: series.data[at] === undefined ? '' : String(series.data[at]) }])]) })
+        }
+      } else if (!['mermaid', 'html-widget', 'widget', 'visual'].includes(tag) && body.length) {
+        out.push({ kind: 'paragraph', inlines: [{ text: body.join('\n'), code: true }] })
+      }
+      continue
+    }
     const heading = /^(#{2,6})\s+(.*)$/.exec(trimmed)
     if (heading) { flush(); out.push({ kind: 'heading', level: heading[1].length <= 3 ? 3 : 4, inlines: inlines(heading[2].replace(/\s+#+$/, '')) }); continue }
     if (trimmed.startsWith('|') && index + 1 < lines.length && isRule(lines[index + 1])) {

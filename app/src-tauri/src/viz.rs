@@ -17,13 +17,30 @@ Widget: a ```html-widget fence holding a small self-contained HTML document (und
 <script>r.oninput=()=>o.textContent=r.value</script>
 ```
 
-Use ```mermaid for flowcharts and sequence diagrams."#;
+Diagram: a ```mermaid fence for flowcharts, sequence, class, state, ER, Gantt, mind maps, timelines and pie charts.
 
-/// The visual guidance for a model, or nothing for small and local models that cannot follow it
-/// reliably (they would emit broken fences rather than charts).
+Files: for a Word, PDF, PowerPoint or Excel file the user will keep, use the create_document tool (format docx, pdf, pptx or xlsx); it opens in the document panel, draws its charts, and downloads as that file."#;
+
+/// A short version for small and local models: charts and diagrams only, one example each, no
+/// sandboxed widgets (they rarely write those well).
+pub const LEAN_PROMPT: &str = r#"## Charts and diagrams
+To show data as a chart, write a ```chart fence with one JSON object, like:
+```chart
+{"type":"bar","title":"Sales","labels":["Q1","Q2","Q3"],"series":[{"name":"2025","data":[3,5,4]}]}
+```
+"type" is bar, line, area, pie or scatter; "data" has one plain number per label. Valid JSON only.
+To draw a flowchart or process, write a ```mermaid fence, like:
+```mermaid
+flowchart LR
+  A[Start] --> B[Step] --> C[Done]
+```
+For a Word, PDF, PowerPoint or Excel file, call create_document with format docx, pdf, pptx or xlsx."#;
+
+/// The visual guidance for a model: the full guide, or a short one with examples for small and
+/// local models (the window shows a broken fence as code, so a miss costs little).
 pub fn prompt_for(model_is_small: bool) -> &'static str {
     if model_is_small {
-        ""
+        LEAN_PROMPT
     } else {
         PROMPT
     }
@@ -34,9 +51,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn small_models_get_no_visual_guidance() {
-        assert_eq!(prompt_for(true), "");
+    fn small_models_get_the_short_guide() {
+        assert_eq!(prompt_for(true), LEAN_PROMPT);
         assert_eq!(prompt_for(false), PROMPT);
+        for fence in ["```chart", "```mermaid", "create_document"] {
+            assert!(LEAN_PROMPT.contains(fence), "missing {fence}");
+        }
+        assert!(!LEAN_PROMPT.contains("html-widget"));
+        assert!(LEAN_PROMPT.split_whitespace().count() <= 120);
     }
 
     #[test]
@@ -45,7 +67,7 @@ mod tests {
             assert!(PROMPT.contains(fence), "missing {fence}");
         }
         let words = PROMPT.split_whitespace().count();
-        assert!(words <= 260, "prompt is {words} words");
+        assert!(words <= 320, "prompt is {words} words");
     }
 
     #[test]

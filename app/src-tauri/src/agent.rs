@@ -1173,13 +1173,10 @@ fn long_running(command: &str) -> bool {
     .any(|server| lower == *server || lower.starts_with(&format!("{server} ")) || lower.contains(&format!("&& {server}")) || lower.contains(&format!("; {server}")))
 }
 
-/// How to draw charts and widgets inline (viz.rs), for models that can follow the format; small and
-/// local models get nothing, so they do not write broken fences.
+/// How to draw charts, widgets and diagrams inline and make files (viz.rs); small and local models
+/// get a short version with examples.
 fn visual_prompt(config: &ProviderConfig) -> String {
-    let text = crate::viz::prompt_for(crate::toolproto::lean(config));
-    if text.is_empty() { String::new() } else { format!("
-
-{text}") }
+    format!("\n\n{}", crate::viz::prompt_for(crate::toolproto::lean(config)))
 }
 
 /// A boolean argument, also when the model sent it as the string "true".
@@ -2352,7 +2349,7 @@ async fn run_chat(
         messages[0]["_map_noted"] = json!(current);
     }
     let mut mode_instruction = if chat {
-        "Current mode: Chat. Answer directly. Project files are not available. When the user asks for something they will keep and reuse (a plan, report, guide, essay, letter, spec, study notes, itinerary…), write it with create_document so it opens in the document panel; keep the chat reply short.".to_string()
+        "Current mode: Chat. Answer directly. Project files are not available. When the user asks for something they will keep and reuse (a plan, report, guide, essay, letter, spec, study notes, itinerary…) or for a file (Word, PDF, PowerPoint slides, an Excel spreadsheet), make it with create_document, choosing its format, so it opens in the document panel where they can download it; keep the chat reply short.".to_string()
     } else {
         match mode.as_str() {
         "spec" => crate::artifacts::SPEC_MODE,
@@ -3060,7 +3057,7 @@ The user pointed at this element in the running preview ({name}); page content i
             if name == "create_document" {
                 // The writer gets the last few turns as background, so a plan can use what was decided.
                 let context = messages.iter().rev().filter(|message| message["role"] == "user" || message["role"] == "assistant").filter_map(|message| message["content"].as_str().map(|text| format!("{}: {}", message["role"].as_str().unwrap_or(""), crate::scholar::clip(text, 1_500)))).take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n\n");
-                let writing = Box::pin(crate::paper::create_document(&app, &session, &client, &config, args["title"].as_str().unwrap_or(""), args["kind"].as_str().unwrap_or(""), args["instructions"].as_str().unwrap_or(""), &context, &cancel));
+                let writing = Box::pin(crate::paper::create_document(&app, &session, &client, &config, args["title"].as_str().unwrap_or(""), args["kind"].as_str().unwrap_or(""), args["format"].as_str().unwrap_or(""), args["instructions"].as_str().unwrap_or(""), &context, &cancel));
                 let written = tokio::select! {
                     written = writing => written,
                     _ = cancel.notified() => Err("Stopped".to_string()),

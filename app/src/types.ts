@@ -279,7 +279,7 @@ export interface Source {
 
 export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'ieee' | 'harvard'
 /** The chat card for a research paper Research mode wrote (paper.rs). */
-export interface PaperCard { id: string; title: string; kind: string; words: number; sources: number; format: '' | 'docx' | 'pdf' | 'md' | 'html' | 'tex'; status?: 'writing' | 'paused' | 'done' }
+export interface PaperCard { id: string; title: string; kind: string; words: number; sources: number; format: '' | 'docx' | 'pdf' | 'pptx' | 'xlsx' | 'md' | 'html' | 'tex'; status?: 'writing' | 'paused' | 'done' }
 export interface PaperSection { heading: string; body: string }
 export interface PaperReference { number: number; text: string; source: Source }
 /** A research paper: Markdown sections with in-text citations already in `style`, and the works cited. */

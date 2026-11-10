@@ -2,6 +2,30 @@
 
 Every release of Neru. The app shows the same notes in *What's new* after it updates. Downloads are on the [releases page](https://github.com/DiaeEddineJamal/Neru/releases).
 
+## 0.15.0 · Word, PDF, PowerPoint and Excel files, and a resizable document panel
+*2026-11-10*
+
+Ask for a document, a slide deck or a spreadsheet and Neru makes the real file: it opens in the document panel to read and edit, and downloads as Word, PDF, PowerPoint or Excel. Documents and slides can hold charts and diagrams, and local models can now draw charts too. The document panel resizes and sits flush in the window.
+
+### Documents, slides and spreadsheets
+
+- Ask for a Word document, PDF, PowerPoint deck or Excel spreadsheet and Neru writes it into the document panel, where it streams in live and downloads in that format. Works with API models and local models.
+- Slide decks show as 16:9 slides with speaker notes and download as a .pptx with real, editable PowerPoint charts and tables.
+- Spreadsheets show as a grid with sheet tabs, column letters and row numbers, and work out totals and other formulas. The .xlsx keeps the formulas so Excel recalculates them; CSV export too.
+- Documents and slides can include bar, line, area, pie and scatter charts and Mermaid diagrams, drawn right on the page. In Word and PDF downloads a chart becomes its data table.
+- Asking for a change to an open deck or spreadsheet keeps its slides or sheets in shape.
+
+### Charts with local models
+
+- Small and local models now get a short guide with examples, so they can draw charts and diagrams in Chat too.
+
+### Fixes
+
+- Drag the document panel's left edge to resize it; the chat narrows to match and the width is remembered. Double-click the edge to reset it.
+- The document panel no longer leaves a gap under the title bar, and its background matches the app.
+- Settings keeps a sensible width and stays centered when the window is resized.
+- Chat menus no longer show a double divider above Delete chat.
+
 ## 0.14.0 · Local models built in, charts in chat, and memory you control
 *2026-11-09*
 
